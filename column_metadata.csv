@@ -1,0 +1,6 @@
+LOB,COLUMN_NAME,TABLE_COLUMN_NAME,DESCRIPTION
+DMEB,ProvNPI,tblProviders.ProvNPI,Value column of Supplier NPI
+DMEB,Diag1,tblProviders.Diag1,testing
+DMEB,MSTATE,tblProviders.MSTATE,testing
+DMEB,CovdChrg,tblProviders.CovdChrg,testing
+DMEB,AvgLOS,tblProviders.AvgLOS,testing and did it workkk

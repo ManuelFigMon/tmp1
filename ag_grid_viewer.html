@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AG Grid Data Viewer - DMQ</title>
+    <!-- AG Grid CSS — loaded from CDN; page still works if this fails -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-grid.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-theme-alpine.min.css">
+    <style>
+        /* Layout */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f0f0; padding: 10px; font-size: 11px; }
+        .container { max-width: 1400px; margin: 0 auto; background: white; box-shadow: 0 2px 4px rgba(0,0,0,.1); display: flex; flex-direction: column; height: calc(100vh - 20px); overflow: hidden; }
+        /* Header */
+        .header { background: #4a7ba7; color: white; padding: 15px 20px; border-bottom: 2px solid #3a6b97; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; flex: 0 0 auto; }
+        .header h1 { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .header p  { font-size: 11px; opacity: .95; }
+        .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn { padding: 6px 14px; border: 1px solid transparent; border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: 600; transition: background .2s; }
+        .btn-primary   { background: white; color: #4a7ba7; border-color: white; }
+        .btn-primary:hover   { background: #e8f0f8; }
+        .btn-secondary { background: transparent; color: white; border-color: rgba(255,255,255,.6); }
+        .btn-secondary:hover { background: rgba(255,255,255,.15); }
+        /* Info bar */
+        .info-bar { background: #f8f8f8; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; gap: 10px; flex: 0 0 auto; }
+        .info-group { display: flex; gap: 20px; flex-wrap: wrap; }
+        .info-item  { display: flex; align-items: center; gap: 6px; }
+        .info-label { font-weight: 600; color: #4a7ba7; font-size: 11px; }
+        .info-value { color: #333; font-size: 11px; background: white; padding: 3px 10px; border-radius: 3px; border: 1px solid #d0d0d0; }
+        .badge      { background: #4a7ba7; color: white; padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .filter-badge { background: #e8f0f8; color: #333; padding: 4px 10px; border-radius: 3px; font-size: 11px; border: 1px solid #c5d6e8; }
+        .filter-badge strong { color: #4a7ba7; }
+        /* Toolbar */
+        .toolbar { padding: 10px 20px; background: white; border-bottom: 1px solid #e0e0e0; display: flex; gap: 10px; align-items: center; flex: 0 0 auto; }
+        .search-input { flex: 1; padding: 6px 10px; border: 1px solid #c0c0c0; border-radius: 3px; font-size: 11px; }
+        .search-input:focus { outline: none; border-color: #4a7ba7; box-shadow: 0 0 0 2px rgba(74,123,167,.15); }
+        /* Grid wrap */
+        .grid-wrap { flex: 1 1 auto; min-height: 0; padding: 10px 20px 20px; overflow: hidden; }
+        #myGrid    { width: 100%; height: 100%; }
+        /* No-data */
+        .no-data { text-align: center; padding: 50px 20px; color: #666; }
+        .no-data h2 { color: #4a7ba7; margin-bottom: 10px; font-size: 16px; }
+        /* Fallback badge */
+        .fallback-notice { font-size: 10px; background: #fff3cd; color: #856404; border: 1px solid #ffc107; border-radius: 3px; padding: 2px 8px; display: inline-block; margin-left: 8px; }
+
+        /* ── Vanilla Table (fallback when AG Grid CDN is unavailable) ── */
+        .vg-wrap   { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1px solid #d0d0d0; overflow: hidden; }
+        .vg-scroll { flex: 1 1 auto; overflow: auto; }
+        .vg-table  { width: 100%; border-collapse: collapse; font-size: 11px; }
+        .vg-table thead { position: sticky; top: 0; z-index: 10; }
+        .vg-table th { background: #4a7ba7; color: white; padding: 7px 10px; text-align: left; white-space: nowrap; cursor: pointer; user-select: none; border-right: 1px solid #3a6b97; }
+        .vg-table th:hover { background: #3a6b97; }
+        .vg-sort-icon { margin-left: 4px; opacity: .8; }
+        .vg-filter-row th { background: #e8f0f8; padding: 4px 6px; cursor: default; }
+        .vg-filter-row th:hover { background: #e8f0f8; }
+        .vg-col-filter { width: 100%; padding: 3px 5px; border: 1px solid #b0c8e0; border-radius: 2px; font-size: 10px; font-family: inherit; }
+        .vg-col-filter:focus { outline: none; border-color: #4a7ba7; }
+        .vg-table td { padding: 5px 10px; border-bottom: 1px solid #f0f0f0; border-right: 1px solid #f0f0f0; white-space: nowrap; max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+        .vg-table tbody tr:nth-child(even) { background: #fafafa; }
+        .vg-table tbody tr:hover { background: #e8f0f8; }
+        .vg-pagination { flex: 0 0 auto; padding: 8px 12px; background: #f8f8f8; border-top: 1px solid #d0d0d0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; }
+        .vg-pagination select { padding: 3px 6px; font-size: 11px; border: 1px solid #c0c0c0; border-radius: 2px; }
+        .vg-page-btn { padding: 3px 10px; border: 1px solid #c0c0c0; border-radius: 2px; background: white; cursor: pointer; font-size: 11px; }
+        .vg-page-btn:hover:not(:disabled) { background: #e8f0f8; border-color: #4a7ba7; }
+        .vg-page-btn:disabled { opacity: .4; cursor: default; }
+        .vg-page-info { color: #555; margin-left: auto; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div>
+            <h1>AG Grid Data Viewer <span id="fallbackBadge" class="fallback-notice" style="display:none;">Built-in Table</span></h1>
+            <p id="datasetName">Loading data...</p>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-primary"   onclick="exportToCSV()">Export CSV</button>
+            <button class="btn btn-primary"   onclick="exportToExcel()">Export Excel</button>
+            <button class="btn btn-secondary" onclick="clearFilters()">Clear Filters</button>
+            <button class="btn btn-secondary" onclick="autoSizeAll()">Auto-Size</button>
+            <button class="btn btn-secondary" onclick="window.close()">Close</button>
+        </div>
+    </div>
+
+    <div class="info-bar">
+        <div class="info-group">
+            <div class="info-item">
+                <span class="info-label">Total Rows:</span>
+                <span class="info-value" id="totalRows">0</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Columns:</span>
+                <span class="info-value" id="totalColumns">0</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Distinct:</span>
+                <span class="badge" id="distinctBadge">No</span>
+            </div>
+        </div>
+        <div id="activeFilters" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+
+    <div class="toolbar">
+        <input type="text" class="search-input" id="quickFilter"
+               placeholder="Quick search across all columns..." oninput="onQuickFilterChanged()">
+    </div>
+
+    <div class="grid-wrap" id="gridWrap">
+        <div id="myGrid" class="ag-theme-alpine"></div>
+    </div>
+</div>
+
+<script>
+/* ================================================================
+   VANILLA GRID — zero-dependency fallback
+   Implements the same public API used by the button handlers so
+   Export CSV / Export Excel / Clear Filters / Auto-Size / Quick
+   Search all work identically whether AG Grid or this class is active.
+   ================================================================ */
+class VanillaGrid {
+    constructor(container, options) {
+        this._cols      = options.columnDefs;
+        this._allRows   = options.rowData;
+        this._pageSize  = options.paginationPageSize || 50;
+        this._page      = 1;
+        this._sortField = null;
+        this._sortDir   = 'asc';
+        this._colFilter = {};
+        this._quickText = '';
+        this._build(container);
+        this._refresh();
+    }
+
+    _filtered() {
+        const q = this._quickText.toLowerCase();
+        return this._allRows.filter(row => {
+            if (q && !this._cols.some(c => String(row[c.field] ?? '').toLowerCase().includes(q))) return false;
+            for (const [f, v] of Object.entries(this._colFilter)) {
+                if (v && !String(row[f] ?? '').toLowerCase().includes(v.toLowerCase())) return false;
+            }
+            return true;
+        });
+    }
+
+    _sorted(rows) {
+        if (!this._sortField) return rows;
+        const f = this._sortField, d = this._sortDir;
+        return [...rows].sort((a, b) => {
+            const av = a[f] ?? '', bv = b[f] ?? '';
+            const n  = Number(av), m  = Number(bv);
+            const cmp = (!isNaN(n) && !isNaN(m) && av !== '' && bv !== '')
+                ? n - m
+                : String(av).localeCompare(String(bv), undefined, { numeric: true });
+            return d === 'asc' ? cmp : -cmp;
+        });
+    }
+
+    _build(container) {
+        container.innerHTML = '';
+        const wrap   = document.createElement('div'); wrap.className = 'vg-wrap';
+        const scroll = document.createElement('div'); scroll.className = 'vg-scroll';
+        const table  = document.createElement('table'); table.className = 'vg-table';
+        const thead  = document.createElement('thead');
+
+        // Sort header row
+        const hRow = document.createElement('tr');
+        this._cols.forEach(col => {
+            const th = document.createElement('th');
+            th.innerHTML = col.headerName + '<span class="vg-sort-icon" id="si_' + col.field + '"></span>';
+            th.addEventListener('click', () => this._toggleSort(col.field));
+            hRow.appendChild(th);
+        });
+        thead.appendChild(hRow);
+
+        // Floating filter row
+        const fRow = document.createElement('tr'); fRow.className = 'vg-filter-row';
+        this._cols.forEach(col => {
+            const th = document.createElement('th');
+            const inp = document.createElement('input');
+            inp.type = 'text'; inp.className = 'vg-col-filter';
+            inp.placeholder = 'Filter ' + col.headerName + '…';
+            inp.id = 'cf_' + col.field;
+            inp.addEventListener('input', () => { this._colFilter[col.field] = inp.value; this._page = 1; this._refresh(); });
+            th.appendChild(inp); fRow.appendChild(th);
+        });
+        thead.appendChild(fRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody'); tbody.id = 'vg-body';
+        table.appendChild(tbody);
+        scroll.appendChild(table);
+        wrap.appendChild(scroll);
+
+        // Pagination
+        const pag = document.createElement('div'); pag.className = 'vg-pagination';
+        const sl  = document.createElement('span'); sl.textContent = 'Rows per page:'; pag.appendChild(sl);
+        const sel = document.createElement('select');
+        [10, 25, 50, 100, 500].forEach(n => {
+            const o = document.createElement('option'); o.value = n; o.text = n;
+            if (n === this._pageSize) o.selected = true;
+            sel.appendChild(o);
+        });
+        sel.addEventListener('change', () => { this._pageSize = Number(sel.value); this._page = 1; this._refresh(); });
+        pag.appendChild(sel);
+
+        this._btnFirst = this._mkBtn('«', () => { this._page = 1; this._refresh(); });
+        this._btnPrev  = this._mkBtn('‹', () => { this._page--; this._refresh(); });
+        this._btnNext  = this._mkBtn('›', () => { this._page++; this._refresh(); });
+        this._btnLast  = this._mkBtn('»', () => { this._page = this._totalPages || 1; this._refresh(); });
+        [this._btnFirst, this._btnPrev, this._btnNext, this._btnLast].forEach(b => pag.appendChild(b));
+
+        const info = document.createElement('span'); info.className = 'vg-page-info'; info.id = 'vg-page-info';
+        pag.appendChild(info);
+
+        this._tbody = tbody;
+        wrap.appendChild(pag);
+        container.appendChild(wrap);
+    }
+
+    _mkBtn(label, fn) {
+        const b = document.createElement('button'); b.className = 'vg-page-btn'; b.textContent = label;
+        b.addEventListener('click', fn); return b;
+    }
+
+    _toggleSort(field) {
+        if (this._sortField === field) {
+            this._sortDir = this._sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+            if (this._sortField) { const old = document.getElementById('si_' + this._sortField); if (old) old.textContent = ''; }
+            this._sortField = field; this._sortDir = 'asc';
+        }
+        const icon = document.getElementById('si_' + field);
+        if (icon) icon.textContent = this._sortDir === 'asc' ? ' ▲' : ' ▼';
+        this._page = 1; this._refresh();
+    }
+
+    _refresh() {
+        const filtered = this._filtered();
+        const sorted   = this._sorted(filtered);
+        const total    = sorted.length;
+        this._totalPages = Math.max(1, Math.ceil(total / this._pageSize));
+        if (this._page > this._totalPages) this._page = this._totalPages;
+
+        const start = (this._page - 1) * this._pageSize;
+        const page  = sorted.slice(start, start + this._pageSize);
+
+        this._tbody.innerHTML = '';
+        page.forEach(row => {
+            const tr = document.createElement('tr');
+            this._cols.forEach(col => {
+                const td = document.createElement('td'); td.textContent = row[col.field] ?? ''; tr.appendChild(td);
+            });
+            this._tbody.appendChild(tr);
+        });
+
+        const info = document.getElementById('vg-page-info');
+        if (info) {
+            const from = total === 0 ? 0 : start + 1;
+            info.textContent = from + '–' + Math.min(start + this._pageSize, total) + ' of ' + total.toLocaleString();
+        }
+        this._btnFirst.disabled = this._page <= 1;
+        this._btnPrev.disabled  = this._page <= 1;
+        this._btnNext.disabled  = this._page >= this._totalPages;
+        this._btnLast.disabled  = this._page >= this._totalPages;
+        const el = document.getElementById('totalRows');
+        if (el) el.textContent = total.toLocaleString();
+    }
+
+    /* Public API — matches AG Grid methods used in this file */
+    setGridOption(key, val) { if (key === 'quickFilterText') { this._quickText = val || ''; this._page = 1; this._refresh(); } }
+    setFilterModel(model) {
+        if (!model) {
+            this._colFilter = {};
+            this._cols.forEach(c => { const el = document.getElementById('cf_' + c.field); if (el) el.value = ''; });
+            this._page = 1; this._refresh();
+        }
+    }
+    getColumns()       { return this._cols.map(c => ({ getId: () => c.field })); }
+    autoSizeColumns()  { /* table-layout:auto handles this */ }
+    sizeColumnsToFit() { /* handled by CSS */ }
+    exportDataAsCsv(opts) {
+        const rows  = this._sorted(this._filtered());
+        const lines = [this._cols.map(c => c.field).join(',')];
+        rows.forEach(row => {
+            lines.push(this._cols.map(c => {
+                const v = String(row[c.field] ?? '');
+                return (v.includes(',') || v.includes('"') || v.includes('\n'))
+                    ? '"' + v.replace(/"/g, '""') + '"' : v;
+            }).join(','));
+        });
+        _download(lines.join('\n'), opts.fileName || 'export.csv', 'text/csv');
+    }
+    forEachNodeAfterFilterAndSort(cb) { this._sorted(this._filtered()).forEach(row => cb({ data: row })); }
+}
+
+/* ================================================================
+   MAIN LOGIC
+   ================================================================ */
+let gridApi = null;
+let currentDatasetName = 'export';
+let currentColumns = [];
+
+function normalizeRows(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (Array.isArray(raw.data))    return raw.data;
+    if (Array.isArray(raw.rows))    return raw.rows;
+    if (Array.isArray(raw.results)) return raw.results;
+    if (Array.isArray(raw.records)) return raw.records;
+    if (Array.isArray(raw.columns) && Array.isArray(raw.rows)) {
+        return raw.rows.map(r => {
+            const o = {};
+            raw.columns.forEach((c, i) => { o[typeof c === 'string' ? c : (c.name || c.label || 'col' + i)] = r[i]; });
+            return o;
+        });
+    }
+    return [];
+}
+
+function showNoData(msg) {
+    document.getElementById('gridWrap').innerHTML =
+        '<div class="no-data"><h2>No Data Available</h2><p>' + msg + '</p></div>';
+}
+
+function _download(text, fileName, mime) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: mime + ';charset=utf-8;' }));
+    a.download = fileName; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function loadGridData() {
+    const stored = localStorage.getItem('gridData');
+    if (!stored) { showNoData('Please configure your query in the main application and click "View Grid".'); return; }
+
+    let cfg;
+    try { cfg = JSON.parse(stored); } catch(e) { showNoData('Stored data is corrupt: ' + e.message); return; }
+
+    const rows = normalizeRows(cfg.data);
+    currentDatasetName = cfg.dataset || 'export';
+    document.getElementById('datasetName').textContent   = 'Dataset: ' + currentDatasetName;
+    document.getElementById('distinctBadge').textContent = cfg.useDistinct ? 'Yes' : 'No';
+
+    if (cfg.filters && cfg.filters.length) {
+        document.getElementById('activeFilters').innerHTML = cfg.filters.map(f =>
+            '<span class="filter-badge"><strong>' + f.column + '</strong> ' + f.operator + ' ' + f.value + '</span>'
+        ).join('');
+    }
+
+    let columns = (cfg.columns && cfg.columns.length) ? cfg.columns.slice() : [];
+    if (rows.length) {
+        const keys = Object.keys(rows[0]);
+        if (!columns.length) columns = keys;
+        keys.forEach(k => { if (!columns.includes(k)) columns.push(k); });
+    }
+    currentColumns = columns;
+    document.getElementById('totalRows').textContent    = rows.length.toLocaleString();
+    document.getElementById('totalColumns').textContent = columns.length;
+    if (!rows.length) { showNoData('Query returned 0 rows.'); return; }
+
+    const columnDefs = columns.map(col => ({
+        field: col, headerName: col,
+        filter: true, sortable: true, resizable: true, floatingFilter: true, suppressMovable: false
+    }));
+
+    const gridDiv = document.getElementById('myGrid');
+
+    // Try AG Grid first
+    if (window.agGrid) {
+        try {
+            const opts = {
+                columnDefs, rowData: rows,
+                defaultColDef: { flex: 1, minWidth: 100, filter: true, sortable: true, resizable: true, suppressMovable: false },
+                animateRows: true, rowSelection: 'multiple',
+                pagination: true, paginationPageSize: 50, paginationPageSizeSelector: [10, 25, 50, 100, 500],
+                onGridReady(params) {
+                    gridApi = params.api;
+                    setTimeout(() => { try { params.api.sizeColumnsToFit(); } catch(e){} }, 100);
+                }
+            };
+            if (typeof agGrid.createGrid === 'function') {
+                gridApi = agGrid.createGrid(gridDiv, opts);
+            } else {
+                new agGrid.Grid(gridDiv, opts);
+            }
+            return; // AG Grid succeeded
+        } catch(e) {
+            console.warn('AG Grid init error — switching to built-in table:', e);
+        }
+    }
+
+    // Fallback: built-in vanilla table
+    document.getElementById('fallbackBadge').style.display = 'inline-block';
+    gridApi = new VanillaGrid(gridDiv, { columnDefs, rowData: rows, paginationPageSize: 50 });
+}
+
+/* ── Button handlers — work with both AG Grid and VanillaGrid ── */
+function onQuickFilterChanged() {
+    if (!gridApi) return;
+    const v = document.getElementById('quickFilter').value;
+    if (typeof gridApi.setGridOption === 'function')  gridApi.setGridOption('quickFilterText', v);
+    else if (typeof gridApi.setQuickFilter === 'function') gridApi.setQuickFilter(v);
+}
+function clearFilters() {
+    if (!gridApi) return;
+    gridApi.setFilterModel(null);
+    document.getElementById('quickFilter').value = '';
+    if (typeof gridApi.setGridOption === 'function')  gridApi.setGridOption('quickFilterText', '');
+    else if (typeof gridApi.setQuickFilter === 'function') gridApi.setQuickFilter('');
+}
+function autoSizeAll() {
+    if (!gridApi || typeof gridApi.getColumns !== 'function') return;
+    const ids = gridApi.getColumns().map(c => c.getId());
+    if (typeof gridApi.autoSizeColumns === 'function') gridApi.autoSizeColumns(ids, false);
+}
+function exportToCSV() {
+    if (!gridApi) return;
+    if (typeof gridApi.exportDataAsCsv === 'function') {
+        gridApi.exportDataAsCsv({ fileName: currentDatasetName + '_export_' + new Date().toISOString().slice(0,10) + '.csv' });
+    }
+}
+function exportToExcel() {
+    if (!gridApi) return;
+    const rows = [];
+    gridApi.forEachNodeAfterFilterAndSort(n => rows.push(n.data));
+    if (window.XLSX) {
+        const ws = XLSX.utils.json_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, (currentDatasetName || 'Sheet1').substring(0, 31));
+        XLSX.writeFile(wb, currentDatasetName + '_export_' + new Date().toISOString().slice(0,10) + '.xlsx');
+    } else {
+        // SheetJS unavailable — export as CSV
+        const lines = [currentColumns.join(',')];
+        rows.forEach(row => {
+            lines.push(currentColumns.map(c => {
+                const v = String(row[c] ?? '');
+                return (v.includes(',') || v.includes('"')) ? '"' + v.replace(/"/g, '""') + '"' : v;
+            }).join(','));
+        });
+        _download(lines.join('\n'), currentDatasetName + '_export_' + new Date().toISOString().slice(0,10) + '.csv', 'text/csv');
+        alert('Excel library unavailable — exported as CSV instead.');
+    }
+}
+
+/* ── CDN loaders ── */
+function loadAgGrid() {
+    return new Promise(function(resolve, reject) {
+        if (window.agGrid) return resolve();
+        const sources = [
+            'https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/dist/ag-grid-community.min.js',
+            'https://unpkg.com/ag-grid-community@31.3.2/dist/ag-grid-community.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/ag-grid/31.3.2/ag-grid-community.min.js'
+        ];
+        let i = 0;
+        function tryNext() {
+            if (i >= sources.length) return reject(new Error('All CDNs failed'));
+            const s = document.createElement('script');
+            s.src = sources[i++]; s.onload = () => window.agGrid ? resolve() : tryNext(); s.onerror = tryNext;
+            document.head.appendChild(s);
+        }
+        tryNext();
+    });
+}
+function loadSheetJS() {
+    return new Promise(function(resolve) {
+        if (window.XLSX) return resolve();
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        s.onload = resolve; s.onerror = resolve; // fail silently
+        document.head.appendChild(s);
+    });
+}
+
+/* ── Bootstrap ── */
+window.addEventListener('DOMContentLoaded', function() {
+    loadSheetJS(); // parallel, optional
+    loadAgGrid()
+        .then(loadGridData)
+        .catch(function() {
+            // AG Grid CDN failed — loadGridData will render the built-in table
+            loadGridData();
+        });
+});
+</script>
+</body>
+</html>
