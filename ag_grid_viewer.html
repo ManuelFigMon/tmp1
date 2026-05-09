@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AG Grid Data Viewer - DMQ</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-grid.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/styles/ag-theme-alpine.min.css">
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            padding: 10px;
+            font-size: 11px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 20px);
+        }
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-bottom: 2px solid #3a6b97;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            flex: 0 0 auto;
+        }
+        .header h1 { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .header p  { font-size: 11px; opacity: 0.95; }
+        .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn {
+            padding: 6px 14px; border: 1px solid transparent; border-radius: 3px;
+            cursor: pointer; font-size: 11px; font-weight: 600; transition: background 0.2s;
+        }
+        .btn-primary  { background: white; color: #4a7ba7; border-color: white; }
+        .btn-primary:hover  { background: #e8f0f8; }
+        .btn-secondary { background: transparent; color: white; border-color: rgba(255,255,255,0.6); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+        .info-bar {
+            background: #f8f8f8; padding: 10px 20px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid #e0e0e0; flex-wrap: wrap; gap: 10px; flex: 0 0 auto;
+        }
+        .info-group { display: flex; gap: 20px; flex-wrap: wrap; }
+        .info-item  { display: flex; align-items: center; gap: 6px; }
+        .info-label { font-weight: 600; color: #4a7ba7; font-size: 11px; }
+        .info-value {
+            color: #333; font-size: 11px; background: white;
+            padding: 3px 10px; border-radius: 3px; border: 1px solid #d0d0d0;
+        }
+        .badge { background: #4a7ba7; color: white; padding: 3px 10px; border-radius: 3px; font-size: 11px; font-weight: 600; }
+        .filter-badge {
+            background: #e8f0f8; color: #333; padding: 4px 10px;
+            border-radius: 3px; font-size: 11px; border: 1px solid #c5d6e8;
+        }
+        .filter-badge strong { color: #4a7ba7; }
+        .toolbar {
+            padding: 10px 20px; background: white; border-bottom: 1px solid #e0e0e0;
+            display: flex; gap: 10px; align-items: center; flex: 0 0 auto;
+        }
+        .search-input {
+            flex: 1; padding: 6px 10px; border: 1px solid #c0c0c0;
+            border-radius: 3px; font-size: 11px;
+        }
+        .search-input:focus { outline: none; border-color: #4a7ba7; box-shadow: 0 0 0 2px rgba(74,123,167,0.15); }
+        .grid-wrap { flex: 1 1 auto; min-height: 0; padding: 10px 20px 20px 20px; overflow: hidden; }
+        #myGrid { width: 100%; height: 100%; }
+        .no-data { text-align: center; padding: 50px 20px; color: #666; }
+        .no-data h2 { color: #4a7ba7; margin-bottom: 10px; font-size: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div>
+                <h1>AG Grid Data Viewer</h1>
+                <p id="datasetName">Loading data...</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn btn-primary"   onclick="exportToCSV()">Export CSV</button>
+                <button class="btn btn-primary"   onclick="exportToExcel()">Export Excel</button>
+                <button class="btn btn-secondary" onclick="clearFilters()">Clear Filters</button>
+                <button class="btn btn-secondary" onclick="autoSizeAll()">Auto-Size</button>
+                <button class="btn btn-secondary" onclick="window.close()">Close</button>
+            </div>
+        </div>
+
+        <div class="info-bar">
+            <div class="info-group">
+                <div class="info-item">
+                    <span class="info-label">Total Rows:</span>
+                    <span class="info-value" id="totalRows">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Columns:</span>
+                    <span class="info-value" id="totalColumns">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Distinct:</span>
+                    <span class="badge" id="distinctBadge">No</span>
+                </div>
+            </div>
+            <div id="activeFilters" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+        </div>
+
+        <div class="toolbar">
+            <input type="text" class="search-input" id="quickFilter"
+                   placeholder="Quick search across all columns..." oninput="onQuickFilterChanged()">
+        </div>
+
+        <div class="grid-wrap" id="gridWrap">
+            <div id="myGrid" class="ag-theme-alpine"></div>
+        </div>
+    </div>
+
+    <script>
+        let gridApi = null;
+        let currentDatasetName = 'export';
+
+        function normalizeRows(raw) {
+            if (!raw) return [];
+            if (Array.isArray(raw)) return raw;
+            if (Array.isArray(raw.data))    return raw.data;
+            if (Array.isArray(raw.rows))    return raw.rows;
+            if (Array.isArray(raw.results)) return raw.results;
+            if (Array.isArray(raw.records)) return raw.records;
+            if (Array.isArray(raw.columns) && Array.isArray(raw.rows)) {
+                return raw.rows.map(r => {
+                    const o = {};
+                    raw.columns.forEach((c, i) => {
+                        o[typeof c === 'string' ? c : (c.name || c.label || ('col' + i))] = r[i];
+                    });
+                    return o;
+                });
+            }
+            return [];
+        }
+
+        function showNoData(msg) {
+            document.getElementById('gridWrap').innerHTML =
+                '<div class="no-data"><h2>No Data Available</h2><p>' + msg + '</p></div>';
+        }
+
+        function loadGridData() {
+            // localStorage is shared across tabs (sessionStorage is tab-isolated)
+            const gridDataStr = localStorage.getItem('gridData');
+            if (!gridDataStr) {
+                showNoData('Please configure your query in the main application and click "View Grid".');
+                return;
+            }
+
+            let gridConfig;
+            try { gridConfig = JSON.parse(gridDataStr); }
+            catch (e) { showNoData('Stored grid data is corrupt: ' + e.message); return; }
+
+            const rows = normalizeRows(gridConfig.data);
+            currentDatasetName = gridConfig.dataset || 'export';
+
+            document.getElementById('datasetName').textContent  = 'Dataset: ' + currentDatasetName;
+            document.getElementById('totalRows').textContent     = rows.length.toLocaleString();
+            document.getElementById('distinctBadge').textContent = gridConfig.useDistinct ? 'Yes' : 'No';
+
+            if (gridConfig.filters && gridConfig.filters.length) {
+                document.getElementById('activeFilters').innerHTML = gridConfig.filters.map(f =>
+                    '<span class="filter-badge"><strong>' + f.column + '</strong> ' + f.operator + ' ' + f.value + '</span>'
+                ).join('');
+            }
+
+            // Derive columns from explicit selection first, then supplement from data keys
+            let columns = (gridConfig.columns && gridConfig.columns.length) ? gridConfig.columns.slice() : [];
+            if (rows.length) {
+                const keys = Object.keys(rows[0]);
+                if (!columns.length) columns = keys;
+                keys.forEach(k => { if (columns.indexOf(k) === -1) columns.push(k); });
+            }
+            document.getElementById('totalColumns').textContent = columns.length;
+
+            if (!rows.length) {
+                showNoData('Query returned 0 rows.');
+                return;
+            }
+
+            const columnDefs = columns.map(col => ({
+                field: col,
+                headerName: col,
+                filter: true,
+                sortable: true,
+                resizable: true,
+                floatingFilter: true,
+                suppressMovable: false
+            }));
+
+            const gridOptions = {
+                columnDefs: columnDefs,
+                rowData: rows,
+                defaultColDef: {
+                    flex: 1,
+                    minWidth: 100,
+                    filter: true,
+                    sortable: true,
+                    resizable: true,
+                    suppressMovable: false
+                },
+                animateRows: true,
+                rowSelection: 'multiple',
+                pagination: true,
+                paginationPageSize: 50,
+                paginationPageSizeSelector: [10, 25, 50, 100, 500],
+                onGridReady: function(params) {
+                    gridApi = params.api;
+                    setTimeout(function() {
+                        try { params.api.sizeColumnsToFit(); } catch(e) {}
+                    }, 100);
+                }
+            };
+
+            const gridDiv = document.getElementById('myGrid');
+
+            if (window.agGrid && typeof agGrid.createGrid === 'function') {
+                gridApi = agGrid.createGrid(gridDiv, gridOptions);
+            } else if (window.agGrid && typeof agGrid.Grid === 'function') {
+                new agGrid.Grid(gridDiv, gridOptions);
+            } else {
+                showNoData('AG Grid library failed to load.');
+            }
+        }
+
+        function onQuickFilterChanged() {
+            if (!gridApi) return;
+            const v = document.getElementById('quickFilter').value;
+            if (typeof gridApi.setGridOption === 'function') {
+                gridApi.setGridOption('quickFilterText', v);
+            } else {
+                gridApi.setQuickFilter(v);
+            }
+        }
+
+        function clearFilters() {
+            if (!gridApi) return;
+            gridApi.setFilterModel(null);
+            document.getElementById('quickFilter').value = '';
+            if (typeof gridApi.setGridOption === 'function') {
+                gridApi.setGridOption('quickFilterText', '');
+            } else {
+                gridApi.setQuickFilter('');
+            }
+        }
+
+        function autoSizeAll() {
+            if (!gridApi) return;
+            const ids = [];
+            gridApi.getColumns().forEach(c => ids.push(c.getId()));
+            gridApi.autoSizeColumns(ids, false);
+        }
+
+        function exportToCSV() {
+            if (!gridApi) return;
+            gridApi.exportDataAsCsv({
+                fileName: currentDatasetName + '_export_' + new Date().toISOString().slice(0, 10) + '.csv'
+            });
+        }
+
+        function exportToExcel() {
+            if (!gridApi) return;
+            const rows = [];
+            gridApi.forEachNodeAfterFilterAndSort(n => rows.push(n.data));
+            const ws = XLSX.utils.json_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            const sheetName = (currentDatasetName || 'Sheet1').substring(0, 31);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+            XLSX.writeFile(wb, currentDatasetName + '_export_' + new Date().toISOString().slice(0, 10) + '.xlsx');
+        }
+
+        // Load AG Grid JS from CDN with fallback, then render grid
+        function loadAgGrid() {
+            return new Promise(function(resolve, reject) {
+                if (window.agGrid) return resolve();
+                const sources = [
+                    'https://cdn.jsdelivr.net/npm/ag-grid-community@31.3.2/dist/ag-grid-community.min.js',
+                    'https://unpkg.com/ag-grid-community@31.3.2/dist/ag-grid-community.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/ag-grid/31.3.2/ag-grid-community.min.js'
+                ];
+                let i = 0;
+                function tryNext() {
+                    if (i >= sources.length) return reject(new Error('All CDNs failed'));
+                    const s = document.createElement('script');
+                    s.src = sources[i++];
+                    s.onload  = function() { window.agGrid ? resolve() : tryNext(); };
+                    s.onerror = tryNext;
+                    document.head.appendChild(s);
+                }
+                tryNext();
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', function() {
+            loadAgGrid()
+                .then(loadGridData)
+                .catch(function(err) {
+                    try {
+                        const cfg  = JSON.parse(localStorage.getItem('gridData') || '{}');
+                        const rows = normalizeRows(cfg.data);
+                        document.getElementById('datasetName').textContent  = 'Dataset: ' + (cfg.dataset || 'export');
+                        document.getElementById('totalRows').textContent     = rows.length.toLocaleString();
+                        document.getElementById('totalColumns').textContent  =
+                            (cfg.columns && cfg.columns.length) || (rows[0] ? Object.keys(rows[0]).length : 0);
+                        document.getElementById('distinctBadge').textContent = cfg.useDistinct ? 'Yes' : 'No';
+                    } catch(e) {}
+                    showNoData(
+                        'AG Grid library failed to load from CDN. ' +
+                        'If you opened this file from disk, your browser may block remote scripts. ' +
+                        'Try opening over http(s) or check the browser console. Details: ' + err.message
+                    );
+                });
+        });
+    </script>
+</body>
+</html>
