@@ -18,9 +18,25 @@
     All paths, addresses, and behavioral flags are defined in the
     CONFIGURATION region.
 
+  EXECUTION POLICY — IMPORTANT (UNC / network share paths):
+    PowerShell blocks unsigned scripts loaded from network shares by default.
+    You will see "is not digitally signed" if you double-click or call the
+    script without one of the workarounds below.
+
+    Option A — Unblock the file once (recommended, persists):
+      Unblock-File -Path "\\server\share\...\SAS_Monitor_Lite_v1.ps1"
+      Then run normally.
+
+    Option B — Pass -ExecutionPolicy Bypass at every invocation:
+      powershell.exe -ExecutionPolicy Bypass `
+        -File "\\server\share\...\SAS_Monitor_Lite_v1.ps1"
+
+    Option C — Copy to a local path first (C:\scripts\), then run from there.
+      Scripts on local drives are not subject to the UNC-path zone restriction.
+
   Task Scheduler setup:
     Program : powershell.exe
-    Args    : -NonInteractive -ExecutionPolicy Bypass -File "C:\scripts\SAS_Monitor_Lite_v1.ps1"
+    Args    : -NonInteractive -ExecutionPolicy Bypass -File "\\a70tucgssasr006\custom\projects\sas_monitor\SAS_Monitor_Lite_v1.ps1"
     Trigger : At system startup; also repeat daily (for daily report timing)
     Run As  : Any domain account with read/write access to $DataDir and $LogDir
 
