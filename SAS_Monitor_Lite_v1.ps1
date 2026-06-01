@@ -64,7 +64,7 @@ param(
 $MonitorURL         = "https://cgssaswebu.a70admed.com/SASStoredProcess/"  # URL to poll
 $PollingIntervalSec = 60    # seconds between each URL check
 $TimeoutSec         = 30    # max seconds to wait for HTTP response
-$FailureThreshold   = 3     # consecutive DOWN checks before triggering URGENT alert
+$FailureThreshold   = 1     # consecutive DOWN checks before triggering URGENT alert
 
 # --- DATA STORAGE (CSV records — one file per month, append-only) ---
 $DataDir         = "\\a70tucgssasr006\custom\projects\sas_monitor\data"  # UNC path for CSV files
@@ -90,7 +90,7 @@ $WeeklyGroup = @("manager1@domain.com", "manager2@domain.com")  # weekly digest 
 $UrgentGroup = @("oncall1@domain.com", "oncall2@domain.com")    # outage/recovery alerts
 
 # --- REPORT SCHEDULE ---
-$DailyReportHour  = 7           # 24-hour clock hour to send the daily report
+$DailyReportHour  = 6           # 24-hour clock hour to send the daily report
 $WeeklyReportDay  = "Monday"    # day of week for weekly digest
 $WeeklyReportHour = 7           # 24-hour clock hour to send the weekly digest
 
