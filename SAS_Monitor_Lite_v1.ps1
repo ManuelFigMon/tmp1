@@ -731,9 +731,10 @@ Write-RunLog "DataDir: $DataDir"
 Write-RunLog "LogDir:  $LogDir"
 
 # Log a clean shutdown message if PowerShell exits for any reason
+# Out-Null suppresses the PSEventJob object Register-EngineEvent returns (State: NotStarted)
 Register-EngineEvent PowerShell.Exiting -Action {
     Write-RunLog "SAS Monitor Lite terminated." -Level "WARN"
-}
+} | Out-Null
 
 # ---- MONITORING LOOP --------------------------------------------------------
 do {
