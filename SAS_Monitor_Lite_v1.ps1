@@ -341,7 +341,7 @@ function Invoke-URLCheck {
         $contentLen     = if ($resp.Headers["Content-Length"]) { [long]$resp.Headers["Content-Length"] } else { -1 }
         $finalURL       = $resp.BaseResponse.ResponseUri.AbsoluteUri
         # Count redirects as difference between original and final URI hops (approximate)
-        $redirectCount  = ($resp.BaseResponse.ResponseUri.AbsoluteUri -ne $MonitorURL) ? 1 : 0
+        $redirectCount  = if ($resp.BaseResponse.ResponseUri.AbsoluteUri -ne $MonitorURL) { 1 } else { 0 }
 
         if ($httpCode -eq 200) {
             $serverStatus = "UP"
