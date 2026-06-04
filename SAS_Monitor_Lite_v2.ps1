@@ -578,23 +578,33 @@ function Invoke-AllSASTests {
 ###############################################################################
 
 function Get-EmailFooter {
-    $month = Get-Date -Format 'yyyy-MM'
+    $dashboardURL = "https://cgssaswebu.a70admed.com/custom/projects/sas_monitor/SAS_Monitor_Dashboard.html"
     return @"
 <hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
 <table style="font-size:12px;color:#555;width:100%">
   <tr>
     <td><strong>Monitoring data:</strong></td>
-    <td><code>$DataDir\$($DataFilePrefix)_$month.csv</code></td>
+    <td><a href="$dashboardURL">$dashboardURL</a></td>
   </tr>
   <tr>
     <td><strong>Log files:</strong></td>
-    <td><code>$LogDir\</code></td>
+    <td><a href="$dashboardURL">$dashboardURL</a></td>
   </tr>
   <tr>
     <td><strong>SAS test logs:</strong></td>
     <td><code>$SASLogDir\</code></td>
   </tr>
 </table>
+<hr style="border:none;border-top:1px solid #ddd;margin:20px 0">
+<p style="font-size:13px;margin:0">Thank you,</p>
+<p style="font-size:13px;margin:4px 0"><strong>Manuel A. Figallo</strong> | Statistical Programmer IV and Analyst | CGS</p>
+<p style="font-size:12px;margin:4px 0">26 Century Blvd., Ste NT600<br>Nashville, TN 37214-3685</p>
+<p style="font-size:12px;margin:4px 0">email: <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+<p style="font-size:11px;color:#777;margin-top:12px">
+  Confidential, unpublished property of CGS Administrators, LLC. Do not duplicate or distribute.<br>
+  Use and distribution limited solely to authorized personnel.<br>
+  &copy; 2026 Copyright, CGS Administrators, LLC.
+</p>
 "@
 }
 
@@ -869,6 +879,25 @@ function Send-WeeklyReport {
         }
 
         $body = @"
+<p style="font-size:13px">Team,</p>
+<p style="font-size:13px">We are pleased to introduce the SAS Monitor Tool, designed to keep our SAS environment running smoothly and reliably.</p>
+<p style="font-size:13px">The tool provides continuous, automated oversight of our SAS systems, servers, processes, and services. Its goals are straightforward:</p>
+<ul style="font-size:13px;margin:8px 0 8px 20px">
+  <li>Detect issues early &mdash; identify slow performance, bottlenecks, or outages before they impact your work</li>
+  <li>Keep services available &mdash; proactively flag down or degraded services for rapid resolution</li>
+  <li>Support a stable, well-managed environment &mdash; aligned with best practices for reliability, performance, security, and operational efficiency</li>
+</ul>
+<p style="font-size:13px">This approach follows six core principles of a well-architected framework:</p>
+<ol style="font-size:13px;margin:8px 0 8px 20px">
+  <li><strong>Operational Excellence</strong> &mdash; run and monitor systems effectively, and continually improve processes</li>
+  <li><strong>Security</strong> &mdash; protect data, systems, and assets through proactive risk management</li>
+  <li><strong>Reliability</strong> &mdash; ensure systems perform their intended functions and recover quickly from failures</li>
+  <li><strong>Performance Efficiency</strong> &mdash; use resources efficiently to meet demand and maintain speed</li>
+  <li><strong>Cost Optimization</strong> &mdash; avoid unnecessary spend while maximizing business value</li>
+</ol>
+<p style="font-size:13px">If you would like to receive email notifications or alerts from the SAS Monitor Tool, please contact Manuel Figallo to be added to the distribution list.</p>
+<p style="font-size:13px">Below is the most recent report.</p>
+<hr style="border:none;border-top:1px solid #ddd;margin:16px 0">
 <h2>SAS Monitor — Weekly Status Report</h2>
 <p><strong>Week of:</strong> $($weekStart.ToString('MM/dd/yyyy')) — $(Get-Date -Format 'MM/dd/yyyy')</p>
 <p><strong>7-Day Uptime:</strong> $weekUpPct%</p>
