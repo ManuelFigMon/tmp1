@@ -1,0 +1,1912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMQ — Distribution Analysis</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+            padding-bottom: 36px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin-bottom: 0;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.95;
+            margin-top: 3px;
+        }
+
+        .top-nav {
+            position: absolute;
+            top: 15px;
+            right: 70px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .top-nav a {
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .top-nav a:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        #nav-welcome {
+            color: #d4f5d4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 10px;
+            display: none;
+        }
+
+        .sas-footer {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            z-index: 50;
+        }
+
+        .sas-footer .session-indicator {
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes sasPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #footer-signout {
+            color: #cc0000;
+            text-decoration: none;
+            display: none;
+        }
+
+        #footer-signout:hover { text-decoration: underline; }
+
+        .hamburger-container {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+        }
+
+        .hamburger {
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .hamburger:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .dropdown-menu {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background: white;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .dropdown-menu.active {
+            display: block;
+        }
+
+        .dropdown-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-menu a:hover {
+            background: #f8f8f8;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .modal-body {
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body a {
+            color: #4a7ba7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        /* Report Toolbar */
+        #reportToolbar {
+            display: none;
+            background: #f0f4f8;
+            border-bottom: 1px solid #c8d8e8;
+            padding: 6px 16px;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        #reportToolbar.visible {
+            display: flex;
+        }
+
+        #reportToolbar label {
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        #reportToolbar input[type="text"] {
+            width: 220px;
+            padding: 4px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+
+        #reportSaveFeedback {
+            font-size: 11px;
+            color: #2e7d32;
+            margin-left: 8px;
+        }
+
+        /* Main Layout */
+        .main-content {
+            padding: 15px;
+        }
+
+        .content-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+        }
+
+        .input-panel {
+            width: 35%;
+            flex-shrink: 0;
+        }
+
+        #vizPanel {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            background: white;
+            border-radius: 0;
+            padding: 15px;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 3px;
+            height: 18px;
+            background: #4a7ba7;
+            margin-right: 10px;
+            border-radius: 0;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #4a7ba7;
+            box-shadow: 0 0 0 1px #4a7ba7;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a7ba7;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+            margin-left: 6px;
+            flex-shrink: 0;
+        }
+
+        .info-icon:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #2b2b2b;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: normal;
+            width: 300px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            line-height: 1.4;
+            border: 1px solid #404040;
+        }
+
+        .info-icon:hover::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: #2b2b2b;
+            z-index: 1001;
+        }
+
+        .filters-container {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 10px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 160px 100px 160px 40px;
+            gap: 6px;
+            align-items: end;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .btn {
+            padding: 6px 16px;
+            border: 1px solid;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: #5a8ab8;
+            color: white;
+            border-color: #4a7ba7;
+        }
+
+        .btn-primary:hover {
+            background: #4a7ba7;
+        }
+
+        .btn-secondary {
+            background: #888;
+            color: white;
+            border-color: #777;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .btn-danger {
+            background: #d9534f;
+            color: white;
+            border-color: #d43f3a;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger:hover {
+            background: #c9302c;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .actions .btn {
+            margin: 0 5px;
+            min-width: 120px;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a7ba7;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
+            background: #fff8f8;
+            border: 1px solid #e0c0c0;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .kpi-main {
+            display: flex;
+            gap: 30px;
+            align-items: baseline;
+        }
+
+        .kpi-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #d32f2f;
+            line-height: 1;
+        }
+
+        .kpi-label {
+            font-size: 11px;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .kpi-sigma-row {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .kpi-sigma-item {
+            font-size: 13px;
+            font-weight: 700;
+            color: #d32f2f;
+        }
+
+        .kpi-sigma-label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+        }
+
+        /* Viz row: z-score table + bell curve */
+        .viz-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 12px;
+            align-items: flex-start;
+        }
+
+        .zscore-table-wrap {
+            flex: 0 0 auto;
+            width: 240px;
+        }
+
+        .zscore-table-wrap table {
+            font-size: 11px;
+            border-collapse: collapse;
+            width: 100%;
+        }
+
+        .zscore-table-wrap th {
+            background: #e8f0f8;
+            border: 1px solid #c0c0c0;
+            padding: 4px 6px;
+            font-weight: 600;
+            color: #333;
+            text-align: left;
+            font-size: 10px;
+        }
+
+        .zscore-table-wrap td {
+            border: 1px solid #c0c0c0;
+            padding: 3px 6px;
+            font-size: 10px;
+        }
+
+        .zscore-table-wrap tr:nth-child(even) td {
+            background: #f8f8f8;
+        }
+
+        .bell-curve-wrap {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .bell-curve-wrap svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .chart-section {
+            margin-bottom: 12px;
+        }
+
+        .chart-section svg {
+            width: 100%;
+            height: auto;
+        }
+
+        #chartTooltip {
+            position: fixed;
+            background: rgba(30,30,30,0.92);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            display: none;
+            z-index: 5000;
+            line-height: 1.6;
+            max-width: 220px;
+        }
+
+        .viz-placeholder {
+            color: #aaa;
+            text-align: center;
+            padding: 30px;
+            font-size: 12px;
+            font-style: italic;
+            border: 1px dashed #ddd;
+        }
+
+        @media (max-width: 900px) {
+            .content-row {
+                flex-direction: column;
+            }
+            .input-panel {
+                width: 100%;
+            }
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <!-- Shared Tooltip -->
+    <div id="chartTooltip"></div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMQ — Distribution Analysis</h2>
+                <button class="modal-close" id="closeAboutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The Distribution Analysis report provides statistical insight into how metric values are spread across categories within your selected dataset.</p>
+                <p>It computes percentiles, quartiles, standard deviation, mean, and Z-scores, and renders an interactive bell curve, line chart, and bar+line combo chart.</p>
+                <p>Built with D3.js v7 and vanilla JavaScript — no frameworks required.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help &amp; Support</h2>
+                <button class="modal-close" id="closeHelpModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Thank you for using DMQ — Distribution Analysis. Select a dataset, choose a numeric metric column and a character category column, then apply any filters to refine your results.</p>
+                <p>The charts will render automatically as you make selections.</p>
+                <p>If you encounter any issues, have questions, or would like to suggest improvements, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day. Looking forward to hearing from you!</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMQ — Distribution Analysis</h1>
+            <p>Statistical distribution of metric values across categories</p>
+
+            <div class="top-nav">
+                <a id="nav-logon" href="#">Logon</a>
+                <span id="nav-welcome"></span>
+                <a id="nav-about" href="#">About</a>
+                <a id="nav-help" href="#">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" id="menuAbout">About</a>
+                    <a href="#" id="menuHelp">Help</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Toolbar (visible when authenticated) -->
+        <div id="reportToolbar">
+            <label for="reportNameInput">Report Name:</label>
+            <input type="text" id="reportNameInput" value="Distribution Analysis">
+            <button class="btn btn-primary btn-sm" id="saveReportBtn">Save Report</button>
+            <span id="reportSaveFeedback"></span>
+        </div>
+
+        <div class="main-content">
+            <div class="content-row">
+                <!-- Left: Input Panel -->
+                <div class="input-panel">
+
+                    <!-- Dataset Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Dataset Selection</h2>
+                        <div class="form-group">
+                            <label for="dataset">Choose Dataset:</label>
+                            <select id="dataset">
+                                <option value="">Select a dataset...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Column Selection -->
+                    <div class="section">
+                        <h2 class="section-title">
+                            Column Selection
+                            <span class="info-icon" data-tooltip="Distribution Analysis shows how your metric values are spread across categories. • Percentiles: 90% of values fall below the 90th percentile... • Quartiles (Q1, Q2, Q3) divide the data into four equal groups... • Standard Deviation (σ) measures spread around the mean (µ)... • The normal curve (bell curve) shows the theoretical distribution shape. • Z-score ranks each category by how many standard deviations its value is from the mean.">i</span>
+                        </h2>
+                        <div class="form-group">
+                            <label for="metricColumn">Metric Column (numeric):</label>
+                            <select id="metricColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="categoryColumn">Category Column (character):</label>
+                            <select id="categoryColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="section">
+                        <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                        <div class="filters-container">
+                            <div id="filtersContainer">
+                                <p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>
+                            </div>
+                            <button class="btn btn-secondary" id="addFilterBtn" style="margin-top:10px;">Add Filter</button>
+                        </div>
+                    </div>
+
+                </div><!-- /input-panel -->
+
+                <!-- Right: Visualization Panel -->
+                <div id="vizPanel">
+
+                    <!-- KPI Strip -->
+                    <div class="kpi-strip" id="kpiStrip">
+                        <div class="kpi-main">
+                            <div>
+                                <div class="kpi-label">Standard Deviation (σ)</div>
+                                <div class="kpi-value" id="kpiStddev">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-label">Mean (µ)</div>
+                                <div class="kpi-value" id="kpiMean">—</div>
+                            </div>
+                        </div>
+                        <div class="kpi-sigma-row" id="kpiSigmaRow">
+                            <div>
+                                <div class="kpi-sigma-label">µ−3σ</div>
+                                <div class="kpi-sigma-item" id="kpiM3">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-sigma-label">µ−2σ</div>
+                                <div class="kpi-sigma-item" id="kpiM2">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-sigma-label">µ−1σ</div>
+                                <div class="kpi-sigma-item" id="kpiM1">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-sigma-label">µ+1σ</div>
+                                <div class="kpi-sigma-item" id="kpiP1">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-sigma-label">µ+2σ</div>
+                                <div class="kpi-sigma-item" id="kpiP2">—</div>
+                            </div>
+                            <div>
+                                <div class="kpi-sigma-label">µ+3σ</div>
+                                <div class="kpi-sigma-item" id="kpiP3">—</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Z-Score Table + Bell Curve row -->
+                    <div class="viz-row">
+                        <div class="zscore-table-wrap">
+                            <div id="zscoreTableContainer">
+                                <div class="viz-placeholder">Z-Score table will appear here</div>
+                            </div>
+                        </div>
+                        <div class="bell-curve-wrap">
+                            <div id="bellCurveContainer">
+                                <div class="viz-placeholder">Bell curve will appear here</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Line Chart -->
+                    <div class="chart-section" id="lineChartContainer">
+                        <div class="viz-placeholder">Line chart will appear here</div>
+                    </div>
+
+                    <!-- Bar+Line Chart -->
+                    <div class="chart-section" id="barChartContainer">
+                        <div class="viz-placeholder">Bar chart will appear here</div>
+                    </div>
+
+                </div><!-- /vizPanel -->
+            </div><!-- /content-row -->
+
+            <!-- Actions Strip -->
+            <div class="actions">
+                <button class="btn btn-primary" id="exportImageBtn">Export Image</button>
+                <button class="btn btn-secondary" id="exportCsvBtn">Export to CSV</button>
+                <button class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout">Sign out</a>
+    </footer>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+
+    <script>
+    /* =====================================================================
+       CONFIG / SESSION HELPERS (verbatim from template)
+       ===================================================================== */
+    function getProfileBasePath() {
+        try {
+            const stored = localStorage.getItem('sas_session');
+            const sess = stored ? JSON.parse(stored) : null;
+            if (sess && sess.authenticated && sess.userid) {
+                return 'meta/profiles/' + encodeURIComponent(sess.userid) + '/';
+            }
+        } catch (e) { /* fall through */ }
+        return 'meta/profiles/default/';
+    }
+
+    function showConfigError(msg) {
+        let banner = document.getElementById('config-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'config-error-banner';
+            banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+            document.body.insertBefore(banner, document.body.firstChild);
+        }
+        banner.textContent = msg;
+    }
+
+    async function loadConfig() {
+        const base = getProfileBasePath();
+        const tryFetch = async (path) => {
+            let r = await fetch(base + path);
+            if (!r.ok && base !== 'meta/profiles/default/') {
+                r = await fetch('meta/profiles/default/' + path);
+            }
+            if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+            return r.json();
+        };
+        const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+            tryFetch('data_config.json'),
+            tryFetch('datasets.json'),
+            tryFetch('sas_config.json')
+        ]);
+        window.DATA_CONFIG = dataCfg;
+        window.datasets = datasetsCfg;
+        window.SAS_CONFIG = Object.assign({}, sasCfg, {
+            portalUrl: window.location.origin + window.location.pathname
+        });
+    }
+
+    function initDatasetDropdown() {
+        const sel = document.getElementById('dataset');
+        if (!sel || !window.datasets) return;
+        sel.innerHTML = '<option value="">Select a dataset...</option>';
+        Object.keys(window.datasets).forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            sel.appendChild(opt);
+        });
+    }
+
+    /* =====================================================================
+       DATA FUNCTIONS (verbatim from template)
+       ===================================================================== */
+    function getDataSourceURL(dataset) {
+        const datasetConfig = window.datasets[dataset];
+        const mapping = window.DATA_CONFIG.Mapping[dataset];
+        if (!mapping) throw new Error('No mapping found for dataset: ' + dataset);
+        if (datasetConfig.dmsrc_type === 'file') {
+            return window.DATA_CONFIG.baseFileURL + mapping;
+        } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+            return null;
+        }
+        throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+    }
+
+    function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+        const dataset = window.datasets[selectedDataset];
+        let sqlQuery = 'SELECT';
+        if (useDistinct) sqlQuery += ' DISTINCT';
+        sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+        sqlQuery += ' FROM ' + (dataset.data_src_name || selectedDataset);
+        if (filters.length > 0) {
+            sqlQuery += ' WHERE ';
+            filters.forEach((filter, index) => {
+                if (index > 0) sqlQuery += ' AND ';
+                if (filter.operator === 'LIKE') {
+                    sqlQuery += filter.column + ' ' + filter.operator + " '%" + filter.value + "%'";
+                } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                    sqlQuery += filter.column + ' ' + filter.operator + ' (' + filter.value + ')';
+                } else {
+                    const isNumeric = dataset.types[filter.column] === 'numeric';
+                    const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                    sqlQuery += filter.column + ' ' + filter.operator + ' ' + value;
+                }
+            });
+        }
+        return sqlQuery;
+    }
+
+    function buildAPIURL(dataset, sqlQuery) {
+        const apiEndpoint = window.DATA_CONFIG.Mapping[dataset];
+        if (!apiEndpoint) throw new Error('No API endpoint mapping found for dataset: ' + dataset);
+        return window.DATA_CONFIG.baseAPIURL + apiEndpoint +
+               '&dmq_query=' + encodeURIComponent(sqlQuery);
+    }
+
+    function applyFilters(data, filters) {
+        if (filters.length === 0) return data;
+        return data.filter(row => {
+            return filters.every(filter => {
+                const columnValue = row[filter.column];
+                const filterValue = filter.value;
+                if (columnValue === null || columnValue === undefined) return false;
+                switch (filter.operator) {
+                    case '=':
+                        return String(columnValue).toLowerCase() === filterValue.toLowerCase() ||
+                               Number(columnValue) === Number(filterValue);
+                    case '<>':
+                        return String(columnValue).toLowerCase() !== filterValue.toLowerCase();
+                    case '>': return Number(columnValue) > Number(filterValue);
+                    case '<': return Number(columnValue) < Number(filterValue);
+                    case '>=': return Number(columnValue) >= Number(filterValue);
+                    case '<=': return Number(columnValue) <= Number(filterValue);
+                    case 'LIKE':
+                        return String(columnValue).toLowerCase().includes(filterValue.toLowerCase());
+                    case 'IN': {
+                        const inValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return inValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    case 'NOT IN': {
+                        const notInValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return !notInValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    default: return true;
+                }
+            });
+        });
+    }
+
+    async function fetchData(dataset, columns, filters, useDistinct) {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const datasetConfig = window.datasets[dataset];
+        try {
+            loadingOverlay.style.display = 'flex';
+            if (datasetConfig.dmsrc_type === 'file') {
+                const url = getDataSourceURL(dataset);
+                const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) throw new Error('Invalid or empty data');
+                let filteredData = applyFilters(jsonData, filters);
+                return filteredData;
+            } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                const sqlQuery = buildSQLQuery(dataset, columns, filters, useDistinct);
+                const apiURL = buildAPIURL(dataset, sqlQuery);
+                const response = await fetch(apiURL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('API error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) return [];
+                return jsonData;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error loading data: ' + error.message);
+            return null;
+        } finally {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    /* =====================================================================
+       DISTRIBUTION-SPECIFIC STATE
+       ===================================================================== */
+    let filterCount = 0;
+    let lastFilteredData = null;
+    let lastMetricCol = null;
+    let lastCatCol = null;
+
+    /* =====================================================================
+       COLUMN POPULATION
+       ===================================================================== */
+    function updateDistributionColumns() {
+        const ds = document.getElementById('dataset').value;
+        const metricSel = document.getElementById('metricColumn');
+        const catSel = document.getElementById('categoryColumn');
+
+        metricSel.innerHTML = '<option value="">— select metric —</option>';
+        catSel.innerHTML = '<option value="">— select category —</option>';
+
+        if (!ds || !window.datasets || !window.datasets[ds]) return;
+
+        const dataset = window.datasets[ds];
+        dataset.columns.forEach(col => {
+            const type = dataset.types[col];
+            if (type === 'numeric') {
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                metricSel.appendChild(opt);
+            } else if (type === 'character') {
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                catSel.appendChild(opt);
+            }
+        });
+
+        renderDistribution();
+    }
+
+    /* =====================================================================
+       FILTER MANAGEMENT
+       ===================================================================== */
+    function getDistributionFilters() {
+        const filters = [];
+        document.querySelectorAll('.filter-row').forEach(row => {
+            const column = row.querySelector('select[name="filter_column"]')?.value;
+            const operator = row.querySelector('select[name="filter_operator"]')?.value;
+            const value = row.querySelector('input[name="filter_value"]')?.value;
+            if (column && operator && value) filters.push({ column, operator, value });
+        });
+        return filters;
+    }
+
+    function addDistributionFilter() {
+        const ds = document.getElementById('dataset').value;
+        if (!ds) { alert('Please select a dataset first'); return; }
+
+        const dataset = window.datasets[ds];
+        const container = document.getElementById('filtersContainer');
+
+        if (filterCount === 0) container.innerHTML = '';
+        filterCount++;
+
+        let colOptions = '<option value="">Column...</option>';
+        dataset.columns.forEach(col => {
+            colOptions += '<option value="' + col + '">' + col + '</option>';
+        });
+
+        const id = filterCount;
+        const div = document.createElement('div');
+        div.className = 'filter-row';
+        div.id = 'filter_' + id;
+        div.innerHTML =
+            '<div><select name="filter_column">' + colOptions + '</select></div>' +
+            '<div><select name="filter_operator">' +
+                '<option value="">Op...</option>' +
+                '<option value="=">=</option>' +
+                '<option value="<>">≠</option>' +
+                '<option value=">">&gt;</option>' +
+                '<option value="<">&lt;</option>' +
+                '<option value=">=">&ge;</option>' +
+                '<option value="<=">&le;</option>' +
+                '<option value="LIKE">LIKE</option>' +
+                '<option value="IN">IN</option>' +
+                '<option value="NOT IN">NOT IN</option>' +
+            '</select></div>' +
+            '<div><input type="text" name="filter_value" placeholder="Value..."></div>' +
+            '<div><button class="btn btn-danger" data-filterid="' + id + '">&times;</button></div>';
+
+        div.querySelector('select[name="filter_column"]').addEventListener('change', renderDistribution);
+        div.querySelector('select[name="filter_operator"]').addEventListener('change', renderDistribution);
+        div.querySelector('input[name="filter_value"]').addEventListener('input', renderDistribution);
+        div.querySelector('.btn-danger').addEventListener('click', function() {
+            removeDistributionFilter(this.dataset.filterid);
+        });
+
+        container.appendChild(div);
+        renderDistribution();
+    }
+
+    function removeDistributionFilter(id) {
+        const el = document.getElementById('filter_' + id);
+        if (el) el.remove();
+        const container = document.getElementById('filtersContainer');
+        if (container.children.length === 0) {
+            container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+            filterCount = 0;
+        }
+        renderDistribution();
+    }
+
+    function applyDistributionFilters(data) {
+        const filters = getDistributionFilters();
+        return applyFilters(data, filters);
+    }
+
+    /* =====================================================================
+       STATS COMPUTATION
+       ===================================================================== */
+    function computeStats(values) {
+        if (!values || values.length < 2) return null;
+
+        const sorted = [...values].sort((a, b) => a - b);
+        const n = sorted.length;
+        const mean = values.reduce((s, v) => s + v, 0) / n;
+        const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / n;
+        const stddev = Math.sqrt(variance);
+
+        function percentile(arr, p) {
+            const idx = Math.ceil((p / 100) * arr.length) - 1;
+            return arr[Math.max(0, idx)];
+        }
+
+        return {
+            mean,
+            stddev,
+            min: sorted[0],
+            max: sorted[n - 1],
+            q1: percentile(sorted, 25),
+            q2: percentile(sorted, 50),
+            q3: percentile(sorted, 75),
+            p10: percentile(sorted, 10),
+            p25: percentile(sorted, 25),
+            p75: percentile(sorted, 75),
+            p90: percentile(sorted, 90)
+        };
+    }
+
+    /* =====================================================================
+       KPI STRIP
+       ===================================================================== */
+    function fmt(v, decimals) {
+        if (v === null || v === undefined || isNaN(v)) return '—';
+        return v.toLocaleString('en-US', { minimumFractionDigits: decimals || 2, maximumFractionDigits: decimals || 2 });
+    }
+
+    function renderKPIStrip(stats) {
+        if (!stats) {
+            ['kpiStddev', 'kpiMean', 'kpiM3', 'kpiM2', 'kpiM1', 'kpiP1', 'kpiP2', 'kpiP3'].forEach(id => {
+                document.getElementById(id).textContent = '—';
+            });
+            return;
+        }
+        const { mean: mu, stddev: sigma } = stats;
+        document.getElementById('kpiStddev').textContent = fmt(sigma);
+        document.getElementById('kpiMean').textContent = fmt(mu);
+        document.getElementById('kpiM3').textContent = fmt(mu - 3 * sigma);
+        document.getElementById('kpiM2').textContent = fmt(mu - 2 * sigma);
+        document.getElementById('kpiM1').textContent = fmt(mu - 1 * sigma);
+        document.getElementById('kpiP1').textContent = fmt(mu + 1 * sigma);
+        document.getElementById('kpiP2').textContent = fmt(mu + 2 * sigma);
+        document.getElementById('kpiP3').textContent = fmt(mu + 3 * sigma);
+    }
+
+    /* =====================================================================
+       Z-SCORE TABLE
+       ===================================================================== */
+    function renderZScoreTable(data, metricCol, catCol, stats) {
+        const container = document.getElementById('zscoreTableContainer');
+        if (!data || data.length === 0 || !stats) {
+            container.innerHTML = '<div class="viz-placeholder">Z-Score table will appear here</div>';
+            return;
+        }
+
+        const { mean: mu, stddev: sigma } = stats;
+        const rows = data.map(row => ({
+            cat: row[catCol],
+            val: Number(row[metricCol]),
+            z: sigma > 0 ? (Number(row[metricCol]) - mu) / sigma : 0
+        })).sort((a, b) => b.z - a.z).slice(0, Math.min(data.length, 7));
+
+        let html = '<table><thead><tr>' +
+            '<th>Category</th>' +
+            '<th style="text-align:right">Value</th>' +
+            '<th style="text-align:right">Z-Score</th>' +
+            '</tr></thead><tbody>';
+
+        rows.forEach(r => {
+            html += '<tr>' +
+                '<td>' + (r.cat !== undefined && r.cat !== null ? r.cat : '—') + '</td>' +
+                '<td style="text-align:right">' + r.val.toLocaleString('en-US') + '</td>' +
+                '<td style="text-align:right;color:#d32f2f;font-weight:600">' + r.z.toFixed(2) + '</td>' +
+                '</tr>';
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+    }
+
+    /* =====================================================================
+       BELL CURVE
+       ===================================================================== */
+    function renderBellCurve(stats) {
+        const container = document.getElementById('bellCurveContainer');
+        if (!stats || stats.stddev === 0) {
+            container.innerHTML = '<div class="viz-placeholder">Bell curve will appear here</div>';
+            return;
+        }
+
+        const { mean: mu, stddev: sigma } = stats;
+        const tooltip = document.getElementById('chartTooltip');
+
+        const W = 320, H = 200;
+        const margin = { top: 16, right: 20, bottom: 30, left: 44 };
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        const xMin = mu - 4 * sigma;
+        const xMax = mu + 4 * sigma;
+
+        const normalPDF = (x) => {
+            return (1 / (sigma * Math.sqrt(2 * Math.PI))) * Math.exp(-0.5 * ((x - mu) / sigma) ** 2);
+        };
+
+        const nPoints = 200;
+        const xs = d3.range(nPoints + 1).map(i => xMin + (xMax - xMin) * i / nPoints);
+        const pts = xs.map(x => ({ x, y: normalPDF(x) }));
+        const yMax = normalPDF(mu) * 1.1;
+
+        const xScale = d3.scaleLinear().domain([xMin, xMax]).range([0, innerW]);
+        const yScale = d3.scaleLinear().domain([0, yMax]).range([innerH, 0]);
+
+        container.innerHTML = '';
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        // Dashed gridlines at µ±1σ, µ±2σ, µ±3σ
+        [-3, -2, -1, 1, 2, 3].forEach(k => {
+            const xv = mu + k * sigma;
+            if (xv >= xMin && xv <= xMax) {
+                g.append('line')
+                    .attr('x1', xScale(xv)).attr('x2', xScale(xv))
+                    .attr('y1', 0).attr('y2', innerH)
+                    .attr('stroke', '#d32f2f')
+                    .attr('stroke-width', 0.8)
+                    .attr('stroke-dasharray', '3,3')
+                    .attr('opacity', 0.5);
+                g.append('text')
+                    .attr('x', xScale(xv))
+                    .attr('y', -4)
+                    .attr('text-anchor', 'middle')
+                    .attr('font-size', '8px')
+                    .attr('fill', '#d32f2f')
+                    .text((k > 0 ? '+' : '') + k + 'σ');
+            }
+        });
+
+        // Filled area
+        const area = d3.area()
+            .x(d => xScale(d.x))
+            .y0(innerH)
+            .y1(d => yScale(d.y))
+            .curve(d3.curveBasis);
+
+        g.append('path')
+            .datum(pts)
+            .attr('fill', 'rgba(211,47,47,0.2)')
+            .attr('d', area);
+
+        // Line
+        const line = d3.line()
+            .x(d => xScale(d.x))
+            .y(d => yScale(d.y))
+            .curve(d3.curveBasis);
+
+        g.append('path')
+            .datum(pts)
+            .attr('fill', 'none')
+            .attr('stroke', '#d32f2f')
+            .attr('stroke-width', 2)
+            .attr('d', line);
+
+        // Axes
+        g.append('g')
+            .attr('transform', 'translate(0,' + innerH + ')')
+            .call(d3.axisBottom(xScale).ticks(5).tickFormat(d => d.toFixed(0)));
+
+        g.append('g')
+            .call(d3.axisLeft(yScale).ticks(4).tickFormat(d => d.toFixed(3)));
+
+        // Invisible overlay for tooltip
+        const overlay = g.append('rect')
+            .attr('width', innerW).attr('height', innerH)
+            .attr('fill', 'none')
+            .attr('pointer-events', 'all');
+
+        overlay.on('mousemove', function(event) {
+            const [mx] = d3.pointer(event);
+            const xv = xScale.invert(mx);
+            const yv = normalPDF(xv);
+            tooltip.style.display = 'block';
+            tooltip.style.left = (event.clientX + 12) + 'px';
+            tooltip.style.top = (event.clientY - 28) + 'px';
+            tooltip.innerHTML = 'x: ' + xv.toFixed(3) + '<br>f(x): ' + yv.toFixed(5);
+        }).on('mouseleave', function() {
+            tooltip.style.display = 'none';
+        });
+    }
+
+    /* =====================================================================
+       LINE CHART
+       ===================================================================== */
+    function renderLineChart(data, metricCol, catCol, stats) {
+        const container = document.getElementById('lineChartContainer');
+        if (!data || data.length === 0 || !stats) {
+            container.innerHTML = '<div class="viz-placeholder">Line chart will appear here</div>';
+            return;
+        }
+
+        const tooltip = document.getElementById('chartTooltip');
+        const { mean: mu } = stats;
+
+        const sorted = [...data].sort((a, b) => Number(b[metricCol]) - Number(a[metricCol]));
+        const cats = sorted.map(d => String(d[catCol]));
+        const vals = sorted.map(d => Number(d[metricCol]));
+
+        const W = 600, H = 220;
+        const margin = { top: 16, right: 20, bottom: 60, left: 60 };
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        container.innerHTML = '';
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        const xScale = d3.scalePoint().domain(cats).range([0, innerW]).padding(0.2);
+        const yMin = Math.min(0, d3.min(vals));
+        const yMax = d3.max(vals) * 1.1;
+        const yScale = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+
+        // Mean line
+        g.append('line')
+            .attr('x1', 0).attr('x2', innerW)
+            .attr('y1', yScale(mu)).attr('y2', yScale(mu))
+            .attr('stroke', '#888')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-dasharray', '5,3');
+
+        // Red line
+        const lineGen = d3.line()
+            .x((d, i) => xScale(cats[i]))
+            .y(d => yScale(d));
+
+        g.append('path')
+            .datum(vals)
+            .attr('fill', 'none')
+            .attr('stroke', '#d32f2f')
+            .attr('stroke-width', 2)
+            .attr('d', lineGen);
+
+        // Dots for tooltip
+        g.selectAll('.dot')
+            .data(sorted)
+            .enter()
+            .append('circle')
+            .attr('cx', d => xScale(String(d[catCol])))
+            .attr('cy', d => yScale(Number(d[metricCol])))
+            .attr('r', 4)
+            .attr('fill', '#d32f2f')
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 1)
+            .on('mousemove', function(event, d) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (event.clientX + 12) + 'px';
+                tooltip.style.top = (event.clientY - 28) + 'px';
+                tooltip.innerHTML = 'Category: ' + d[catCol] + '<br>' + metricCol + ': ' + Number(d[metricCol]).toLocaleString('en-US');
+            })
+            .on('mouseleave', function() { tooltip.style.display = 'none'; });
+
+        // Axes
+        g.append('g')
+            .attr('transform', 'translate(0,' + innerH + ')')
+            .call(d3.axisBottom(xScale))
+            .selectAll('text')
+            .attr('transform', 'rotate(-40)')
+            .style('text-anchor', 'end')
+            .style('font-size', '9px');
+
+        g.append('g').call(d3.axisLeft(yScale).ticks(5).tickFormat(d => d.toLocaleString('en-US')));
+
+        // Legend
+        const leg = g.append('g').attr('transform', 'translate(' + (innerW - 140) + ',-8)');
+        leg.append('line').attr('x1', 0).attr('x2', 18).attr('y1', 6).attr('y2', 6)
+            .attr('stroke', '#d32f2f').attr('stroke-width', 2);
+        leg.append('text').attr('x', 22).attr('y', 10).attr('font-size', '10px').text(metricCol);
+        leg.append('line').attr('x1', 0).attr('x2', 18).attr('y1', 22).attr('y2', 22)
+            .attr('stroke', '#888').attr('stroke-width', 1.5).attr('stroke-dasharray', '5,3');
+        leg.append('text').attr('x', 22).attr('y', 26).attr('font-size', '10px').text('Mean');
+    }
+
+    /* =====================================================================
+       BAR + LINE COMBO
+       ===================================================================== */
+    function renderBarChart(data, metricCol, catCol, stats) {
+        const container = document.getElementById('barChartContainer');
+        if (!data || data.length === 0 || !stats) {
+            container.innerHTML = '<div class="viz-placeholder">Bar chart will appear here</div>';
+            return;
+        }
+
+        const tooltip = document.getElementById('chartTooltip');
+        const { mean: mu } = stats;
+
+        const sorted = [...data].sort((a, b) => Number(b[metricCol]) - Number(a[metricCol]));
+        const cats = sorted.map(d => String(d[catCol]));
+        const vals = sorted.map(d => Number(d[metricCol]));
+
+        const W = 600, H = 230;
+        const margin = { top: 16, right: 20, bottom: 60, left: 60 };
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        container.innerHTML = '';
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        const xScale = d3.scaleBand().domain(cats).range([0, innerW]).padding(0.2);
+        const yMin = 0;
+        const yMax = d3.max(vals) * 1.12;
+        const yScale = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+
+        // Bars
+        g.selectAll('.bar')
+            .data(sorted)
+            .enter()
+            .append('rect')
+            .attr('class', 'bar')
+            .attr('x', d => xScale(String(d[catCol])))
+            .attr('y', d => yScale(Math.max(0, Number(d[metricCol]))))
+            .attr('width', xScale.bandwidth())
+            .attr('height', d => Math.abs(yScale(Number(d[metricCol])) - yScale(0)))
+            .attr('fill', '#d32f2f')
+            .attr('opacity', 0.8)
+            .on('mousemove', function(event, d) {
+                tooltip.style.display = 'block';
+                tooltip.style.left = (event.clientX + 12) + 'px';
+                tooltip.style.top = (event.clientY - 28) + 'px';
+                tooltip.innerHTML = 'Category: ' + d[catCol] + '<br>' + metricCol + ': ' + Number(d[metricCol]).toLocaleString('en-US');
+            })
+            .on('mouseleave', function() { tooltip.style.display = 'none'; });
+
+        // Mean line
+        g.append('line')
+            .attr('x1', 0).attr('x2', innerW)
+            .attr('y1', yScale(mu)).attr('y2', yScale(mu))
+            .attr('stroke', '#888')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-dasharray', '5,3');
+
+        // Axes
+        g.append('g')
+            .attr('transform', 'translate(0,' + innerH + ')')
+            .call(d3.axisBottom(xScale))
+            .selectAll('text')
+            .attr('transform', 'rotate(-40)')
+            .style('text-anchor', 'end')
+            .style('font-size', '9px');
+
+        g.append('g').call(d3.axisLeft(yScale).ticks(5).tickFormat(d => d.toLocaleString('en-US')));
+
+        // Legend
+        const leg = g.append('g').attr('transform', 'translate(' + (innerW - 140) + ',-8)');
+        leg.append('rect').attr('x', 0).attr('y', 0).attr('width', 14).attr('height', 10).attr('fill', '#d32f2f').attr('opacity', 0.8);
+        leg.append('text').attr('x', 18).attr('y', 10).attr('font-size', '10px').text(metricCol);
+        leg.append('line').attr('x1', 0).attr('x2', 14).attr('y1', 22).attr('y2', 22)
+            .attr('stroke', '#888').attr('stroke-width', 1.5).attr('stroke-dasharray', '5,3');
+        leg.append('text').attr('x', 18).attr('y', 26).attr('font-size', '10px').text('Mean');
+    }
+
+    /* =====================================================================
+       MAIN RENDER FUNCTION
+       ===================================================================== */
+    async function renderDistribution() {
+        const ds = document.getElementById('dataset').value;
+        const metricCol = document.getElementById('metricColumn').value;
+        const catCol = document.getElementById('categoryColumn').value;
+
+        if (!ds || !metricCol || !catCol) {
+            renderKPIStrip(null);
+            renderZScoreTable(null, null, null, null);
+            renderBellCurve(null);
+            renderLineChart(null, null, null, null);
+            renderBarChart(null, null, null, null);
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        const columns = dataset.columns;
+        const filters = getDistributionFilters();
+
+        const rawData = await fetchData(ds, columns, filters, false);
+        if (!rawData) return;
+
+        const filtered = applyDistributionFilters(rawData);
+        lastFilteredData = filtered;
+        lastMetricCol = metricCol;
+        lastCatCol = catCol;
+
+        const values = filtered.map(r => Number(r[metricCol])).filter(v => !isNaN(v));
+        const stats = computeStats(values);
+
+        if (!stats) {
+            renderKPIStrip(null);
+            document.getElementById('kpiStddev').textContent = 'Insufficient data';
+            document.getElementById('kpiMean').textContent = 'Insufficient data';
+            renderZScoreTable(null, null, null, null);
+            renderBellCurve(null);
+            renderLineChart(null, null, null, null);
+            renderBarChart(null, null, null, null);
+            return;
+        }
+
+        renderKPIStrip(stats);
+        renderZScoreTable(filtered, metricCol, catCol, stats);
+        renderBellCurve(stats);
+        renderLineChart(filtered, metricCol, catCol, stats);
+        renderBarChart(filtered, metricCol, catCol, stats);
+    }
+
+    /* =====================================================================
+       SAS SESSION / AUTH (verbatim from template)
+       ===================================================================== */
+    window.session = { authenticated: false, userid: null, loginTime: null };
+
+    function sasGetParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function sasCleanUrl() {
+        history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function sasRenderLoggedIn() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'none';
+        if (welcome) {
+            welcome.style.display = 'inline';
+            welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+        }
+        document.getElementById('status-dot').classList.add('active');
+        document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+        document.getElementById('footer-signout').style.display = 'inline';
+        document.getElementById('reportToolbar').classList.add('visible');
+    }
+
+    function sasRenderLoggedOut() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'inline';
+        if (welcome) welcome.style.display = 'none';
+        document.getElementById('status-dot').classList.remove('active');
+        document.getElementById('status-label').textContent = 'No active session';
+        document.getElementById('footer-signout').style.display = 'none';
+        document.getElementById('reportToolbar').classList.remove('visible');
+    }
+
+    function handleLogon(e) {
+        if (e) e.preventDefault();
+        if (!window.SAS_CONFIG) { alert('Configuration not yet loaded.'); return; }
+        const returnUrl = encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        const target = window.SAS_CONFIG.storedProcessUrl +
+                       encodeURIComponent(window.SAS_CONFIG.storedProcessPath) +
+                       '&returnUrl=' + returnUrl;
+        window.location.href = target;
+    }
+
+    function handleSignOut(e) {
+        if (e) e.preventDefault();
+        window.session = { authenticated: false, userid: null, loginTime: null };
+        localStorage.removeItem('sas_session');
+        if (window.SAS_CONFIG) {
+            window.location.href = window.SAS_CONFIG.logoutUrl +
+                                   '?returnUrl=' + encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        } else {
+            sasRenderLoggedOut();
+        }
+    }
+
+    (function sasInit() {
+        const userid = sasGetParam('userid');
+        const sasAuth = sasGetParam('sasAuth');
+        if (userid && sasAuth === '1') {
+            window.session = {
+                authenticated: true,
+                userid: decodeURIComponent(userid),
+                loginTime: new Date().toLocaleTimeString()
+            };
+            localStorage.setItem('sas_session', JSON.stringify(window.session));
+            sasCleanUrl();
+            sasRenderLoggedIn();
+        } else {
+            try {
+                let rawSession = localStorage.getItem('sas_session');
+                if (!rawSession) {
+                    rawSession = sessionStorage.getItem('sas_session');
+                    if (rawSession) localStorage.setItem('sas_session', rawSession);
+                }
+                const stored = rawSession ? JSON.parse(rawSession) : null;
+                if (stored && stored.authenticated && stored.userid) {
+                    window.session = stored;
+                    sasRenderLoggedIn();
+                    return;
+                }
+            } catch (_) {}
+            sasRenderLoggedOut();
+        }
+    })();
+
+    /* =====================================================================
+       REPORT SAVE
+       ===================================================================== */
+    async function saveReport() {
+        const name = document.getElementById('reportNameInput').value.trim();
+        const feedback = document.getElementById('reportSaveFeedback');
+        if (!name) { feedback.textContent = '⚠ Enter a report name'; feedback.style.color = '#cc0000'; return; }
+        if (!window.session || !window.session.authenticated) {
+            feedback.textContent = '⚠ Must be logged in'; feedback.style.color = '#cc0000'; return;
+        }
+        const userid = window.session.userid;
+        const basePath = 'meta/profiles/' + encodeURIComponent(userid) + '/';
+        const reportEntry = {
+            name: name,
+            url: basePath + 'reports/distribution_analysis.html'
+        };
+        try {
+            feedback.textContent = 'Saving...'; feedback.style.color = '#555';
+            let existing = { reports: [] };
+            try {
+                const r = await fetch(basePath + 'reports.json');
+                if (r.ok) existing = await r.json();
+            } catch (_) {}
+            const idx = existing.reports.findIndex(rp => rp.url === reportEntry.url);
+            if (idx >= 0) existing.reports[idx] = reportEntry;
+            else existing.reports.push(reportEntry);
+            const res = await fetch(basePath + 'reports.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(existing, null, 2)
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            feedback.textContent = '✓ Saved'; feedback.style.color = '#2e7d32';
+        } catch (err) {
+            feedback.textContent = '✗ ' + err.message; feedback.style.color = '#cc0000';
+        }
+    }
+
+    /* =====================================================================
+       EXPORT FUNCTIONS
+       ===================================================================== */
+    function exportImage() {
+        const panel = document.getElementById('vizPanel');
+        html2canvas(panel).then(canvas => {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = 'distribution_' + ts + '.png';
+            a.click();
+        });
+    }
+
+    function exportCSV() {
+        if (!lastFilteredData || lastFilteredData.length === 0) {
+            alert('No data to export. Please render a distribution first.');
+            return;
+        }
+        const data = lastFilteredData;
+        const cols = Object.keys(data[0]);
+        let csv = cols.join(',') + '\n';
+        data.forEach(row => {
+            csv += cols.map(c => {
+                const v = row[c];
+                if (v === null || v === undefined) return '';
+                const s = String(v);
+                if (s.includes(',') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
+                return s;
+            }).join(',') + '\n';
+        });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'distribution_' + ts + '.csv';
+        a.click();
+    }
+
+    function resetForm() {
+        document.getElementById('dataset').value = '';
+        document.getElementById('metricColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('categoryColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('filtersContainer').innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+        filterCount = 0;
+        lastFilteredData = null;
+        lastMetricCol = null;
+        lastCatCol = null;
+        renderKPIStrip(null);
+        document.getElementById('zscoreTableContainer').innerHTML = '<div class="viz-placeholder">Z-Score table will appear here</div>';
+        document.getElementById('bellCurveContainer').innerHTML = '<div class="viz-placeholder">Bell curve will appear here</div>';
+        document.getElementById('lineChartContainer').innerHTML = '<div class="viz-placeholder">Line chart will appear here</div>';
+        document.getElementById('barChartContainer').innerHTML = '<div class="viz-placeholder">Bar chart will appear here</div>';
+    }
+
+    /* =====================================================================
+       MODAL HELPERS
+       ===================================================================== */
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function toggleMenu() {
+        document.getElementById('dropdownMenu').classList.toggle('active');
+        document.getElementById('hamburgerBtn').classList.toggle('active');
+    }
+
+    function closeMenu() {
+        document.getElementById('dropdownMenu').classList.remove('active');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+    }
+
+    /* =====================================================================
+       DOM CONTENT LOADED — wire all events
+       ===================================================================== */
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Load config
+        try {
+            await loadConfig();
+            initDatasetDropdown();
+        } catch (err) {
+            console.error('Config load error:', err);
+            showConfigError('Configuration failed to load. Check console for details.');
+        }
+
+        // Dataset change
+        document.getElementById('dataset').addEventListener('change', updateDistributionColumns);
+
+        // Column changes
+        document.getElementById('metricColumn').addEventListener('change', renderDistribution);
+        document.getElementById('categoryColumn').addEventListener('change', renderDistribution);
+
+        // Filter add button
+        document.getElementById('addFilterBtn').addEventListener('click', addDistributionFilter);
+
+        // Action buttons
+        document.getElementById('exportImageBtn').addEventListener('click', exportImage);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+        document.getElementById('resetFormBtn').addEventListener('click', resetForm);
+
+        // Report save
+        document.getElementById('saveReportBtn').addEventListener('click', saveReport);
+
+        // Nav
+        document.getElementById('nav-logon').addEventListener('click', handleLogon);
+        document.getElementById('footer-signout').addEventListener('click', handleSignOut);
+        document.getElementById('nav-about').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); });
+        document.getElementById('nav-help').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); });
+
+        // Hamburger
+        document.getElementById('hamburgerBtn').addEventListener('click', toggleMenu);
+        document.getElementById('menuAbout').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); closeMenu(); });
+        document.getElementById('menuHelp').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); closeMenu(); });
+
+        // Modal closes
+        document.getElementById('closeAboutModal').addEventListener('click', function() { closeModal('aboutModal'); });
+        document.getElementById('closeHelpModal').addEventListener('click', function() { closeModal('helpModal'); });
+
+        // Click outside to close modal/menu
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) this.classList.remove('active');
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+            }
+        });
+    });
+    </script>
+</body>
+</html>

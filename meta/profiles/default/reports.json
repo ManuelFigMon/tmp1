@@ -1,0 +1,5 @@
+{
+  "reports": [
+    { "name": "Distribution Analysis", "url": "meta/profiles/default/reports/distribution_analysis.html" }
+  ]
+}
