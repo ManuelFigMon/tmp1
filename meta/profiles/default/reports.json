@@ -1,5 +1,6 @@
 {
   "reports": [
-    { "name": "Distribution Analysis", "url": "meta/profiles/default/reports/distribution_analysis.html" }
+    { "name": "Distribution Analysis", "url": "meta/profiles/default/reports/distribution_analysis.html" },
+    { "name": "K-Means Cluster Analysis", "url": "meta/profiles/default/reports/kmeans_cluster.html" }
   ]
 }
