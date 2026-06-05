@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DMQ — Distribution Analysis v1.1</title>
+    <title>DMQ — Distribution Analysis v1.2</title>
     <style>
         * {
             margin: 0;
@@ -745,7 +745,7 @@
 
     <div class="container">
         <div class="header">
-            <h1>DMQ — Distribution Analysis v1.1</h1>
+            <h1>DMQ — Distribution Analysis v1.2</h1>
             <p>Statistical distribution of metric values across categories</p>
 
             <div class="top-nav">
@@ -921,15 +921,11 @@
     /* =====================================================================
        CONFIG / SESSION HELPERS (verbatim from template)
        ===================================================================== */
+    // This report lives one level below the profile root (reports/distribution_analysis.html),
+    // so '../' always resolves to the correct profile directory regardless of which
+    // user profile folder the file was copied into.
     function getProfileBasePath() {
-        try {
-            const stored = localStorage.getItem('sas_session');
-            const sess = stored ? JSON.parse(stored) : null;
-            if (sess && sess.authenticated && sess.userid) {
-                return 'meta/profiles/' + encodeURIComponent(sess.userid) + '/';
-            }
-        } catch (e) { /* fall through */ }
-        return 'meta/profiles/default/';
+        return '../';
     }
 
     function showConfigError(msg) {
@@ -947,9 +943,6 @@
         const base = getProfileBasePath();
         const tryFetch = async (path) => {
             let r = await fetch(base + path);
-            if (!r.ok && base !== 'meta/profiles/default/') {
-                r = await fetch('meta/profiles/default/' + path);
-            }
             if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
             return r.json();
         };
