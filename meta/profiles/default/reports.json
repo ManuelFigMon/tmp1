@@ -4,6 +4,7 @@
     { "name": "K-Means Cluster Analysis", "url": "meta/profiles/default/reports/kmeans_cluster.html" },
     { "name": "Correlation Matrix", "url": "meta/profiles/default/reports/correlation_matrix.html" },
     { "name": "Box Plot", "url": "meta/profiles/default/reports/boxplot.html" },
-    { "name": "Histogram Overlay", "url": "meta/profiles/default/reports/histogram_overlay.html" }
+    { "name": "Histogram Overlay", "url": "meta/profiles/default/reports/histogram_overlay.html" },
+    { "name": "Hexbin Plot", "url": "meta/profiles/default/reports/hexbin_plot.html" }
   ]
 }
