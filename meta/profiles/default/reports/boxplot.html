@@ -1,0 +1,1886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMQ — Box Plot v1.0</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+            padding-bottom: 36px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin-bottom: 0;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.95;
+            margin-top: 3px;
+        }
+
+        .top-nav {
+            position: absolute;
+            top: 15px;
+            right: 70px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .top-nav a {
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .top-nav a:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        #nav-welcome {
+            color: #d4f5d4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 10px;
+            display: none;
+        }
+
+        .sas-footer {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            z-index: 50;
+        }
+
+        .sas-footer .session-indicator {
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes sasPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #footer-signout {
+            color: #cc0000;
+            text-decoration: none;
+            display: none;
+        }
+
+        #footer-signout:hover { text-decoration: underline; }
+
+        .hamburger-container {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+        }
+
+        .hamburger {
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .hamburger:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .dropdown-menu {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background: white;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .dropdown-menu.active {
+            display: block;
+        }
+
+        .dropdown-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-menu a:hover {
+            background: #f8f8f8;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .modal-body {
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body a {
+            color: #4a7ba7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        /* Report Toolbar */
+        #reportToolbar {
+            display: none;
+            background: #f0f4f8;
+            border-bottom: 1px solid #c8d8e8;
+            padding: 6px 16px;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        #reportToolbar.visible {
+            display: flex;
+        }
+
+        #reportToolbar label {
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        #reportToolbar input[type="text"] {
+            width: 220px;
+            padding: 4px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+
+        #reportSaveFeedback {
+            font-size: 11px;
+            color: #2e7d32;
+            margin-left: 8px;
+        }
+
+        /* Main Layout */
+        .main-content {
+            padding: 15px;
+        }
+
+        .content-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+        }
+
+        .input-panel {
+            width: 35%;
+            flex-shrink: 0;
+        }
+
+        #vizPanel {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            background: white;
+            border-radius: 0;
+            padding: 15px;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 3px;
+            height: 18px;
+            background: #4a7ba7;
+            margin-right: 10px;
+            border-radius: 0;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #4a7ba7;
+            box-shadow: 0 0 0 1px #4a7ba7;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a7ba7;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+            margin-left: 6px;
+            flex-shrink: 0;
+        }
+
+        .info-icon:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #2b2b2b;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: normal;
+            width: 300px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            line-height: 1.4;
+            border: 1px solid #404040;
+        }
+
+        .info-icon:hover::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: #2b2b2b;
+            z-index: 1001;
+        }
+
+        .filters-container {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 10px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 160px 100px 160px 40px;
+            gap: 6px;
+            align-items: end;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .btn {
+            padding: 6px 16px;
+            border: 1px solid;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: #5a8ab8;
+            color: white;
+            border-color: #4a7ba7;
+        }
+
+        .btn-primary:hover {
+            background: #4a7ba7;
+        }
+
+        .btn-secondary {
+            background: #888;
+            color: white;
+            border-color: #777;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .btn-danger {
+            background: #d9534f;
+            color: white;
+            border-color: #d43f3a;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger:hover {
+            background: #c9302c;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .actions .btn {
+            margin: 0 5px;
+            min-width: 120px;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a7ba7;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
+            background: #f8f8f8;
+            border: 1px solid #d0d0d0;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .kpi-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .kpi-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1;
+        }
+
+        .kpi-value-sm {
+            font-size: 13px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1.2;
+        }
+
+        .kpi-label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Boxplot container */
+        #boxplotContainer {
+            margin-bottom: 12px;
+            overflow-x: auto;
+        }
+
+        #boxplotContainer svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .viz-placeholder {
+            color: #aaa;
+            text-align: center;
+            padding: 30px;
+            font-size: 12px;
+            font-style: italic;
+            border: 1px dashed #ddd;
+        }
+
+        #chartTooltip {
+            position: fixed;
+            background: rgba(30,30,30,0.92);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            display: none;
+            z-index: 5000;
+            line-height: 1.6;
+            max-width: 220px;
+        }
+
+        /* Config section controls */
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .config-row label {
+            margin-bottom: 0;
+            min-width: 130px;
+        }
+
+        .config-row input[type="range"] {
+            flex: 1;
+            min-width: 80px;
+        }
+
+        .config-row input[type="number"] {
+            width: 60px;
+        }
+
+        .range-val {
+            font-weight: 700;
+            color: #4a7ba7;
+            min-width: 40px;
+        }
+
+        @media (max-width: 900px) {
+            .content-row {
+                flex-direction: column;
+            }
+            .input-panel {
+                width: 100%;
+            }
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <!-- Shared Tooltip -->
+    <div id="chartTooltip"></div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMQ — Box Plot</h2>
+                <button class="modal-close" id="closeAboutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The Box Plot report renders interactive Box &amp; Whisker plots to compare the distribution of numeric metrics across categorical groups.</p>
+                <p>Each box shows the interquartile range (Q1–Q3), with a median line and optional mean marker. Whiskers extend to the fences defined by the selected IQR multiplier, with outliers plotted as individual dots.</p>
+                <p>Built with D3.js v7 and vanilla JavaScript — no frameworks required.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help &amp; Support</h2>
+                <button class="modal-close" id="closeHelpModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Thank you for using DMQ — Box Plot. Select a dataset, choose a grouping column (X-axis categories) and one or more numeric metric columns (Y-axis), then optionally apply filters.</p>
+                <p>Hold Ctrl/Cmd to select multiple metric columns in the listbox. Multiple metrics will be plotted side-by-side within each group.</p>
+                <p>If you encounter any issues, have questions, or would like to suggest improvements, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day. Looking forward to hearing from you!</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMQ — Box Plot v1.0</h1>
+            <p>Distribution comparison using Box &amp; Whisker plots</p>
+
+            <div class="top-nav">
+                <a id="nav-logon" href="#">Logon</a>
+                <span id="nav-welcome"></span>
+                <a id="nav-about" href="#">About</a>
+                <a id="nav-help" href="#">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" id="menuAbout">About</a>
+                    <a href="#" id="menuHelp">Help</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Toolbar (visible when authenticated) -->
+        <div id="reportToolbar">
+            <label for="reportNameInput">Report Name:</label>
+            <input type="text" id="reportNameInput" value="Box Plot">
+            <button class="btn btn-primary btn-sm" id="saveReportBtn">Save Report</button>
+            <span id="reportSaveFeedback"></span>
+        </div>
+
+        <div class="main-content">
+            <div class="content-row">
+                <!-- Left: Input Panel -->
+                <div class="input-panel">
+
+                    <!-- Dataset Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Dataset Selection</h2>
+                        <div class="form-group">
+                            <label for="dataset">Choose Dataset:</label>
+                            <select id="dataset">
+                                <option value="">Select a dataset...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Column Selection -->
+                    <div class="section">
+                        <h2 class="section-title">
+                            Column Selection
+                            <span class="info-icon" data-tooltip="Select one grouping column (character/date for X-axis categories) and one or more numeric columns (Y-axis metrics). Multiple numeric columns will be plotted side-by-side within each group.">i</span>
+                        </h2>
+
+                        <div class="form-group">
+                            <label for="groupColumn">Grouping Column (X-Axis):</label>
+                            <select id="groupColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="metricColumns">Metric Columns (Y-Axis) — hold Ctrl/Cmd for multiple:</label>
+                            <select id="metricColumns" multiple size="6" style="width:100%;font-size:11px;">
+                                <option disabled>— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:6px;margin-top:6px;">
+                            <button class="btn btn-secondary btn-sm" id="selectAllMetricsBtn">Select All Metrics</button>
+                            <button class="btn btn-secondary btn-sm" id="clearMetricsBtn">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="section">
+                        <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                        <div class="filters-container">
+                            <div id="filtersContainer">
+                                <p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>
+                            </div>
+                            <button class="btn btn-secondary" id="addFilterBtn" style="margin-top:10px;">Add Filter</button>
+                        </div>
+                    </div>
+
+                    <!-- Configuration -->
+                    <div class="section">
+                        <h2 class="section-title">Configuration</h2>
+
+                        <div class="config-row">
+                            <label for="boxWidth">Box width (% of band):</label>
+                            <input type="range" id="boxWidth" min="10" max="80" step="5" value="40">
+                            <span class="range-val"><span id="boxWidthVal">40</span>%</span>
+                        </div>
+
+                        <div class="config-row">
+                            <input type="checkbox" id="showOutliers" checked style="width:auto;margin-bottom:0;">
+                            <label for="showOutliers" style="margin-bottom:0;font-weight:normal;">Show outliers as points</label>
+                        </div>
+
+                        <div class="config-row">
+                            <input type="checkbox" id="showMean" checked style="width:auto;margin-bottom:0;">
+                            <label for="showMean" style="margin-bottom:0;font-weight:normal;">Show mean (×)</label>
+                        </div>
+
+                        <div class="config-row">
+                            <input type="checkbox" id="showPoints" style="width:auto;margin-bottom:0;">
+                            <label for="showPoints" style="margin-bottom:0;font-weight:normal;">Overlay raw data points (jittered)</label>
+                        </div>
+
+                        <div class="form-group" style="margin-top:10px;">
+                            <label for="outlierDef">Outlier Definition:</label>
+                            <select id="outlierDef">
+                                <option value="1.5">1.5 × IQR (standard)</option>
+                                <option value="3.0">3.0 × IQR (extreme only)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="colorPalette">Color Palette:</label>
+                            <select id="colorPalette">
+                                <option value="blue">Blue (default)</option>
+                                <option value="tableau">Tableau</option>
+                                <option value="pastel">Pastel</option>
+                                <option value="mono">Monochrome</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="chartTitle">Chart Title:</label>
+                            <input type="text" id="chartTitle" placeholder="Optional chart title...">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="yAxisLabel">Y-Axis Label:</label>
+                            <input type="text" id="yAxisLabel" placeholder="Y-axis label...">
+                        </div>
+                    </div>
+
+                </div><!-- /input-panel -->
+
+                <!-- Right: Visualization Panel -->
+                <div id="vizPanel">
+
+                    <!-- KPI Strip -->
+                    <div class="kpi-strip" id="kpiStrip">
+                        <div class="kpi-item">
+                            <div class="kpi-label">Total Records (n)</div>
+                            <div class="kpi-value" id="kpiRecords">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Groups</div>
+                            <div class="kpi-value" id="kpiGroups">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Metric Columns</div>
+                            <div class="kpi-value" id="kpiMetrics">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Outliers Detected</div>
+                            <div class="kpi-value" id="kpiOutliers">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Box Plot Chart -->
+                    <div id="boxplotContainer">
+                        <div class="viz-placeholder">Select a dataset, a grouping column, and at least one metric column to render the box plot.</div>
+                    </div>
+
+                </div><!-- /vizPanel -->
+            </div><!-- /content-row -->
+
+            <!-- Actions Strip -->
+            <div class="actions">
+                <button class="btn btn-primary" id="exportImageBtn">Export Image</button>
+                <button class="btn btn-secondary" id="exportCsvBtn">Export to CSV</button>
+                <button class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout">Sign out</a>
+    </footer>
+
+    <script src="scripts/d3.min.js"></script>
+    <script src="scripts/html2canvas.min.js"></script>
+    <script src="scripts/lodash.min.js"></script>
+
+    <script>
+    /* =====================================================================
+       CONFIG / SESSION HELPERS (verbatim from template)
+       ===================================================================== */
+    function getProfileBasePath() {
+        return '../';
+    }
+
+    function showConfigError(msg) {
+        let banner = document.getElementById('config-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'config-error-banner';
+            banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+            document.body.insertBefore(banner, document.body.firstChild);
+        }
+        banner.textContent = msg;
+    }
+
+    async function loadConfig() {
+        const base = getProfileBasePath();
+        const tryFetch = async (path) => {
+            let r = await fetch(base + path);
+            if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+            return r.json();
+        };
+        const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+            tryFetch('data_config.json'),
+            tryFetch('datasets.json'),
+            tryFetch('sas_config.json')
+        ]);
+        window.DATA_CONFIG = dataCfg;
+        window.datasets = datasetsCfg;
+        window.SAS_CONFIG = Object.assign({}, sasCfg, {
+            portalUrl: window.location.origin + window.location.pathname
+        });
+    }
+
+    function initDatasetDropdown() {
+        const sel = document.getElementById('dataset');
+        if (!sel || !window.datasets) return;
+        sel.innerHTML = '<option value="">Select a dataset...</option>';
+        Object.keys(window.datasets).forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            sel.appendChild(opt);
+        });
+    }
+
+    /* =====================================================================
+       DATA FUNCTIONS (verbatim from template)
+       ===================================================================== */
+    function getDataSourceURL(dataset) {
+        const datasetConfig = window.datasets[dataset];
+        const mapping = window.DATA_CONFIG.Mapping[dataset];
+        if (!mapping) throw new Error('No mapping found for dataset: ' + dataset);
+        if (datasetConfig.dmsrc_type === 'file') {
+            return window.DATA_CONFIG.baseFileURL + mapping;
+        } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+            return null;
+        }
+        throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+    }
+
+    function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+        const dataset = window.datasets[selectedDataset];
+        let sqlQuery = 'SELECT';
+        if (useDistinct) sqlQuery += ' DISTINCT';
+        sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+        sqlQuery += ' FROM ' + (dataset.data_src_name || selectedDataset);
+        if (filters.length > 0) {
+            sqlQuery += ' WHERE ';
+            filters.forEach((filter, index) => {
+                if (index > 0) sqlQuery += ' AND ';
+                if (filter.operator === 'LIKE') {
+                    sqlQuery += filter.column + ' ' + filter.operator + " '%" + filter.value + "%'";
+                } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                    sqlQuery += filter.column + ' ' + filter.operator + ' (' + filter.value + ')';
+                } else {
+                    const isNumeric = dataset.types[filter.column] === 'numeric';
+                    const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                    sqlQuery += filter.column + ' ' + filter.operator + ' ' + value;
+                }
+            });
+        }
+        return sqlQuery;
+    }
+
+    function buildAPIURL(dataset, sqlQuery) {
+        const apiEndpoint = window.DATA_CONFIG.Mapping[dataset];
+        if (!apiEndpoint) throw new Error('No API endpoint mapping found for dataset: ' + dataset);
+        return window.DATA_CONFIG.baseAPIURL + apiEndpoint +
+               '&dmq_query=' + encodeURIComponent(sqlQuery);
+    }
+
+    function applyFilters(data, filters) {
+        if (filters.length === 0) return data;
+        return data.filter(row => {
+            return filters.every(filter => {
+                const columnValue = row[filter.column];
+                const filterValue = filter.value;
+                if (columnValue === null || columnValue === undefined) return false;
+                switch (filter.operator) {
+                    case '=':
+                        return String(columnValue).toLowerCase() === filterValue.toLowerCase() ||
+                               Number(columnValue) === Number(filterValue);
+                    case '<>':
+                        return String(columnValue).toLowerCase() !== filterValue.toLowerCase();
+                    case '>': return Number(columnValue) > Number(filterValue);
+                    case '<': return Number(columnValue) < Number(filterValue);
+                    case '>=': return Number(columnValue) >= Number(filterValue);
+                    case '<=': return Number(columnValue) <= Number(filterValue);
+                    case 'LIKE':
+                        return String(columnValue).toLowerCase().includes(filterValue.toLowerCase());
+                    case 'IN': {
+                        const inValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return inValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    case 'NOT IN': {
+                        const notInValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return !notInValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    default: return true;
+                }
+            });
+        });
+    }
+
+    async function fetchData(dataset, columns, filters, useDistinct) {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const datasetConfig = window.datasets[dataset];
+        try {
+            loadingOverlay.style.display = 'flex';
+            if (datasetConfig.dmsrc_type === 'file') {
+                const url = getDataSourceURL(dataset);
+                const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) throw new Error('Invalid or empty data');
+                let filteredData = applyFilters(jsonData, filters);
+                return filteredData;
+            } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                const sqlQuery = buildSQLQuery(dataset, columns, filters, useDistinct);
+                const apiURL = buildAPIURL(dataset, sqlQuery);
+                const response = await fetch(apiURL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('API error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) return [];
+                return jsonData;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error loading data: ' + error.message);
+            return null;
+        } finally {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    /* =====================================================================
+       BOXPLOT-SPECIFIC STATE
+       ===================================================================== */
+    let filterCount = 0;
+    let lastStatsMap = null;
+    let lastGroups = null;
+    let lastMetrics = null;
+    let lastRawData = null;
+
+    const PALETTES = {
+        blue:    ['#4472C4','#2E75B6','#1F4E79','#9DC3E6','#2F5597','#BDD7EE','#4472C4','#2E75B6'],
+        tableau: ['#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f','#edc948','#b07aa1','#ff9da7'],
+        pastel:  ['#aec6cf','#ffb347','#b5ead7','#c7ceea','#ffdac1','#e2f0cb','#f8b4b8','#d4a5a5'],
+        mono:    ['#2b2b2b','#555555','#888888','#aaaaaa','#cccccc','#e0e0e0','#111111','#444444'],
+    };
+
+    /* =====================================================================
+       COLUMN POPULATION
+       ===================================================================== */
+    function updateBoxplotColumns() {
+        const ds = document.getElementById('dataset').value;
+        const groupSel = document.getElementById('groupColumn');
+        const metricSel = document.getElementById('metricColumns');
+
+        groupSel.innerHTML = '';
+        metricSel.innerHTML = '';
+
+        if (!ds || !window.datasets || !window.datasets[ds]) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— select dataset first —';
+            groupSel.appendChild(opt.cloneNode(true));
+            metricSel.appendChild(opt);
+            renderBoxPlot();
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+
+        // Grouping column: character/date columns
+        const defaultGrp = document.createElement('option');
+        defaultGrp.value = '';
+        defaultGrp.textContent = '— select grouping column —';
+        groupSel.appendChild(defaultGrp);
+
+        let hasGroup = false;
+        let hasMetric = false;
+        dataset.columns.forEach(col => {
+            const t = dataset.types[col];
+            if (t === 'character' || t === 'date') {
+                hasGroup = true;
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                groupSel.appendChild(opt);
+            } else if (t === 'numeric') {
+                hasMetric = true;
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                metricSel.appendChild(opt);
+            }
+        });
+
+        if (!hasGroup) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— no character/date columns —';
+            groupSel.appendChild(opt);
+        }
+
+        if (!hasMetric) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— no numeric columns —';
+            metricSel.appendChild(opt);
+        }
+
+        renderBoxPlot();
+    }
+
+    /* =====================================================================
+       FILTER MANAGEMENT
+       ===================================================================== */
+    function getBoxplotFilters() {
+        const filters = [];
+        document.querySelectorAll('.filter-row').forEach(row => {
+            const column = row.querySelector('select[name="filter_column"]')?.value;
+            const operator = row.querySelector('select[name="filter_operator"]')?.value;
+            const value = row.querySelector('input[name="filter_value"]')?.value;
+            if (column && operator && value) filters.push({ column, operator, value });
+        });
+        return filters;
+    }
+
+    function addBoxplotFilter() {
+        const ds = document.getElementById('dataset').value;
+        if (!ds) { alert('Please select a dataset first'); return; }
+
+        const dataset = window.datasets[ds];
+        const container = document.getElementById('filtersContainer');
+
+        if (filterCount === 0) container.innerHTML = '';
+        filterCount++;
+
+        let colOptions = '<option value="">Column...</option>';
+        dataset.columns.forEach(col => {
+            colOptions += '<option value="' + col + '">' + col + '</option>';
+        });
+
+        const id = filterCount;
+        const div = document.createElement('div');
+        div.className = 'filter-row';
+        div.id = 'filter_' + id;
+        div.innerHTML =
+            '<div><select name="filter_column">' + colOptions + '</select></div>' +
+            '<div><select name="filter_operator">' +
+                '<option value="">Op...</option>' +
+                '<option value="=">=</option>' +
+                '<option value="<>">&#8800;</option>' +
+                '<option value=">">&gt;</option>' +
+                '<option value="<">&lt;</option>' +
+                '<option value=">=">&ge;</option>' +
+                '<option value="<=">&le;</option>' +
+                '<option value="LIKE">LIKE</option>' +
+                '<option value="IN">IN</option>' +
+                '<option value="NOT IN">NOT IN</option>' +
+            '</select></div>' +
+            '<div><input type="text" name="filter_value" placeholder="Value..."></div>' +
+            '<div><button class="btn btn-danger" data-filterid="' + id + '">&times;</button></div>';
+
+        div.querySelector('select[name="filter_column"]').addEventListener('change', renderBoxPlot);
+        div.querySelector('select[name="filter_operator"]').addEventListener('change', renderBoxPlot);
+        div.querySelector('input[name="filter_value"]').addEventListener('input', renderBoxPlot);
+        div.querySelector('.btn-danger').addEventListener('click', function() {
+            removeBoxplotFilter(this.dataset.filterid);
+        });
+
+        container.appendChild(div);
+        renderBoxPlot();
+    }
+
+    function removeBoxplotFilter(id) {
+        const el = document.getElementById('filter_' + id);
+        if (el) el.remove();
+        const container = document.getElementById('filtersContainer');
+        if (container.children.length === 0) {
+            container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+            filterCount = 0;
+        }
+        renderBoxPlot();
+    }
+
+    /* =====================================================================
+       STATISTICS
+       ===================================================================== */
+    function percentile(sorted, p) {
+        const idx = Math.ceil((p / 100) * sorted.length) - 1;
+        return sorted[Math.max(0, idx)];
+    }
+
+    function computeBoxStats(values, iqrMultiplier) {
+        const sorted = [...values].sort((a, b) => a - b);
+        const n = sorted.length;
+        if (n === 0) return null;
+        const q1 = percentile(sorted, 25);
+        const median = percentile(sorted, 50);
+        const q3 = percentile(sorted, 75);
+        const mean = values.reduce((s, v) => s + v, 0) / n;
+        const iqr = q3 - q1;
+        const lowerFence = q1 - iqrMultiplier * iqr;
+        const upperFence = q3 + iqrMultiplier * iqr;
+        const outliers = sorted.filter(v => v < lowerFence || v > upperFence);
+        const whiskerLow = sorted.find(v => v >= lowerFence) ?? sorted[0];
+        const whiskerHighArr = [...sorted].reverse();
+        const whiskerHigh = whiskerHighArr.find(v => v <= upperFence) ?? sorted[n - 1];
+        return {
+            min: sorted[0], q1, median, mean, q3, max: sorted[n - 1],
+            lowerFence, upperFence, whiskerLow, whiskerHigh, outliers, n,
+            rawValues: sorted
+        };
+    }
+
+    /* =====================================================================
+       KPI STRIP
+       ===================================================================== */
+    function renderKPIStrip(totalRecords, groups, metrics, totalOutliers) {
+        document.getElementById('kpiRecords').textContent = totalRecords !== null ? totalRecords.toLocaleString('en-US') : '—';
+        document.getElementById('kpiGroups').textContent = groups !== null ? groups : '—';
+        document.getElementById('kpiMetrics').textContent = metrics !== null ? metrics : '—';
+        document.getElementById('kpiOutliers').textContent = totalOutliers !== null ? totalOutliers.toLocaleString('en-US') : '—';
+    }
+
+    /* =====================================================================
+       FORMAT HELPER
+       ===================================================================== */
+    function fmt(v) {
+        if (v === null || v === undefined || isNaN(v)) return '—';
+        return Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    /* =====================================================================
+       D3 BOX PLOT DRAWING
+       ===================================================================== */
+    function drawBoxPlot(groups, metrics, statsMap, rawDataMap, palette) {
+        const container = document.getElementById('boxplotContainer');
+        container.innerHTML = '';
+
+        const W = Math.max(700, groups.length * metrics.length * 60 + 200);
+        const H = 450;
+        const margin = { top: 50, right: 130, bottom: 80, left: 70 };
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        const svg = d3.select(container).append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        // Outer band scale: groups
+        const x0 = d3.scaleBand()
+            .domain(groups)
+            .range([0, innerW])
+            .paddingInner(0.2)
+            .paddingOuter(0.1);
+
+        // Inner band scale: metrics within each group
+        const x1 = d3.scaleBand()
+            .domain(metrics)
+            .range([0, x0.bandwidth()])
+            .padding(0.05);
+
+        // Apply box width config
+        const bwPct = parseInt(document.getElementById('boxWidth').value) / 100;
+        const boxW = x1.bandwidth() * bwPct;
+        const boxOffset = (x1.bandwidth() - boxW) / 2;
+
+        // Y scale: global min/max across all stats
+        const allVals = [];
+        groups.forEach(grp => metrics.forEach(met => {
+            const s = statsMap[grp] && statsMap[grp][met];
+            if (s) {
+                allVals.push(s.whiskerLow, s.whiskerHigh);
+                s.outliers.forEach(o => allVals.push(o));
+            }
+        }));
+
+        if (allVals.length === 0) {
+            container.innerHTML = '<div class="viz-placeholder">No data available for the selected configuration.</div>';
+            return;
+        }
+
+        const yExtMin = d3.min(allVals);
+        const yExtMax = d3.max(allVals);
+        const yPad = (yExtMax - yExtMin) * 0.05 || 1;
+        const yMin = yExtMin - yPad;
+        const yMax = yExtMax + yPad;
+        const yScale = d3.scaleLinear().domain([yMin, yMax]).range([innerH, 0]);
+
+        // Horizontal gridlines
+        const grid = g.append('g').attr('class', 'gridlines')
+            .call(d3.axisLeft(yScale).tickSize(-innerW).tickFormat(''));
+        grid.selectAll('line').attr('stroke', '#e0e0e0').attr('stroke-dasharray', '2,2');
+        grid.select('.domain').remove();
+
+        // Chart title
+        const title = document.getElementById('chartTitle').value.trim();
+        if (title) {
+            svg.append('text')
+                .attr('x', margin.left + innerW / 2)
+                .attr('y', 20)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '13px')
+                .attr('font-weight', '700')
+                .attr('fill', '#333')
+                .text(title);
+        }
+
+        // Y-axis label
+        const yLabel = document.getElementById('yAxisLabel').value.trim();
+        if (yLabel) {
+            g.append('text')
+                .attr('transform', 'rotate(-90)')
+                .attr('x', -innerH / 2)
+                .attr('y', -55)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '11px')
+                .attr('fill', '#555')
+                .text(yLabel);
+        }
+
+        const tooltip = document.getElementById('chartTooltip');
+        const showOutliers = document.getElementById('showOutliers').checked;
+        const showMean = document.getElementById('showMean').checked;
+        const showPoints = document.getElementById('showPoints').checked;
+
+        // Draw boxes for each group × metric
+        groups.forEach(grp => {
+            const grpG = g.append('g').attr('transform', 'translate(' + x0(grp) + ',0)');
+
+            metrics.forEach((met, mi) => {
+                const s = statsMap[grp] && statsMap[grp][met];
+                if (!s || s.n < 2) return;
+
+                const color = palette[mi % palette.length];
+                const cx = x1(met) + boxOffset;
+                const metG = grpG.append('g').attr('transform', 'translate(' + cx + ',0)');
+
+                // Jittered raw data points (behind the box)
+                if (showPoints) {
+                    const nonOutliers = s.rawValues.filter(v => v >= s.lowerFence && v <= s.upperFence);
+                    nonOutliers.forEach(v => {
+                        const jitter = (Math.random() - 0.5) * boxW * 0.6;
+                        metG.append('circle')
+                            .attr('cx', boxW / 2 + jitter)
+                            .attr('cy', yScale(v))
+                            .attr('r', 2.5)
+                            .attr('fill', color)
+                            .attr('fill-opacity', 0.35)
+                            .attr('stroke', 'none');
+                    });
+                }
+
+                // Whisker lines (vertical)
+                metG.append('line')
+                    .attr('x1', boxW / 2).attr('x2', boxW / 2)
+                    .attr('y1', yScale(s.q1)).attr('y2', yScale(s.whiskerLow))
+                    .attr('stroke', color).attr('stroke-width', 1.5);
+                metG.append('line')
+                    .attr('x1', boxW / 2).attr('x2', boxW / 2)
+                    .attr('y1', yScale(s.q3)).attr('y2', yScale(s.whiskerHigh))
+                    .attr('stroke', color).attr('stroke-width', 1.5);
+
+                // Whisker caps (horizontal T-bars)
+                const capW = boxW * 0.4;
+                metG.append('line')
+                    .attr('x1', (boxW - capW) / 2).attr('x2', (boxW + capW) / 2)
+                    .attr('y1', yScale(s.whiskerLow)).attr('y2', yScale(s.whiskerLow))
+                    .attr('stroke', color).attr('stroke-width', 1.5);
+                metG.append('line')
+                    .attr('x1', (boxW - capW) / 2).attr('x2', (boxW + capW) / 2)
+                    .attr('y1', yScale(s.whiskerHigh)).attr('y2', yScale(s.whiskerHigh))
+                    .attr('stroke', color).attr('stroke-width', 1.5);
+
+                // Box body (Q1 to Q3)
+                metG.append('rect')
+                    .attr('x', 0).attr('y', yScale(s.q3))
+                    .attr('width', boxW)
+                    .attr('height', Math.abs(yScale(s.q1) - yScale(s.q3)))
+                    .attr('fill', color).attr('fill-opacity', 0.75)
+                    .attr('stroke', color).attr('stroke-width', 1)
+                    .style('cursor', 'pointer')
+                    .on('mousemove', function(event) {
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (event.clientX + 14) + 'px';
+                        tooltip.style.top = (event.clientY - 28) + 'px';
+                        tooltip.innerHTML =
+                            '<strong>' + grp + ' — ' + met + '</strong><br>' +
+                            'n: ' + s.n + '<br>' +
+                            'Min: ' + fmt(s.min) + '<br>' +
+                            'Q1: ' + fmt(s.q1) + '<br>' +
+                            'Median: ' + fmt(s.median) + '<br>' +
+                            'Mean: ' + fmt(s.mean) + '<br>' +
+                            'Q3: ' + fmt(s.q3) + '<br>' +
+                            'Max: ' + fmt(s.max) + '<br>' +
+                            'Outliers: ' + s.outliers.length;
+                    })
+                    .on('mouseleave', function() { tooltip.style.display = 'none'; });
+
+                // Median line
+                metG.append('line')
+                    .attr('x1', 0).attr('x2', boxW)
+                    .attr('y1', yScale(s.median)).attr('y2', yScale(s.median))
+                    .attr('stroke', 'white').attr('stroke-width', 2.5)
+                    .attr('pointer-events', 'none');
+
+                // Mean × marker
+                if (showMean) {
+                    const mx = boxW / 2, my = yScale(s.mean);
+                    const sz = 5;
+                    metG.append('line')
+                        .attr('x1', mx - sz).attr('y1', my - sz)
+                        .attr('x2', mx + sz).attr('y2', my + sz)
+                        .attr('stroke', 'white').attr('stroke-width', 2)
+                        .attr('stroke-linecap', 'round')
+                        .attr('pointer-events', 'none');
+                    metG.append('line')
+                        .attr('x1', mx + sz).attr('y1', my - sz)
+                        .attr('x2', mx - sz).attr('y2', my + sz)
+                        .attr('stroke', 'white').attr('stroke-width', 2)
+                        .attr('stroke-linecap', 'round')
+                        .attr('pointer-events', 'none');
+                }
+
+                // Outlier dots
+                if (showOutliers) {
+                    s.outliers.forEach(ov => {
+                        metG.append('circle')
+                            .attr('cx', boxW / 2).attr('cy', yScale(ov))
+                            .attr('r', 4)
+                            .attr('fill', color).attr('fill-opacity', 0.7)
+                            .attr('stroke', color).attr('stroke-width', 1)
+                            .style('cursor', 'pointer')
+                            .on('mousemove', function(event) {
+                                tooltip.style.display = 'block';
+                                tooltip.style.left = (event.clientX + 14) + 'px';
+                                tooltip.style.top = (event.clientY - 28) + 'px';
+                                tooltip.innerHTML = '<strong>Outlier</strong><br>' + met + ': ' + fmt(ov) + '<br>Group: ' + grp;
+                            })
+                            .on('mouseleave', function() { tooltip.style.display = 'none'; });
+                    });
+                }
+            });
+        });
+
+        // X axis
+        g.append('g')
+            .attr('transform', 'translate(0,' + innerH + ')')
+            .call(d3.axisBottom(x0))
+            .selectAll('text')
+            .attr('font-size', '11px')
+            .attr('fill', '#333');
+
+        // Y axis
+        g.append('g')
+            .call(d3.axisLeft(yScale).ticks(8).tickFormat(d => d.toLocaleString('en-US')))
+            .selectAll('text')
+            .attr('font-size', '10px');
+
+        // Legend (right side)
+        const leg = svg.append('g').attr('transform', 'translate(' + (margin.left + innerW + 10) + ',' + margin.top + ')');
+        metrics.forEach((met, mi) => {
+            const color = palette[mi % palette.length];
+            leg.append('rect').attr('x', 0).attr('y', mi * 20).attr('width', 14).attr('height', 14)
+                .attr('fill', color).attr('fill-opacity', 0.75).attr('stroke', color);
+            leg.append('text').attr('x', 18).attr('y', mi * 20 + 11)
+                .attr('font-size', '10px').attr('fill', '#333').text(met);
+        });
+    }
+
+    /* =====================================================================
+       MASTER RENDER
+       ===================================================================== */
+    async function renderBoxPlot() {
+        const ds = document.getElementById('dataset').value;
+        const groupCol = document.getElementById('groupColumn').value;
+        const metricSel = document.getElementById('metricColumns');
+        const selectedMetrics = Array.from(metricSel.selectedOptions).map(o => o.value).filter(v => v);
+
+        if (!ds || !groupCol || selectedMetrics.length === 0) {
+            renderKPIStrip(null, null, null, null);
+            document.getElementById('boxplotContainer').innerHTML =
+                '<div class="viz-placeholder">Select a dataset, a grouping column, and at least one metric column to render the box plot.</div>';
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        const filters = getBoxplotFilters();
+
+        const rawData = await fetchData(ds, dataset.columns, filters, false);
+        if (!rawData) return;
+
+        const filteredData = applyFilters(rawData, filters);
+        lastRawData = filteredData;
+
+        const iqrMult = parseFloat(document.getElementById('outlierDef').value) || 1.5;
+        const palette = PALETTES[document.getElementById('colorPalette').value] || PALETTES.blue;
+
+        // Group data by groupColumn value
+        const groupMap = {};
+        filteredData.forEach(row => {
+            const grpVal = String(row[groupCol] !== null && row[groupCol] !== undefined ? row[groupCol] : '(blank)');
+            if (!groupMap[grpVal]) groupMap[grpVal] = {};
+            selectedMetrics.forEach(met => {
+                if (!groupMap[grpVal][met]) groupMap[grpVal][met] = [];
+                const v = Number(row[met]);
+                if (!isNaN(v)) groupMap[grpVal][met].push(v);
+            });
+        });
+
+        // Compute stats
+        const statsMap = {};
+        const rawDataMap = {};
+        let totalOutliers = 0;
+        Object.keys(groupMap).forEach(grp => {
+            statsMap[grp] = {};
+            rawDataMap[grp] = {};
+            selectedMetrics.forEach(met => {
+                const vals = groupMap[grp][met] || [];
+                if (vals.length >= 2) {
+                    const s = computeBoxStats(vals, iqrMult);
+                    statsMap[grp][met] = s;
+                    rawDataMap[grp][met] = vals;
+                    totalOutliers += s.outliers.length;
+                }
+            });
+        });
+
+        const groups = Object.keys(statsMap).sort();
+        lastStatsMap = statsMap;
+        lastGroups = groups;
+        lastMetrics = selectedMetrics;
+
+        renderKPIStrip(filteredData.length, groups.length, selectedMetrics.length, totalOutliers);
+        drawBoxPlot(groups, selectedMetrics, statsMap, rawDataMap, palette);
+    }
+
+    /* =====================================================================
+       SAS SESSION / AUTH (verbatim from template)
+       ===================================================================== */
+    window.session = { authenticated: false, userid: null, loginTime: null };
+
+    function sasGetParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function sasCleanUrl() {
+        history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function sasRenderLoggedIn() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'none';
+        if (welcome) {
+            welcome.style.display = 'inline';
+            welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+        }
+        document.getElementById('status-dot').classList.add('active');
+        document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+        document.getElementById('footer-signout').style.display = 'inline';
+        document.getElementById('reportToolbar').classList.add('visible');
+    }
+
+    function sasRenderLoggedOut() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'inline';
+        if (welcome) welcome.style.display = 'none';
+        document.getElementById('status-dot').classList.remove('active');
+        document.getElementById('status-label').textContent = 'No active session';
+        document.getElementById('footer-signout').style.display = 'none';
+        document.getElementById('reportToolbar').classList.remove('visible');
+    }
+
+    function handleLogon(e) {
+        if (e) e.preventDefault();
+        if (!window.SAS_CONFIG) { alert('Configuration not yet loaded.'); return; }
+        const returnUrl = encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        const target = window.SAS_CONFIG.storedProcessUrl +
+                       encodeURIComponent(window.SAS_CONFIG.storedProcessPath) +
+                       '&returnUrl=' + returnUrl;
+        window.location.href = target;
+    }
+
+    function handleSignOut(e) {
+        if (e) e.preventDefault();
+        window.session = { authenticated: false, userid: null, loginTime: null };
+        localStorage.removeItem('sas_session');
+        if (window.SAS_CONFIG) {
+            window.location.href = window.SAS_CONFIG.logoutUrl +
+                                   '?returnUrl=' + encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        } else {
+            sasRenderLoggedOut();
+        }
+    }
+
+    (function sasInit() {
+        const userid = sasGetParam('userid');
+        const sasAuth = sasGetParam('sasAuth');
+        if (userid && sasAuth === '1') {
+            window.session = {
+                authenticated: true,
+                userid: decodeURIComponent(userid),
+                loginTime: new Date().toLocaleTimeString()
+            };
+            localStorage.setItem('sas_session', JSON.stringify(window.session));
+            sasCleanUrl();
+            sasRenderLoggedIn();
+        } else {
+            try {
+                let rawSession = localStorage.getItem('sas_session');
+                if (!rawSession) {
+                    rawSession = sessionStorage.getItem('sas_session');
+                    if (rawSession) localStorage.setItem('sas_session', rawSession);
+                }
+                const stored = rawSession ? JSON.parse(rawSession) : null;
+                if (stored && stored.authenticated && stored.userid) {
+                    window.session = stored;
+                    sasRenderLoggedIn();
+                    return;
+                }
+            } catch (_) {}
+            sasRenderLoggedOut();
+        }
+    })();
+
+    /* =====================================================================
+       REPORT SAVE
+       ===================================================================== */
+    async function saveReport() {
+        const name = document.getElementById('reportNameInput').value.trim();
+        const feedback = document.getElementById('reportSaveFeedback');
+        if (!name) { feedback.textContent = 'Enter a report name'; feedback.style.color = '#cc0000'; return; }
+        if (!window.session || !window.session.authenticated) {
+            feedback.textContent = 'Must be logged in'; feedback.style.color = '#cc0000'; return;
+        }
+        const userid = window.session.userid;
+        const basePath = 'meta/profiles/' + encodeURIComponent(userid) + '/';
+        const reportEntry = {
+            name: name,
+            url: basePath + 'reports/boxplot.html'
+        };
+        try {
+            feedback.textContent = 'Saving...'; feedback.style.color = '#555';
+            let existing = { reports: [] };
+            try {
+                const r = await fetch(basePath + 'reports.json');
+                if (r.ok) existing = await r.json();
+            } catch (_) {}
+            const idx = existing.reports.findIndex(rp => rp.url === reportEntry.url);
+            if (idx >= 0) existing.reports[idx] = reportEntry;
+            else existing.reports.push(reportEntry);
+            const res = await fetch(basePath + 'reports.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(existing, null, 2)
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            feedback.textContent = 'Saved'; feedback.style.color = '#2e7d32';
+        } catch (err) {
+            feedback.textContent = err.message; feedback.style.color = '#cc0000';
+        }
+    }
+
+    /* =====================================================================
+       EXPORT / RESET
+       ===================================================================== */
+    function exportImage() {
+        const panel = document.getElementById('vizPanel');
+        html2canvas(panel, { useCORS: true, allowTaint: true }).then(canvas => {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = 'boxplot_' + ts + '.png';
+            a.click();
+        });
+    }
+
+    function exportCSV() {
+        if (!lastStatsMap || !lastGroups || !lastMetrics || lastGroups.length === 0) {
+            alert('No data to export. Please render a box plot first.');
+            return;
+        }
+
+        let csv = 'Group,Metric,N,Min,Q1,Median,Mean,Q3,Max,Outlier Count\n';
+        lastGroups.forEach(grp => {
+            lastMetrics.forEach(met => {
+                const s = lastStatsMap[grp] && lastStatsMap[grp][met];
+                if (s) {
+                    const row = [grp, met, s.n, s.min, s.q1, s.median, s.mean, s.q3, s.max, s.outliers.length];
+                    csv += row.map(v => {
+                        const str = String(v);
+                        if (str.includes(',') || str.includes('"')) return '"' + str.replace(/"/g, '""') + '"';
+                        return str;
+                    }).join(',') + '\n';
+                }
+            });
+        });
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'boxplot_stats_' + ts + '.csv';
+        a.click();
+    }
+
+    function resetForm() {
+        document.getElementById('dataset').value = '';
+        document.getElementById('groupColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('metricColumns').innerHTML = '<option disabled>— select dataset first —</option>';
+        document.getElementById('filtersContainer').innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+        document.getElementById('boxWidth').value = '40';
+        document.getElementById('boxWidthVal').textContent = '40';
+        document.getElementById('showOutliers').checked = true;
+        document.getElementById('showMean').checked = true;
+        document.getElementById('showPoints').checked = false;
+        document.getElementById('outlierDef').value = '1.5';
+        document.getElementById('colorPalette').value = 'blue';
+        document.getElementById('chartTitle').value = '';
+        document.getElementById('yAxisLabel').value = '';
+        filterCount = 0;
+        lastStatsMap = null;
+        lastGroups = null;
+        lastMetrics = null;
+        lastRawData = null;
+        renderKPIStrip(null, null, null, null);
+        document.getElementById('boxplotContainer').innerHTML =
+            '<div class="viz-placeholder">Select a dataset, a grouping column, and at least one metric column to render the box plot.</div>';
+    }
+
+    /* =====================================================================
+       MODAL HELPERS
+       ===================================================================== */
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function toggleMenu() {
+        document.getElementById('dropdownMenu').classList.toggle('active');
+        document.getElementById('hamburgerBtn').classList.toggle('active');
+    }
+
+    function closeMenu() {
+        document.getElementById('dropdownMenu').classList.remove('active');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+    }
+
+    /* =====================================================================
+       DOM CONTENT LOADED — wire all events
+       ===================================================================== */
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Load config
+        try {
+            await loadConfig();
+            initDatasetDropdown();
+        } catch (err) {
+            console.error('Config load error:', err);
+            showConfigError('Configuration failed to load. Check console for details.');
+        }
+
+        // Dataset change
+        document.getElementById('dataset').addEventListener('change', updateBoxplotColumns);
+
+        // Column selects
+        document.getElementById('groupColumn').addEventListener('change', renderBoxPlot);
+        document.getElementById('metricColumns').addEventListener('change', renderBoxPlot);
+
+        // Select All / Clear metrics
+        document.getElementById('selectAllMetricsBtn').addEventListener('click', function() {
+            const sel = document.getElementById('metricColumns');
+            Array.from(sel.options).forEach(o => { if (!o.disabled) o.selected = true; });
+            renderBoxPlot();
+        });
+
+        document.getElementById('clearMetricsBtn').addEventListener('click', function() {
+            const sel = document.getElementById('metricColumns');
+            Array.from(sel.options).forEach(o => { o.selected = false; });
+            renderBoxPlot();
+        });
+
+        // Filter add button
+        document.getElementById('addFilterBtn').addEventListener('click', addBoxplotFilter);
+
+        // Configuration controls
+        document.getElementById('boxWidth').addEventListener('input', function() {
+            document.getElementById('boxWidthVal').textContent = this.value;
+            renderBoxPlot();
+        });
+        document.getElementById('showOutliers').addEventListener('change', renderBoxPlot);
+        document.getElementById('showMean').addEventListener('change', renderBoxPlot);
+        document.getElementById('showPoints').addEventListener('change', renderBoxPlot);
+        document.getElementById('outlierDef').addEventListener('change', renderBoxPlot);
+        document.getElementById('colorPalette').addEventListener('change', renderBoxPlot);
+        document.getElementById('chartTitle').addEventListener('input', renderBoxPlot);
+        document.getElementById('yAxisLabel').addEventListener('input', renderBoxPlot);
+
+        // Action buttons
+        document.getElementById('exportImageBtn').addEventListener('click', exportImage);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+        document.getElementById('resetFormBtn').addEventListener('click', resetForm);
+
+        // Report save
+        document.getElementById('saveReportBtn').addEventListener('click', saveReport);
+
+        // Nav
+        document.getElementById('nav-logon').addEventListener('click', handleLogon);
+        document.getElementById('footer-signout').addEventListener('click', handleSignOut);
+        document.getElementById('nav-about').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); });
+        document.getElementById('nav-help').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); });
+
+        // Hamburger
+        document.getElementById('hamburgerBtn').addEventListener('click', toggleMenu);
+        document.getElementById('menuAbout').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); closeMenu(); });
+        document.getElementById('menuHelp').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); closeMenu(); });
+
+        // Modal closes
+        document.getElementById('closeAboutModal').addEventListener('click', function() { closeModal('aboutModal'); });
+        document.getElementById('closeHelpModal').addEventListener('click', function() { closeModal('helpModal'); });
+
+        // Click outside to close modal/menu
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) this.classList.remove('active');
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+            }
+        });
+    });
+    </script>
+</body>
+</html>
