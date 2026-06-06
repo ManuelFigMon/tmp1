@@ -1368,14 +1368,14 @@
         const showPoints = document.getElementById('showPoints').checked;
 
         // Draw boxes for each group × metric
-        groups.forEach(grp => {
+        groups.forEach((grp, gi) => {
             const grpG = g.append('g').attr('transform', 'translate(' + x0(grp) + ',0)');
 
             metrics.forEach((met, mi) => {
                 const s = statsMap[grp] && statsMap[grp][met];
                 if (!s || s.n < 2) return;
 
-                const color = palette[mi % palette.length];
+                const color = palette[gi % palette.length];
                 const cx = x1(met) + boxOffset;
                 const metG = grpG.append('g').attr('transform', 'translate(' + cx + ',0)');
 
@@ -1500,14 +1500,14 @@
             .selectAll('text')
             .attr('font-size', '10px');
 
-        // Legend (right side)
+        // Legend (right side) — shows grouping column values
         const leg = svg.append('g').attr('transform', 'translate(' + (margin.left + innerW + 10) + ',' + margin.top + ')');
-        metrics.forEach((met, mi) => {
-            const color = palette[mi % palette.length];
-            leg.append('rect').attr('x', 0).attr('y', mi * 20).attr('width', 14).attr('height', 14)
+        groups.forEach((grp, gi) => {
+            const color = palette[gi % palette.length];
+            leg.append('rect').attr('x', 0).attr('y', gi * 20).attr('width', 14).attr('height', 14)
                 .attr('fill', color).attr('fill-opacity', 0.75).attr('stroke', color);
-            leg.append('text').attr('x', 18).attr('y', mi * 20 + 11)
-                .attr('font-size', '10px').attr('fill', '#333').text(met);
+            leg.append('text').attr('x', 18).attr('y', gi * 20 + 11)
+                .attr('font-size', '10px').attr('fill', '#333').text(grp);
         });
     }
 
