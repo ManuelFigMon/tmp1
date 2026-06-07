@@ -1,0 +1,12 @@
+{
+  "name": "access-db-test",
+  "version": "1.0.0",
+  "description": "Test connectivity to a Microsoft Access database",
+  "main": "access-db-test.js",
+  "scripts": {
+    "start": "node access-db-test.js"
+  },
+  "dependencies": {
+    "odbc": "^2.4.9"
+  }
+}
