@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Access DB Connection Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: sans-serif;
+      background: #f0f4f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 2.5rem 3rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+      text-align: center;
+      width: 420px;
+    }
+    h1 { font-size: 1.4rem; color: #2d3748; margin-bottom: 0.4rem; }
+    .subtitle { font-size: 0.9rem; color: #718096; margin-bottom: 2rem; }
+    button {
+      background: #4a6cf7;
+      color: white;
+      border: none;
+      padding: 0.75rem 2rem;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #3b5bdb; }
+    button:disabled { background: #a0aec0; cursor: not-allowed; }
+    .result {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      line-height: 1.6;
+      display: none;
+      text-align: left;
+    }
+    .result.success { background: #f0fff4; border: 1px solid #68d391; color: #276749; }
+    .result.failure { background: #fff5f5; border: 1px solid #fc8181; color: #9b2c2c; }
+    .result.loading { background: #ebf8ff; border: 1px solid #63b3ed; color: #2b6cb0; display: block; }
+    .label { font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Microsoft Access DB Test</h1>
+    <p class="subtitle">Checks connectivity via the local test server</p>
+    <button id="btn" onclick="testConnection()">Test Connection</button>
+    <div id="result" class="result"></div>
+  </div>
+
+  <script>
+    async function testConnection() {
+      const btn = document.getElementById("btn");
+      const result = document.getElementById("result");
+
+      btn.disabled = true;
+      result.className = "result loading";
+      result.style.display = "block";
+      result.innerHTML = "Connecting&hellip;";
+
+      try {
+        const res = await fetch("/test-connection");
+        const data = await res.json();
+
+        if (data.success) {
+          result.className = "result success";
+          result.innerHTML =
+            `<div><span class="label">Status:</span> Connected</div>` +
+            `<div><span class="label">Database:</span> ${data.dbPath}</div>` +
+            `<div><span class="label">User tables found:</span> ${data.tableCount}</div>`;
+        } else {
+          result.className = "result failure";
+          result.innerHTML =
+            `<div><span class="label">Status:</span> Failed</div>` +
+            `<div><span class="label">Database:</span> ${data.dbPath}</div>` +
+            `<div><span class="label">Error:</span> ${data.error}</div>`;
+        }
+      } catch (err) {
+        result.className = "result failure";
+        result.innerHTML =
+          `<div><span class="label">Status:</span> Failed</div>` +
+          `<div><span class="label">Error:</span> Could not reach the local server. Is it running?</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>
