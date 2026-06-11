@@ -462,7 +462,10 @@ function Invoke-StreamingProfile {
     $rowHashes = New-Object 'System.Collections.Generic.HashSet[int]'
     try {
         $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        $fileLen = [double][math]::Max(1, $fs.Length)
+        # cast to double BEFORE any math: file lengths > 2 GB overflow the
+        # [math]::Max(int, int) overload that PowerShell 5.1 binds to
+        $fileLen = [double]$fs.Length
+        if ($fileLen -lt 1) { $fileLen = 1.0 }
         $sr = New-Object System.IO.StreamReader($fs, $true)
         $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($sr)
         $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
@@ -661,7 +664,10 @@ function Get-ReservoirSample {
     $sample = New-Object System.Collections.Generic.List[object]
     try {
         $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        $fileLen = [double][math]::Max(1, $fs.Length)
+        # cast to double BEFORE any math: file lengths > 2 GB overflow the
+        # [math]::Max(int, int) overload that PowerShell 5.1 binds to
+        $fileLen = [double]$fs.Length
+        if ($fileLen -lt 1) { $fileLen = 1.0 }
         $sr = New-Object System.IO.StreamReader($fs, $true)
         $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($sr)
         $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
