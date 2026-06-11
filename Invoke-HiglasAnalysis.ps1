@@ -235,9 +235,16 @@ function New-Section {
 
 function Add-SectionTable {
     param($Section, [string]$Caption, $Rows)
-    $rowArray = @($Rows)
-    if ($rowArray.Count -gt 0) {
-        $Section.Tables.Add(@{ Caption = $Caption; Rows = $rowArray })
+    # enumerate manually rather than @($Rows): works identically for arrays,
+    # generic Lists, and single objects across PowerShell hosts
+    $rowList = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $Rows) {
+        foreach ($r in $Rows) {
+            if ($null -ne $r) { $rowList.Add($r) }
+        }
+    }
+    if ($rowList.Count -gt 0) {
+        $Section.Tables.Add(@{ Caption = $Caption; Rows = $rowList.ToArray() })
     }
 }
 
@@ -266,6 +273,15 @@ function Invoke-SafeSection {
         $s.ErrorText = ('This section could not be completed. Error: {0}' -f $_.Exception.Message)
         return $s
     }
+}
+
+function New-ChartsUnavailableSection {
+    # Stand-in section used when the charting assembly could not be loaded, so
+    # chart-only section functions are never invoked at all in that state.
+    param([string]$Title)
+    $s = New-Section $Title
+    $s.Paragraphs.Add('The charting assembly (System.Windows.Forms.DataVisualization) is unavailable in this environment, so the charts for this section were skipped. Tabular results elsewhere in the report are unaffected.')
+    return $s
 }
 
 # ---------------------------------------------------------------------------
@@ -997,7 +1013,9 @@ function Get-PairPlotSection {
 # ===========================================================================
 function Invoke-KMeans {
     # Plain k-means with k-means++ style seeding. $Points is an array of double[].
-    param($Points, [int]$K, [int]$Seed = 42, [int]$MaxIterations = 100)
+    # NOTE: PowerShell variables are case-INsensitive, so the cluster-count
+    # parameter must not be named $K ($k loop variables would collide with it).
+    param($Points, [int]$ClusterCount, [int]$Seed = 42, [int]$MaxIterations = 100)
     $n   = $Points.Count
     $dim = $Points[0].Length
     $rand = New-Object System.Random($Seed)
@@ -1005,7 +1023,7 @@ function Invoke-KMeans {
     # --- k-means++ initialization ---
     $centroids = New-Object System.Collections.Generic.List[object]
     $centroids.Add(($Points[$rand.Next($n)].Clone()))
-    while ($centroids.Count -lt $K) {
+    while ($centroids.Count -lt $ClusterCount) {
         $d2 = New-Object double[] $n
         $totalD2 = 0.0
         for ($i = 0; $i -lt $n; $i++) {
@@ -1043,7 +1061,7 @@ function Invoke-KMeans {
         for ($i = 0; $i -lt $n; $i++) {
             $bestK = 0
             $bestDist = [double]::MaxValue
-            for ($k = 0; $k -lt $K; $k++) {
+            for ($k = 0; $k -lt $ClusterCount; $k++) {
                 $dist = 0.0
                 for ($d = 0; $d -lt $dim; $d++) {
                     $diff = $Points[$i][$d] - $centroids[$k][$d]
@@ -1055,15 +1073,15 @@ function Invoke-KMeans {
         }
         if (-not $changed) { break }
         # recompute centroids
-        $sums   = New-Object 'object[]' $K
-        $counts = New-Object int[] $K
-        for ($k = 0; $k -lt $K; $k++) { $sums[$k] = New-Object double[] $dim }
+        $sums   = New-Object 'object[]' $ClusterCount
+        $counts = New-Object int[] $ClusterCount
+        for ($k = 0; $k -lt $ClusterCount; $k++) { $sums[$k] = New-Object double[] $dim }
         for ($i = 0; $i -lt $n; $i++) {
             $k = $assign[$i]
             $counts[$k]++
             for ($d = 0; $d -lt $dim; $d++) { $sums[$k][$d] += $Points[$i][$d] }
         }
-        for ($k = 0; $k -lt $K; $k++) {
+        for ($k = 0; $k -lt $ClusterCount; $k++) {
             if ($counts[$k] -gt 0) {
                 for ($d = 0; $d -lt $dim; $d++) { $centroids[$k][$d] = $sums[$k][$d] / $counts[$k] }
             }
@@ -1151,7 +1169,7 @@ function Get-KMeansSection {
     for ($k = 2; $k -le $maxK; $k++) {
         Write-Progress -Activity 'K-means clustering' -Status ("Evaluating k = {0}" -f $k) `
             -PercentComplete ((($k - 2) / [math]::Max(1, ($maxK - 1))) * 100)
-        $results[$k] = Invoke-KMeans -Points $points -K $k -Seed 42
+        $results[$k] = Invoke-KMeans -Points $points -ClusterCount $k -Seed 42
         $wcssRows.Add([PSCustomObject]@{
             'k'    = [string]$k
             'WCSS' = (Format-Num $results[$k].WCSS 2)
@@ -1609,22 +1627,34 @@ try {
             Get-CorrelationSection -NumericColumns $NumericColumns -NumericArrays $NumericArrays -Sampled $sampled }))
 
         Write-Stage 'Running V1 analysis: time trend chart...'
-        $Sections.Add((Invoke-SafeSection 'Trend Over Time (Line Graph)' {
-            Get-TimeSeriesSection -PlotData $PlotData -ColIndex $ColIndex -DateColumns $DateColumns -NumericColumns $NumericColumns }))
+        if ($script:ChartingAvailable) {
+            $Sections.Add((Invoke-SafeSection 'Trend Over Time (Line Graph)' {
+                Get-TimeSeriesSection -PlotData $PlotData -ColIndex $ColIndex -DateColumns $DateColumns -NumericColumns $NumericColumns }))
+        }
+        else { $Sections.Add((New-ChartsUnavailableSection 'Trend Over Time (Line Graph)')) }
 
         Write-Stage 'Running V1 analysis: categorical bar charts...'
-        $Sections.Add((Invoke-SafeSection 'Categorical Bar Graphs' {
-            Get-BarChartSection -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+        if ($script:ChartingAvailable) {
+            $Sections.Add((Invoke-SafeSection 'Categorical Bar Graphs' {
+                Get-BarChartSection -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+        }
+        else { $Sections.Add((New-ChartsUnavailableSection 'Categorical Bar Graphs')) }
     }
 
     if ($versionLevel -ge 2) {
         Write-Stage 'Running V2 analysis: scatter plots...'
-        $Sections.Add((Invoke-SafeSection 'Scatter Plots (Most Correlated Pairs)' {
-            Get-ScatterPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
+        if ($script:ChartingAvailable) {
+            $Sections.Add((Invoke-SafeSection 'Scatter Plots (Most Correlated Pairs)' {
+                Get-ScatterPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
+        }
+        else { $Sections.Add((New-ChartsUnavailableSection 'Scatter Plots (Most Correlated Pairs)')) }
 
         Write-Stage 'Running V2 analysis: pair plot grid...'
-        $Sections.Add((Invoke-SafeSection 'Pair Plot Grid' {
-            Get-PairPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
+        if ($script:ChartingAvailable) {
+            $Sections.Add((Invoke-SafeSection 'Pair Plot Grid' {
+                Get-PairPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
+        }
+        else { $Sections.Add((New-ChartsUnavailableSection 'Pair Plot Grid')) }
     }
 
     if ($versionLevel -ge 3) {
