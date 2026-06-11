@@ -15,7 +15,7 @@ Office COM automation.
 ```powershell
 .\Invoke-HiglasAnalysis.ps1 `
     -PROJ_NAME "HIGLAS" `
-    -ANALYSIS_VERSION "v1" `
+    -ANALYSIS_VERSION "v0" `
     -PATH_TO_DATA "\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\HIGLAS\HIGLAS_tbl_HIGLASRBDReport.csv" `
     -FINAL_OUTPUT "WORD"
 ```
@@ -25,7 +25,7 @@ Office COM automation.
 | Parameter          | Required | Description |
 |--------------------|----------|-------------|
 | `PROJ_NAME`        | Yes      | Project name used in the report title, output file names, and headers (e.g. `HIGLAS`). |
-| `ANALYSIS_VERSION` | Yes      | `v1` (alias `lite`), `v2`, or `v3`. Case-insensitive; `lite` maps to `v1`. Versions are cumulative (see below). |
+| `ANALYSIS_VERSION` | Yes      | `v0`, `v1` (alias `lite`), `v2`, or `v3`. Case-insensitive; `lite` maps to `v1`. Versions are cumulative (see below). |
 | `PATH_TO_DATA`     | Yes      | Full path to the input CSV file. UNC paths (`\\server\share\...`) are supported. The script fails with a clear error if the file does not exist. |
 | `FINAL_OUTPUT`     | Yes      | `WORD` (builds a `.docx` via Word COM automation) or `HTML` (self-contained `.html`). If Word is not installed, WORD requests fall back to HTML with a warning. |
 | `OutputFolder`     | No       | Folder where the report and chart PNGs are written. Defaults to the script's directory. Created if missing. |
@@ -38,12 +38,18 @@ report additionally embeds them as base64 so the `.html` file is fully portable.
 
 Each version includes everything from the previous one.
 
-### v1 (alias `lite`) — baseline
-- **Metadata analysis** — row/column counts, per-column inferred type (numeric,
-  date, categorical/string), null/blank counts and percentages, distinct value counts.
+### v0 — basic
+- **Dataset size** — file size, row count, and column count.
+- **Metadata analysis** — per-column inferred type (numeric, date,
+  categorical/string), null/blank counts and percentages, distinct value counts.
 - **Frequency analysis** — top 15 values (count + percent) for each categorical column.
 - **Distribution analysis** — min, max, mean, median, standard deviation,
   25th/75th percentiles, and potential outlier counts (beyond 1.5 × IQR) per numeric column.
+- **Automated observations & recommendations** — flags high-null columns,
+  constant columns, identifier-like columns, and flag-like numeric columns as
+  discussion points for analysts.
+
+### v1 (alias `lite`) — adds
 - **Correlation matrix** — Pearson correlations across all numeric columns;
   pairs with |r| > 0.7 are flagged.
 - **Line graph** — record counts over time (plus the sum of the first numeric
@@ -77,9 +83,13 @@ No internet access, Python, or PowerShell module installation is required.
 
 ## Behavior on large files
 
-If the dataset exceeds 100,000 rows, a random 100,000-row sample (fixed seed, so
-runs are reproducible) is used for charts and clustering. Metadata and frequency
-counts always use the full dataset. The sampling is noted in the report header.
+The CSV is read with a **streaming parser** (.NET `TextFieldParser`) in a single
+pass with bounded memory, so very large files do not cause
+`OutOfMemoryException` the way `Import-Csv` does. If the dataset exceeds
+100,000 rows, a random 100,000-row reservoir sample (fixed seed, so runs are
+reproducible) is used for descriptive statistics, correlations, charts, and
+clustering. Metadata and frequency counts always cover the full dataset. The
+sampling is noted in the report header and the affected sections.
 
 ## Exit codes
 
@@ -104,9 +114,14 @@ is logged into that section of the report and the remaining sections still run.
 - **Charts missing from the report** — the charting assembly could not be loaded
   (noted in the report). Tables are unaffected. This can occur on Server Core
   installations without the .NET chart components.
-- **Slow runs on very large CSVs** — `Import-Csv` loads the file into memory and
-  profiling is row-by-row; expect several minutes for files in the hundreds of MB.
-  Consider splitting the file or running on a machine with more memory.
+- **`System.OutOfMemoryException` while loading** — should no longer occur: the
+  script streams the CSV instead of loading it whole. If you still see memory
+  errors, make sure you are running **64-bit** PowerShell (`[Environment]::Is64BitProcess`
+  should return `True`; launch from `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`,
+  not `SysWOW64`).
+- **Slow runs on very large CSVs** — profiling is row-by-row in PowerShell;
+  expect several minutes for files in the hundreds of MB. Memory stays bounded,
+  but CPU time grows with row count.
 - **Wrong type inference** (e.g. zero-padded codes detected as numeric) — types are
   inferred by sampling values; ID-like numeric codes may be classified as numeric.
   This affects which sections a column appears in but not the underlying data.

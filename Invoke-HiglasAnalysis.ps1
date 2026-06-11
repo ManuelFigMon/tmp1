@@ -10,12 +10,18 @@
     built-in Windows PowerShell 5.1 capabilities, .NET Framework classes, and
     (optionally) Microsoft Office COM automation.
 
-    Three cumulative analysis versions are supported:
+    Four cumulative analysis versions are supported:
 
-      v1 (alias: lite)
-        - Metadata analysis (row/column counts, inferred types, nulls, distinct values)
-        - Frequency analysis (top 15 values per categorical column)
-        - Distribution analysis (descriptive statistics + outlier counts for numeric columns)
+      v0 (basic)
+        - Dataset size (file size, row count, column count)
+        - Metadata analysis (inferred types, nulls, distinct values)
+        - Simple frequency analysis (top 15 values per categorical column)
+        - Simple distribution analysis (descriptive statistics + outlier counts
+          for numeric columns)
+        - Automated observations & recommendations (high-null columns, constant
+          columns, identifier-like columns, flag-like numeric columns)
+
+      v1 (alias: lite) = v0 plus
         - Pearson correlation matrix across numeric columns (pairs with |r| > 0.7 flagged)
         - Line graph of record counts (and first numeric column sum) over time, when a
           date column is detected
@@ -34,16 +40,19 @@
     assembly and saved as PNG files in the output folder. If the charting assembly is
     unavailable, charts are skipped gracefully and the report notes their absence.
 
-    For datasets larger than 100,000 rows, a random 100,000-row sample is used for
-    plots and clustering (full data is still used for metadata and frequency counts),
-    and the sampling is noted in the report.
+    The CSV is read with a streaming parser (one pass, bounded memory) so very
+    large files do not cause OutOfMemoryException. For datasets larger than
+    100,000 rows, a seeded random 100,000-row reservoir sample is used for
+    descriptive statistics, correlations, plots, and clustering (the full data
+    is still used for metadata and frequency counts), and the sampling is noted
+    in the report.
 
 .PARAMETER PROJ_NAME
     Project name used in the report title, output file names, and section headers
     (for example: "HIGLAS").
 
 .PARAMETER ANALYSIS_VERSION
-    The analysis depth to run: v1 (alias: lite), v2, or v3. Input is treated
+    The analysis depth to run: v0, v1 (alias: lite), v2, or v3. Input is treated
     case-insensitively and "lite" is mapped to v1. Versions are cumulative.
 
 .PARAMETER PATH_TO_DATA
@@ -62,12 +71,12 @@
 .EXAMPLE
     .\Invoke-HiglasAnalysis.ps1 `
         -PROJ_NAME "HIGLAS" `
-        -ANALYSIS_VERSION "v1" `
+        -ANALYSIS_VERSION "v0" `
         -PATH_TO_DATA "\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\HIGLAS\HIGLAS_tbl_HIGLASRBDReport.csv" `
         -FINAL_OUTPUT "WORD"
 
-    Runs the baseline (v1 / lite) analysis against a CSV on a UNC share and produces
-    a Word report in the script's folder.
+    Runs the basic (v0) analysis against a CSV on a UNC share and produces a Word
+    report in the script's folder.
 
 .EXAMPLE
     .\Invoke-HiglasAnalysis.ps1 -PROJ_NAME "HIGLAS" -ANALYSIS_VERSION "v3" `
@@ -90,8 +99,8 @@ param(
     [ValidateNotNullOrEmpty()]
     [string]$PROJ_NAME,
 
-    [Parameter(Mandatory = $true, HelpMessage = 'Analysis version: v1 (alias lite), v2 or v3')]
-    [ValidateSet('v1', 'v2', 'v3', 'lite')]
+    [Parameter(Mandatory = $true, HelpMessage = 'Analysis version: v0, v1 (alias lite), v2 or v3')]
+    [ValidateSet('v0', 'v1', 'v2', 'v3', 'lite')]
     [string]$ANALYSIS_VERSION,
 
     [Parameter(Mandatory = $true, HelpMessage = 'Full path (UNC supported) to the input CSV file')]
@@ -316,53 +325,112 @@ function Get-SafeFileToken {
 }
 
 # ---------------------------------------------------------------------------
-# Column profiling and type inference
+# Streaming CSV load, column profiling, and type inference
 # ---------------------------------------------------------------------------
-function Get-ColumnProfiles {
-    # Single pass over the FULL dataset collecting null counts and value
-    # frequencies per column (frequencies capped at MaxDistinctTracked keys).
-    param($Data, [string[]]$Columns)
+function Read-CsvData {
+    # Streams the CSV with the .NET TextFieldParser instead of Import-Csv so
+    # very large files cannot exhaust memory (Import-Csv materializes every row
+    # as a PSCustomObject, which throws OutOfMemoryException on big datasets).
+    # A single pass computes the row count and per-column null counts and value
+    # frequencies over the FULL data, and draws a seeded reservoir sample of
+    # rows (as lightweight string arrays) for statistics, plots, and clustering.
+    param([string]$Path, [int]$SampleSize)
 
+    Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop
+
+    $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($Path)
+    $sample = New-Object System.Collections.Generic.List[object]
+    $columns = @()
+    $rowCount = 0
+    $malformed = 0
     $profiles = @{}
-    foreach ($col in $Columns) {
-        $profiles[$col] = @{
-            Name            = $col
-            NullCount       = 0
-            ValueCounts     = @{}
-            DistinctOverflow = $false
-        }
-    }
+    try {
+        $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
+        $parser.SetDelimiters(',')
+        $parser.HasFieldsEnclosedInQuotes = $true
+        $parser.TrimWhiteSpace = $false
 
-    $rowIndex = 0
-    $total = @($Data).Count
-    foreach ($row in $Data) {
-        foreach ($p in $row.PSObject.Properties) {
-            $prof = $profiles[$p.Name]
-            if ($null -eq $prof) { continue }
-            $v = [string]$p.Value
-            if ([string]::IsNullOrWhiteSpace($v)) {
-                $prof.NullCount++
-            }
-            else {
-                if ($prof.ValueCounts.ContainsKey($v)) {
-                    $prof.ValueCounts[$v]++
-                }
-                elseif ($prof.ValueCounts.Count -lt $script:MaxDistinctTracked) {
-                    $prof.ValueCounts[$v] = 1
+        if ($parser.EndOfData) {
+            return @{ Columns = @(); RowCount = 0; Profiles = @{}; SampleRows = $sample; MalformedRows = 0 }
+        }
+
+        # ----- headers (blank or duplicate names are repaired) -----
+        $rawHeaders = $parser.ReadFields()
+        $seen = @{}
+        $colList = New-Object System.Collections.Generic.List[string]
+        for ($c = 0; $c -lt $rawHeaders.Length; $c++) {
+            $h = ([string]$rawHeaders[$c]).Trim()
+            if ([string]::IsNullOrWhiteSpace($h)) { $h = 'Column{0}' -f ($c + 1) }
+            $base = $h; $n = 2
+            while ($seen.ContainsKey($h)) { $h = '{0}_{1}' -f $base, $n; $n++ }
+            $seen[$h] = $true
+            $colList.Add($h)
+        }
+        $columns = $colList.ToArray()
+        $colCount = $columns.Length
+
+        $nullCounts  = New-Object long[] $colCount
+        $valueCounts = New-Object object[] $colCount
+        $overflow    = New-Object bool[] $colCount
+        for ($c = 0; $c -lt $colCount; $c++) { $valueCounts[$c] = @{} }
+
+        $rand = New-Object System.Random(42)
+
+        while (-not $parser.EndOfData) {
+            $fields = $null
+            try { $fields = $parser.ReadFields() }
+            catch [Microsoft.VisualBasic.FileIO.MalformedLineException] { $malformed++; continue }
+
+            for ($c = 0; $c -lt $colCount; $c++) {
+                $v = $null
+                if ($c -lt $fields.Length) { $v = $fields[$c] }
+                if ([string]::IsNullOrWhiteSpace($v)) {
+                    $nullCounts[$c]++
                 }
                 else {
-                    $prof.DistinctOverflow = $true
+                    $vc = $valueCounts[$c]
+                    if ($vc.ContainsKey($v)) { $vc[$v]++ }
+                    elseif ($vc.Count -lt $script:MaxDistinctTracked) { $vc[$v] = 1 }
+                    else { $overflow[$c] = $true }
                 }
             }
+
+            # seeded reservoir sample keeps memory bounded regardless of file size
+            if ($rowCount -lt $SampleSize) {
+                $sample.Add($fields)
+            }
+            else {
+                $j = $rand.Next($rowCount + 1)
+                if ($j -lt $SampleSize) { $sample[$j] = $fields }
+            }
+            $rowCount++
+            if (($rowCount % 25000) -eq 0) {
+                Write-Progress -Activity 'Reading and profiling CSV (streaming)' -Status ("{0:N0} rows read" -f $rowCount)
+            }
         }
-        $rowIndex++
-        if (($rowIndex % 10000) -eq 0) {
-            Write-Progress -Activity 'Profiling columns' -Status ("{0:N0} of {1:N0} rows" -f $rowIndex, $total) `
-                -PercentComplete ([math]::Min(100, 100 * $rowIndex / [math]::Max(1, $total)))
+        Write-Progress -Activity 'Reading and profiling CSV (streaming)' -Completed
+
+        for ($c = 0; $c -lt $colCount; $c++) {
+            $profiles[$columns[$c]] = @{
+                Name             = $columns[$c]
+                NullCount        = $nullCounts[$c]
+                ValueCounts      = $valueCounts[$c]
+                DistinctOverflow = $overflow[$c]
+            }
         }
     }
-    Write-Progress -Activity 'Profiling columns' -Completed
-    return $profiles
+    finally {
+        $parser.Close()
+        $parser.Dispose()
+    }
+
+    return @{
+        Columns       = $columns
+        RowCount      = $rowCount
+        Profiles      = $profiles
+        SampleRows    = $sample
+        MalformedRows = $malformed
+    }
 }
 
 function Get-InferredColumnType {
@@ -386,11 +454,14 @@ function Get-InferredColumnType {
 }
 
 function Get-NumericColumnArray {
-    # Returns a row-aligned array of [double] or $null for one column.
-    param($Data, [string]$Column)
+    # Returns a row-aligned array of [double] or $null for one column of the
+    # sampled rows (each row is a string[] produced by the streaming reader).
+    param($Rows, [int]$Index)
     $list = New-Object System.Collections.Generic.List[object]
-    foreach ($row in $Data) {
-        $list.Add((ConvertTo-NullableDouble ([string]$row.$Column)))
+    foreach ($row in $Rows) {
+        $v = $null
+        if ($Index -lt $row.Length) { $v = $row[$Index] }
+        $list.Add((ConvertTo-NullableDouble ([string]$v)))
     }
     return $list
 }
@@ -399,10 +470,10 @@ function Get-NumericColumnArray {
 # V1 ANALYSIS SECTIONS
 # ===========================================================================
 function Get-MetadataSection {
-    param($Data, [string[]]$Columns, $Profiles, $ColumnTypes)
+    param([long]$RowCount, [string[]]$Columns, $Profiles, $ColumnTypes, [string]$FileSizeText)
     $section = New-Section 'Metadata Analysis'
-    $rowCount = @($Data).Count
-    $section.Paragraphs.Add(("The dataset contains {0:N0} rows and {1:N0} columns. " -f $rowCount, $Columns.Count) +
+    $rowCount = $RowCount
+    $section.Paragraphs.Add(("The dataset contains {0:N0} rows and {1:N0} columns (file size: {2}). " -f $rowCount, $Columns.Count, $FileSizeText) +
         'Column types are inferred by sampling values (numeric, date, or categorical/string).')
 
     $rows = foreach ($col in $Columns) {
@@ -425,9 +496,9 @@ function Get-MetadataSection {
 }
 
 function Get-FrequencySection {
-    param($Data, [string[]]$Columns, $Profiles, $ColumnTypes)
+    param([long]$RowCount, [string[]]$Columns, $Profiles, $ColumnTypes)
     $section = New-Section 'Frequency Analysis (Categorical Columns)'
-    $rowCount = @($Data).Count
+    $rowCount = $RowCount
     $catCols = @($Columns | Where-Object { $ColumnTypes[$_] -eq 'Categorical' })
     if ($catCols.Count -eq 0) {
         $section.Paragraphs.Add('No categorical columns were detected in this dataset.')
@@ -455,14 +526,64 @@ function Get-FrequencySection {
     return $section
 }
 
+function Get-ObservationsSection {
+    # V0+ extra: automated data-quality observations to seed analyst discussion.
+    param([long]$RowCount, [string[]]$Columns, $Profiles, $ColumnTypes)
+    $section = New-Section 'Automated Observations & Recommendations'
+    $section.Paragraphs.Add('Automatically generated data-quality observations intended as discussion points for business analysts.')
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($col in $Columns) {
+        $prof = $Profiles[$col]
+        $distinct = $prof.ValueCounts.Count
+        $nullPct = 0.0
+        if ($RowCount -gt 0) { $nullPct = 100.0 * $prof.NullCount / $RowCount }
+        $nonNull = $RowCount - $prof.NullCount
+
+        $notes = New-Object System.Collections.Generic.List[string]
+        if ($nullPct -ge 90) {
+            $notes.Add(('Almost entirely null/blank ({0:N1}%) - consider dropping the column or fixing data capture upstream.' -f $nullPct))
+        }
+        elseif ($nullPct -ge 20) {
+            $notes.Add(('High null rate ({0:N1}%) - investigate whether blanks are expected.' -f $nullPct))
+        }
+        if ($distinct -eq 1 -and -not $prof.DistinctOverflow -and $nonNull -gt 0) {
+            $notes.Add('Constant column (a single value) - adds no analytical signal.')
+        }
+        if ($prof.DistinctOverflow) {
+            $notes.Add(('Very high cardinality (more than {0:N0} distinct values) - likely an identifier or free text.' -f $script:MaxDistinctTracked))
+        }
+        elseif ($nonNull -gt 1 -and $distinct -eq $nonNull) {
+            $notes.Add('Every value is unique - likely an identifier/key rather than an analysis variable.')
+        }
+        if ($ColumnTypes[$col] -eq 'Numeric' -and $distinct -gt 0 -and $distinct -le 2 -and -not $prof.DistinctOverflow) {
+            $notes.Add('Numeric with at most 2 distinct values - may be a flag/indicator; consider treating it as categorical.')
+        }
+        foreach ($note in $notes) {
+            $rows.Add([PSCustomObject]@{ 'Column' = $col; 'Observation' = $note })
+        }
+    }
+    if ($rows.Count -gt 0) {
+        Add-SectionTable $section 'Data quality observations' $rows
+    }
+    else {
+        $section.Paragraphs.Add('No notable data quality issues were detected (nulls, constant columns, or identifier-like columns).')
+    }
+    $section.Paragraphs.Add('Suggested next steps: confirm column meanings with the data owners, validate null-handling rules, and review the frequency and distribution sections for unexpected categories or extreme values.')
+    return $section
+}
+
 function Get-DistributionSection {
-    param([string[]]$NumericColumns, $NumericArrays)
+    param([string[]]$NumericColumns, $NumericArrays, [bool]$Sampled = $false)
     $section = New-Section 'Distribution Analysis (Numeric Columns)'
     if ($NumericColumns.Count -eq 0) {
         $section.Paragraphs.Add('No numeric columns were detected in this dataset.')
         return $section
     }
     $section.Paragraphs.Add('Descriptive statistics per numeric column. Potential outliers are values beyond 1.5 x IQR from the 25th/75th percentiles.')
+    if ($Sampled) {
+        $section.Paragraphs.Add(("Statistics are computed on the random {0:N0}-row sample (the dataset exceeds that size)." -f $script:MaxSampleRows))
+    }
 
     $rows = foreach ($col in $NumericColumns) {
         $vals = New-Object System.Collections.Generic.List[double]
@@ -504,13 +625,16 @@ function Get-DistributionSection {
 }
 
 function Get-CorrelationSection {
-    param([string[]]$NumericColumns, $NumericArrays)
+    param([string[]]$NumericColumns, $NumericArrays, [bool]$Sampled = $false)
     $section = New-Section 'Correlation Matrix (Pearson)'
     if ($NumericColumns.Count -lt 2) {
         $section.Paragraphs.Add('Fewer than two numeric columns were detected; a correlation matrix is not applicable.')
         return $section
     }
     $section.Paragraphs.Add('Pearson correlation coefficients computed pairwise over rows where both values are present. Pairs with |r| > 0.7 are flagged below the matrix.')
+    if ($Sampled) {
+        $section.Paragraphs.Add(("Correlations are computed on the random {0:N0}-row sample (the dataset exceeds that size)." -f $script:MaxSampleRows))
+    }
 
     $nCols = $NumericColumns.Count
     $corr = @{}
@@ -569,15 +693,20 @@ function Get-CorrelationSection {
 }
 
 function Get-TimeSeriesSection {
-    param($PlotData, [string[]]$DateColumns, [string[]]$NumericColumns)
+    param($PlotData, $ColIndex, [string[]]$DateColumns, [string[]]$NumericColumns)
     $section = New-Section 'Trend Over Time (Line Graph)'
     if ($DateColumns.Count -eq 0) {
         $section.Paragraphs.Add('No date column was detected, so no time trend chart was produced.')
         return $section
     }
     $dateCol = $DateColumns[0]
+    $dateIdx = [int]$ColIndex[$dateCol]
     $numCol  = $null
-    if ($NumericColumns.Count -gt 0) { $numCol = $NumericColumns[0] }
+    $numIdx  = -1
+    if ($NumericColumns.Count -gt 0) {
+        $numCol = $NumericColumns[0]
+        $numIdx = [int]$ColIndex[$numCol]
+    }
 
     if (-not $script:ChartingAvailable) {
         $section.Paragraphs.Add("The charting assembly is unavailable in this environment; the time trend chart for column '$dateCol' was skipped.")
@@ -589,7 +718,8 @@ function Get-TimeSeriesSection {
     $minDate = [datetime]::MaxValue
     $maxDate = [datetime]::MinValue
     foreach ($row in $PlotData) {
-        $dt = ConvertTo-NullableDate ([string]$row.$dateCol)
+        if ($dateIdx -ge $row.Length) { continue }
+        $dt = ConvertTo-NullableDate ([string]$row[$dateIdx])
         if ($null -eq $dt) { continue }
         if ($dt -lt $minDate) { $minDate = $dt }
         if ($dt -gt $maxDate) { $maxDate = $dt }
@@ -600,14 +730,15 @@ function Get-TimeSeriesSection {
     }
     $byMonth = (($maxDate - $minDate).TotalDays -gt 120)
     foreach ($row in $PlotData) {
-        $dt = ConvertTo-NullableDate ([string]$row.$dateCol)
+        if ($dateIdx -ge $row.Length) { continue }
+        $dt = ConvertTo-NullableDate ([string]$row[$dateIdx])
         if ($null -eq $dt) { continue }
         if ($byMonth) { $key = New-Object datetime($dt.Year, $dt.Month, 1) }
         else { $key = $dt.Date }
         if (-not $buckets.ContainsKey($key)) { $buckets[$key] = @{ Count = 0; Sum = 0.0 } }
         $buckets[$key].Count++
-        if ($numCol) {
-            $nv = ConvertTo-NullableDouble ([string]$row.$numCol)
+        if ($numIdx -ge 0 -and $numIdx -lt $row.Length) {
+            $nv = ConvertTo-NullableDouble ([string]$row[$numIdx])
             if ($null -ne $nv) { $buckets[$key].Sum += [double]$nv }
         }
     }
@@ -699,7 +830,7 @@ function Get-BarChartSection {
 # V2 ANALYSIS SECTIONS
 # ===========================================================================
 function Get-ScatterPlotSection {
-    param($PlotData, [string[]]$NumericColumns)
+    param($PlotData, $ColIndex, [string[]]$NumericColumns)
     $section = New-Section 'Scatter Plots (Most Correlated Pairs)'
     if ($NumericColumns.Count -lt 2) {
         $section.Paragraphs.Add('Fewer than two numeric columns were detected; scatter plots are not applicable.')
@@ -738,10 +869,13 @@ function Get-ScatterPlotSection {
         $series.Color = [System.Drawing.Color]::FromArgb(140, 70, 130, 180)
         $chart.Series.Add($series) | Out-Null
 
+        $ai = [int]$ColIndex[$a]
+        $bi = [int]$ColIndex[$b]
         $plotted = 0
         foreach ($row in $PlotData) {
-            $xv = ConvertTo-NullableDouble ([string]$row.$a)
-            $yv = ConvertTo-NullableDouble ([string]$row.$b)
+            if ($ai -ge $row.Length -or $bi -ge $row.Length) { continue }
+            $xv = ConvertTo-NullableDouble ([string]$row[$ai])
+            $yv = ConvertTo-NullableDouble ([string]$row[$bi])
             if ($null -ne $xv -and $null -ne $yv) {
                 $series.Points.AddXY([double]$xv, [double]$yv) | Out-Null
                 $plotted++
@@ -758,7 +892,7 @@ function Get-ScatterPlotSection {
 }
 
 function Get-PairPlotSection {
-    param($PlotData, [string[]]$NumericColumns)
+    param($PlotData, $ColIndex, [string[]]$NumericColumns)
     $section = New-Section 'Pair Plot Grid'
     $cols = @($NumericColumns | Select-Object -First 5)
     if ($cols.Count -lt 2) {
@@ -777,7 +911,10 @@ function Get-PairPlotSection {
     $taken = 0
     foreach ($row in $PlotData) {
         foreach ($c in $cols) {
-            $colValues[$c].Add((ConvertTo-NullableDouble ([string]$row.$c)))
+            $idx = [int]$ColIndex[$c]
+            $v = $null
+            if ($idx -lt $row.Length) { $v = $row[$idx] }
+            $colValues[$c].Add((ConvertTo-NullableDouble ([string]$v)))
         }
         $taken++
         if ($taken -ge $script:MaxPlotPoints) { break }
@@ -950,7 +1087,7 @@ function Invoke-KMeans {
 }
 
 function Get-KMeansSection {
-    param($PlotData, [string[]]$NumericColumns)
+    param($PlotData, $ColIndex, [string[]]$NumericColumns)
     $section = New-Section 'K-Means Clustering'
     if ($NumericColumns.Count -lt 2) {
         $section.Paragraphs.Add('Fewer than two numeric columns were detected; k-means clustering is not applicable.')
@@ -960,12 +1097,15 @@ function Get-KMeansSection {
     Write-Stage 'Running k-means clustering (this can take a moment)...'
     # Build complete-case matrix of raw values (cap dimensions for tractability)
     $cols = @($NumericColumns | Select-Object -First 8)
+    $colIdxs = New-Object int[] $cols.Count
+    for ($c = 0; $c -lt $cols.Count; $c++) { $colIdxs[$c] = [int]$ColIndex[$cols[$c]] }
     $rawRows = New-Object System.Collections.Generic.List[object]
     foreach ($row in $PlotData) {
         $vec = New-Object double[] $cols.Count
         $ok = $true
         for ($c = 0; $c -lt $cols.Count; $c++) {
-            $v = ConvertTo-NullableDouble ([string]$row.($cols[$c]))
+            $v = $null
+            if ($colIdxs[$c] -lt $row.Length) { $v = ConvertTo-NullableDouble ([string]$row[$colIdxs[$c]]) }
             if ($null -eq $v) { $ok = $false; break }
             $vec[$c] = [double]$v
         }
@@ -1371,29 +1511,34 @@ try {
     Write-Host ' Prepared by Manuel Figallo' -ForegroundColor Gray
     Write-Host ('=' * 70) -ForegroundColor DarkCyan
 
-    # ----- Load data -----
-    Write-Stage ("Loading CSV: {0}" -f $PATH_TO_DATA)
+    # ----- Load + profile data (streamed; Import-Csv loads every row into
+    #       memory as an object and throws OutOfMemoryException on large files) -----
+    $fileSizeMB = (Get-Item -LiteralPath $PATH_TO_DATA).Length / 1MB
+    Write-Stage ("Loading CSV (streaming, {0:N1} MB): {1}" -f $fileSizeMB, $PATH_TO_DATA)
     try {
-        $Data = @(Import-Csv -LiteralPath $PATH_TO_DATA)
+        $csv = Read-CsvData -Path $PATH_TO_DATA -SampleSize $script:MaxSampleRows
     }
     catch {
         Write-Error ("Failed to load CSV file '{0}': {1}" -f $PATH_TO_DATA, $_.Exception.Message) -ErrorAction Continue
         exit 2
     }
-    if ($Data.Count -eq 0) {
+    $Columns  = @($csv.Columns)
+    $RowCount = [long]$csv.RowCount
+    $Profiles = $csv.Profiles
+    if ($RowCount -eq 0) {
         Write-Error ("The CSV file '{0}' contains no data rows." -f $PATH_TO_DATA) -ErrorAction Continue
         exit 2
     }
-    $Columns = @($Data[0].PSObject.Properties.Name)
     if ($Columns.Count -eq 0) {
         Write-Error ("No parseable columns were found in '{0}'." -f $PATH_TO_DATA) -ErrorAction Continue
         exit 2
     }
-    Write-Stage ("Loaded {0:N0} rows x {1} columns." -f $Data.Count, $Columns.Count) 'Green'
-
-    # ----- Profile columns and infer types (full data) -----
-    Write-Stage 'Profiling columns (nulls, distinct values, frequencies)...'
-    $Profiles = Get-ColumnProfiles -Data $Data -Columns $Columns
+    if ($csv.MalformedRows -gt 0) {
+        Write-Warning ("{0:N0} malformed CSV line(s) were skipped during loading." -f $csv.MalformedRows)
+    }
+    $ColIndex = @{}
+    for ($i = 0; $i -lt $Columns.Count; $i++) { $ColIndex[$Columns[$i]] = $i }
+    Write-Stage ("Loaded {0:N0} rows x {1} columns ({2:N1} MB)." -f $RowCount, $Columns.Count, $fileSizeMB) 'Green'
 
     Write-Stage 'Inferring column types by sampling values...'
     $ColumnTypes = @{}
@@ -1403,18 +1548,14 @@ try {
     Write-Stage ("Detected {0} numeric, {1} date, {2} categorical column(s)." -f `
         $NumericColumns.Count, $DateColumns.Count, ($Columns.Count - $NumericColumns.Count - $DateColumns.Count))
 
-    # ----- Sampling for plots/clustering -----
-    $sampled = $false
-    if ($Data.Count -gt $script:MaxSampleRows) {
-        Write-Stage ("Dataset exceeds {0:N0} rows; drawing a random {0:N0}-row sample for plots and clustering." -f $script:MaxSampleRows) 'Yellow'
-        $PlotData = @($Data | Get-Random -Count $script:MaxSampleRows -SetSeed 42)
-        $sampled = $true
-    }
-    else {
-        $PlotData = $Data
+    # ----- Sampled rows (reservoir drawn during streaming) -----
+    $sampled = ($RowCount -gt $script:MaxSampleRows)
+    $PlotData = $csv.SampleRows
+    if ($sampled) {
+        Write-Stage ("Dataset exceeds {0:N0} rows; statistics, charts, and clustering use a random {0:N0}-row reservoir sample (metadata and frequency counts cover the full data)." -f $script:MaxSampleRows) 'Yellow'
     }
 
-    # ----- Parse numeric columns once (full data, used by stats + correlation) -----
+    # ----- Parse numeric columns once (sampled rows; feeds stats + correlation) -----
     $NumericArrays = @{}
     if ($NumericColumns.Count -gt 0) {
         Write-Stage 'Parsing numeric columns...'
@@ -1422,7 +1563,7 @@ try {
         foreach ($col in $NumericColumns) {
             $ci++
             Write-Progress -Activity 'Parsing numeric columns' -Status $col -PercentComplete (100 * $ci / $NumericColumns.Count)
-            $NumericArrays[$col] = Get-NumericColumnArray -Data $Data -Column $col
+            $NumericArrays[$col] = Get-NumericColumnArray -Rows $PlotData -Index ([int]$ColIndex[$col])
         }
         Write-Progress -Activity 'Parsing numeric columns' -Completed
     }
@@ -1431,9 +1572,9 @@ try {
     Initialize-Charting
 
     # ----- Report metadata -----
-    $scopeNote = ("Full dataset analyzed: {0:N0} rows, {1} columns." -f $Data.Count, $Columns.Count)
+    $scopeNote = ("Dataset: {0:N0} rows, {1} columns, {2:N1} MB." -f $RowCount, $Columns.Count, $fileSizeMB)
     if ($sampled) {
-        $scopeNote += (" Note: because the dataset exceeds {0:N0} rows, charts and clustering use a random {0:N0}-row sample; metadata and frequency counts use the full dataset." -f $script:MaxSampleRows)
+        $scopeNote += (" Note: because the dataset exceeds {0:N0} rows, descriptive statistics, correlations, charts, and clustering use a random {0:N0}-row sample; metadata and frequency counts cover the full dataset." -f $script:MaxSampleRows)
     }
     $Meta = @{
         ProjName  = $PROJ_NAME
@@ -1443,47 +1584,53 @@ try {
         ScopeNote = $scopeNote
     }
 
-    # ----- Run analysis sections per version -----
+    # ----- Run analysis sections per version (cumulative; v0 is the baseline) -----
     $Sections = New-Object System.Collections.Generic.List[object]
 
-    Write-Stage 'Running V1 analysis: metadata...'
+    Write-Stage 'Running V0 analysis: metadata...'
     $Sections.Add((Invoke-SafeSection 'Metadata Analysis' {
-        Get-MetadataSection -Data $Data -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+        Get-MetadataSection -RowCount $RowCount -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes -FileSizeText ('{0:N1} MB' -f $fileSizeMB) }))
 
-    Write-Stage 'Running V1 analysis: frequency tables...'
+    Write-Stage 'Running V0 analysis: frequency tables...'
     $Sections.Add((Invoke-SafeSection 'Frequency Analysis (Categorical Columns)' {
-        Get-FrequencySection -Data $Data -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+        Get-FrequencySection -RowCount $RowCount -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
 
-    Write-Stage 'Running V1 analysis: distributions...'
+    Write-Stage 'Running V0 analysis: distributions...'
     $Sections.Add((Invoke-SafeSection 'Distribution Analysis (Numeric Columns)' {
-        Get-DistributionSection -NumericColumns $NumericColumns -NumericArrays $NumericArrays }))
+        Get-DistributionSection -NumericColumns $NumericColumns -NumericArrays $NumericArrays -Sampled $sampled }))
 
-    Write-Stage 'Running V1 analysis: correlation matrix...'
-    $Sections.Add((Invoke-SafeSection 'Correlation Matrix (Pearson)' {
-        Get-CorrelationSection -NumericColumns $NumericColumns -NumericArrays $NumericArrays }))
+    Write-Stage 'Running V0 analysis: automated observations...'
+    $Sections.Add((Invoke-SafeSection 'Automated Observations & Recommendations' {
+        Get-ObservationsSection -RowCount $RowCount -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
 
-    Write-Stage 'Running V1 analysis: time trend chart...'
-    $Sections.Add((Invoke-SafeSection 'Trend Over Time (Line Graph)' {
-        Get-TimeSeriesSection -PlotData $PlotData -DateColumns $DateColumns -NumericColumns $NumericColumns }))
+    if ($versionLevel -ge 1) {
+        Write-Stage 'Running V1 analysis: correlation matrix...'
+        $Sections.Add((Invoke-SafeSection 'Correlation Matrix (Pearson)' {
+            Get-CorrelationSection -NumericColumns $NumericColumns -NumericArrays $NumericArrays -Sampled $sampled }))
 
-    Write-Stage 'Running V1 analysis: categorical bar charts...'
-    $Sections.Add((Invoke-SafeSection 'Categorical Bar Graphs' {
-        Get-BarChartSection -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+        Write-Stage 'Running V1 analysis: time trend chart...'
+        $Sections.Add((Invoke-SafeSection 'Trend Over Time (Line Graph)' {
+            Get-TimeSeriesSection -PlotData $PlotData -ColIndex $ColIndex -DateColumns $DateColumns -NumericColumns $NumericColumns }))
+
+        Write-Stage 'Running V1 analysis: categorical bar charts...'
+        $Sections.Add((Invoke-SafeSection 'Categorical Bar Graphs' {
+            Get-BarChartSection -Columns $Columns -Profiles $Profiles -ColumnTypes $ColumnTypes }))
+    }
 
     if ($versionLevel -ge 2) {
         Write-Stage 'Running V2 analysis: scatter plots...'
         $Sections.Add((Invoke-SafeSection 'Scatter Plots (Most Correlated Pairs)' {
-            Get-ScatterPlotSection -PlotData $PlotData -NumericColumns $NumericColumns }))
+            Get-ScatterPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
 
         Write-Stage 'Running V2 analysis: pair plot grid...'
         $Sections.Add((Invoke-SafeSection 'Pair Plot Grid' {
-            Get-PairPlotSection -PlotData $PlotData -NumericColumns $NumericColumns }))
+            Get-PairPlotSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
     }
 
     if ($versionLevel -ge 3) {
         Write-Stage 'Running V3 analysis: k-means clustering...'
         $Sections.Add((Invoke-SafeSection 'K-Means Clustering' {
-            Get-KMeansSection -PlotData $PlotData -NumericColumns $NumericColumns }))
+            Get-KMeansSection -PlotData $PlotData -ColIndex $ColIndex -NumericColumns $NumericColumns }))
     }
 
     # ----- Render report -----
