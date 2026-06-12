@@ -441,6 +441,48 @@ function Get-FileSignature {
 }
 
 # ---------------------------------------------------------------------------
+# Resilient file access helpers (UNC shares can drop mid-read)
+# ---------------------------------------------------------------------------
+function Open-CsvParser {
+    # Opens the CSV with a 1 MB sequential-scan buffer (fewer SMB round-trips on
+    # UNC paths) and returns the FileStream/StreamReader/TextFieldParser trio.
+    # The parser constructor argument is cast to TextReader explicitly so
+    # PowerShell 5.1 cannot bind any other overload.
+    param([string]$Path, [string]$Delimiter)
+    $fs = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite, 1048576, [System.IO.FileOptions]::SequentialScan)
+    $sr = New-Object System.IO.StreamReader($fs, $true)
+    $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser([System.IO.TextReader]$sr)
+    $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
+    $parser.SetDelimiters(@($Delimiter))
+    $parser.HasFieldsEnclosedInQuotes = $true
+    $parser.TrimWhiteSpace = $false
+    return @{ Stream = $fs; Reader = $sr; Parser = $parser }
+}
+
+function Invoke-WithNetworkRetry {
+    # Retries an action when it fails with an I/O error (e.g. "The network path
+    # was not found" on a flaky SMB share). Non-I/O errors are rethrown at once.
+    param([string]$Description, [scriptblock]$Action, [int]$MaxAttempts = 3)
+    $attempt = 1
+    while ($true) {
+        try {
+            return (& $Action)
+        }
+        catch {
+            $ex = $_.Exception
+            $isIO = ($ex -is [System.IO.IOException]) -or ($ex.InnerException -is [System.IO.IOException])
+            if (-not $isIO -or $attempt -ge $MaxAttempts) { throw }
+            $delay = 5 * $attempt
+            Write-Warning ("{0} failed with an I/O error: {1} Retrying in {2}s (attempt {3} of {4})..." -f `
+                $Description, $ex.Message.Trim(), $delay, $attempt, $MaxAttempts)
+            Start-Sleep -Seconds $delay
+            $attempt++
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # PASS 1: streaming aggregation over the FULL file (bounded memory).
 # Computes exact row count, null counts, capped distinct/frequency counts,
 # Welford running mean/variance, min/max, date ranges, type-inference tallies,
@@ -461,17 +503,12 @@ function Invoke-StreamingProfile {
     $dupCapped = $false
     $rowHashes = New-Object 'System.Collections.Generic.HashSet[int]'
     try {
-        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $handles = Open-CsvParser -Path $Path -Delimiter $Delimiter
+        $fs = $handles.Stream; $sr = $handles.Reader; $parser = $handles.Parser
         # cast to double BEFORE any math: file lengths > 2 GB overflow the
         # [math]::Max(int, int) overload that PowerShell 5.1 binds to
         $fileLen = [double]$fs.Length
         if ($fileLen -lt 1) { $fileLen = 1.0 }
-        $sr = New-Object System.IO.StreamReader($fs, $true)
-        $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($sr)
-        $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
-        $parser.SetDelimiters(@($Delimiter))
-        $parser.HasFieldsEnclosedInQuotes = $true
-        $parser.TrimWhiteSpace = $false
 
         if ($parser.EndOfData) {
             return @{ Columns = @(); RowCount = 0; Profiles = @{}; Preview = $preview; MalformedRows = 0; DuplicateCount = 0; DuplicateCapped = $false }
@@ -663,17 +700,12 @@ function Get-ReservoirSample {
     $fs = $null; $sr = $null; $parser = $null
     $sample = New-Object System.Collections.Generic.List[object]
     try {
-        $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $handles = Open-CsvParser -Path $Path -Delimiter $Delimiter
+        $fs = $handles.Stream; $sr = $handles.Reader; $parser = $handles.Parser
         # cast to double BEFORE any math: file lengths > 2 GB overflow the
         # [math]::Max(int, int) overload that PowerShell 5.1 binds to
         $fileLen = [double]$fs.Length
         if ($fileLen -lt 1) { $fileLen = 1.0 }
-        $sr = New-Object System.IO.StreamReader($fs, $true)
-        $parser = New-Object Microsoft.VisualBasic.FileIO.TextFieldParser($sr)
-        $parser.TextFieldType = [Microsoft.VisualBasic.FileIO.FieldType]::Delimited
-        $parser.SetDelimiters(@($Delimiter))
-        $parser.HasFieldsEnclosedInQuotes = $true
-        $parser.TrimWhiteSpace = $false
 
         if (-not $parser.EndOfData) { $parser.ReadFields() | Out-Null }   # skip header
 
@@ -2363,7 +2395,9 @@ try {
     $fileSizeMB = (Get-Item -LiteralPath $PATH_TO_DATA).Length / 1MB
     Write-Stage ("Pass 1: streaming profile ({0:N1} MB): {1}" -f $fileSizeMB, $PATH_TO_DATA)
     try {
-        $profileResult = Invoke-StreamingProfile -Path $PATH_TO_DATA -Delimiter $sig.Delimiter
+        $profileResult = Invoke-WithNetworkRetry -Description 'Pass 1 (streaming profile)' -Action {
+            Invoke-StreamingProfile -Path $PATH_TO_DATA -Delimiter $sig.Delimiter
+        }
     }
     catch {
         Write-Error ("Failed to read CSV file '{0}': {1}" -f $PATH_TO_DATA, $_.Exception.Message) -ErrorAction Continue
@@ -2398,7 +2432,9 @@ try {
     Write-Stage ("Pass 2: reservoir sampling (budget {0:N0} rows)..." -f $currentSample)
     while ($null -eq $PlotData) {
         try {
-            $PlotData = Get-ReservoirSample -Path $PATH_TO_DATA -Delimiter $sig.Delimiter -SampleSize $currentSample
+            $PlotData = Invoke-WithNetworkRetry -Description 'Pass 2 (reservoir sampling)' -Action {
+                Get-ReservoirSample -Path $PATH_TO_DATA -Delimiter $sig.Delimiter -SampleSize $currentSample
+            }
         }
         catch [System.OutOfMemoryException] {
             if ($currentSample -le $script:MinSampleRows) { throw }

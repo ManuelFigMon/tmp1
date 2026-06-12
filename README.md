@@ -148,6 +148,12 @@ logged into that section of the report and the rest still runs.
   (4) note the script already auto-halves the sample on OOM down to 10,000 rows —
   if it still fails there, the machine genuinely lacks memory for any analysis
   and the file should be split or processed on a bigger machine.
+- **"The network path was not found" / I/O errors mid-read on UNC shares** — the
+  share dropped during the multi-hour read. The script retries each pass up to 3
+  times automatically (5 s/10 s backoff) and reads with a 1 MB sequential buffer
+  to minimize SMB round-trips. If it still fails: check VPN/network stability,
+  try mapping the share to a drive letter (`net use Z: \\server\share`), or copy
+  the file locally first — a local read of an 8+ GB file is also much faster.
 - **Word report fails / falls back to HTML** — Word is missing, unlicensed, or COM
   is blocked. Use `-FINAL_OUTPUT HTML`, which has no Office dependency.
 - **Charts missing** — the charting assembly could not be loaded (noted in the
