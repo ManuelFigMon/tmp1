@@ -92,10 +92,14 @@ Both modify the working list; **Save to server** persists the whole list.
 
 ## Security notes (before production)
 
-- The API stored process accepts a `userid` query param **for offline testing
-  convenience**. In production, ignore it and trust **only `&_USERNAME`** so a
-  user cannot read or write another user's store. (Marked inline in
-  `sas_auth_state_test_api.sas`.)
+- **`PRODUCTION_MODE`** (in the CONFIG block of `sas_auth_state_test_api.sas`)
+  controls whose store the API may touch:
+  - `1` (ship with this) — the API **ignores the `userid` query param** and
+    derives the folder strictly from **`&_USERNAME`**, so a user can only ever
+    reach their own `meta/profiles/<their-id>/data/` store. Editing `userid=`
+    in the URL has no effect.
+  - `0` — accepts the `userid` param (falling back to `&_USERNAME`); a
+    convenience for offline/local testing only. Do not deploy with `0`.
 - Validate/escape the `items` payload; the demo writes the received JSON text
   after a light bracket check.
 - Serve over HTTPS; the SAS session cookie carries the authenticated identity.

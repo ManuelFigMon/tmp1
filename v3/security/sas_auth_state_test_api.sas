@@ -27,9 +27,10 @@
            &items=%5B%7B%22id%22%3A1%2C%22value%22%3A%22Region%3A%20Midwest%22%7D%5D
 
   SECURITY NOTES (read before production use):
-    - In production, IGNORE the client-supplied &userid and trust ONLY
-      &_USERNAME so a user cannot read/write another user's store.
-      The userid parameter here is a convenience for offline testing.
+    - PRODUCTION_MODE (set in CONFIG below) controls this: when =1 the API
+      IGNORES the client-supplied &userid and trusts ONLY &_USERNAME, so a
+      user cannot read/write another user's store. Ship with PRODUCTION_MODE=1.
+      =0 accepts &userid as a convenience for offline testing only.
     - Validate/escape &items; this demo writes the received JSON text
       after a light bracket check. Harden before exposing externally.
 =============================================================*/
@@ -41,17 +42,33 @@
 %let profile_root = /custom/projects/dmq/temp/v3/meta/profiles;
 %let state_file   = sas_auth_state_test_state.json;
 
+/* PRODUCTION_MODE controls WHOSE datastore this API may touch:
+     1 = trust the authenticated SAS identity (&_USERNAME) ONLY. The client
+         &userid query parameter is ignored, so a user can never read or write
+         another user's store by editing the URL. USE THIS IN PRODUCTION.
+     0 = allow the &userid query parameter (falling back to &_USERNAME). This
+         is a convenience for offline/local testing where no real SAS session
+         identity is present. DO NOT ship with this value. */
+%let PRODUCTION_MODE = 1;
+
 
 /* ----------------------------------------------------------
    1.  Resolve action + a filesystem-safe userid.
-       PRODUCTION: replace the userid fallback chain with
-                   %let safe_user = <derived strictly from &_USERNAME>;
+       When PRODUCTION_MODE=1 the userid is derived strictly from &_USERNAME
+       and the client-supplied &userid is ignored.
 ---------------------------------------------------------- */
 %global action userid items;
 %if %superq(action) = %then %let action = read;
 
-%let src_user = %superq(userid);
-%if %length(&src_user.) = 0 %then %let src_user = &_USERNAME.;
+%if &PRODUCTION_MODE. = 1 %then %do;
+  /* Trust ONLY the SAS-authenticated identity. */
+  %let src_user = &_USERNAME.;
+%end;
+%else %do;
+  /* Testing convenience: accept &userid, fall back to &_USERNAME. */
+  %let src_user = %superq(userid);
+  %if %length(&src_user.) = 0 %then %let src_user = &_USERNAME.;
+%end;
 
 data _null_;
   u = symget('src_user');
@@ -193,6 +210,7 @@ ods html    close;
 ---------------------------------------------------------- */
 %put NOTE: ============================================================;
 %put NOTE: [sas_auth_state_test_api] action   : &action.;
+%put NOTE: [sas_auth_state_test_api] prod_mode: &PRODUCTION_MODE.;
 %put NOTE: [sas_auth_state_test_api] _USERNAME: &_USERNAME.;
 %put NOTE: [sas_auth_state_test_api] safe_user: &safe_user.;
 %put NOTE: [sas_auth_state_test_api] file     : &fpath.;
