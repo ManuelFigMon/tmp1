@@ -48,6 +48,61 @@ The end-to-end goal it proves out:
  meta/profiles/731o/data/sas_auth_state_test_state.json   ← state lives here
 ```
 
+## The browser does NOT write the file — SAS does
+
+A common point of confusion: browser JavaScript is sandboxed and **cannot write
+to the filesystem**. That rule is about the **client machine**, and this design
+respects it. The page never touches disk. All it does is make an HTTP request;
+the **SAS stored process running on the server** performs the actual file write
+under the SAS process's OS account — exactly like any REST API's "Save" button.
+
+```
+ Browser  (sas_auth_state_test.html)            SAS server  (sas_auth_state_test_api.sas)
+ ------------------------------------           --------------------------------------------
+ fetch(".../sas_auth_state_test_api
+        &action=save
+        &userid=731o
+        &items=[{...}]")            ───────────►  receives the request, then runs:
+
+                                                    data _null_;
+                                                      file "<...>/sas_auth_state_test_state.json"
+                                                           lrecl=32767;     /* <- opens the file */
+                                                      put '{';              /* <- writes each line */
+                                                      put '  "items": ' ...;
+                                                      put '}';
+                                                    run;                    /* <- file is written */
+
+       ◄───────────────────────────────────────   {"status":"saved", "items":[...], "updated":"..."}
+```
+
+So "Save is a full overwrite" means the **server-side SAS program overwrites the
+server-side file**. No client-side disk access is involved at any point.
+
+The only thing the browser ever persists locally is the **offline fallback**,
+and even that is **`localStorage`** (the browser's own sandboxed key-value
+store), not a file on disk. The fallback exists solely so the workflow is
+demoable without the live SAS server; in production every write goes through
+SAS.
+
+### What SAS code does the writing
+
+The write is plain Base-SAS I/O inside a `DATA _NULL_` step — no special
+package required:
+
+| SAS element | Role |
+|---|---|
+| `FILE "<path>" lrecl=32767;` | **FILE statement** — directs the step's output to the external file (this is what "opens" the target for writing). `lrecl` sets the max line length so long JSON lines aren't truncated. |
+| `PUT '...';` | **PUT statement** — writes one line of text to the file currently named by `FILE`. The JSON document is emitted line by line with successive `PUT`s. |
+| `FILE _webout;` | A reserved fileref for the **HTTP response stream** — the same `FILE`/`PUT` mechanism is reused to send the JSON reply back to the browser. |
+| `dcreate('data', udir)` | **DCREATE function** — creates the `…/<userid>/data` directory if missing (idempotent, guarded by `fileexist`). |
+| `fileexist(path)` | **FILEEXIST function** — tests whether the folder/file already exists before creating or reading. |
+| `symget('items_in')`, `strip()` | Pull the URL-decoded `items` payload from the macro variable and trim it before writing. |
+
+For **read**, the step uses `INFILE "<path>"` + `INPUT` to stream the existing
+file's bytes back out through `_webout`. So the entire datastore is managed with
+ordinary `FILE`/`PUT` (write) and `INFILE`/`INPUT` (read) statements — the same
+primitives SAS has used for flat-file I/O for decades.
+
 ## Configure for your environment
 
 In **`sas_auth_state_test.html`** (`CONFIG` and `STATE_API` blocks):
