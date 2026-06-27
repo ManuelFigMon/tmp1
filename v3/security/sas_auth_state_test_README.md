@@ -29,6 +29,30 @@ The end-to-end goal it proves out:
 }
 ```
 
+## Backups (taken before every overwrite)
+
+Because a Save is a **full overwrite**, the API copies the current file to a
+timestamped backup **before** writing the new version, so every save is
+recoverable:
+
+```
+meta/profiles/<userid>/data/
+├── sas_auth_state_test_state.json                       ← live store
+└── backups/
+    ├── sas_auth_state_test_state_20260202_091500.json   ← prior versions
+    └── sas_auth_state_test_state_20260202_142233.json      (YYYYMMDD_HHMMSS)
+```
+
+- The backup runs only when a live file already exists (the very first save has
+  nothing to copy).
+- It uses `fcopy()` between two `filename()` filerefs; the `backups/` folder is
+  created on demand with `dcreate()`.
+- The save response JSON includes a `"backup"` field with the path written
+  (or `null` on the first save), and the server log records it.
+- To restore, copy the desired backup back over
+  `sas_auth_state_test_state.json`. (Pruning old backups is left to a separate
+  housekeeping job; the API never deletes them.)
+
 ## How the three pieces talk
 
 ```

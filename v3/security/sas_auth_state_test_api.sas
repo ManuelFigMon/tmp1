@@ -57,7 +57,7 @@
        When PRODUCTION_MODE=1 the userid is derived strictly from &_USERNAME
        and the client-supplied &userid is ignored.
 ---------------------------------------------------------- */
-%global action userid items;
+%global action userid items backup_path;
 %if %superq(action) = %then %let action = read;
 
 %if &PRODUCTION_MODE. = 1 %then %do;
@@ -79,9 +79,10 @@ data _null_;
   call symputx('safe_user', u, 'G');
 run;
 
-%let udir  = &profile_root./&safe_user.;
-%let ddir  = &udir./data;
-%let fpath = &ddir./&state_file.;
+%let udir   = &profile_root./&safe_user.;
+%let ddir   = &udir./data;
+%let fpath  = &ddir./&state_file.;
+%let bk_dir = &ddir./backups;   /* timestamped pre-overwrite backups land here */
 
 
 /* ----------------------------------------------------------
@@ -126,6 +127,32 @@ ods html    close;
     %return;
   %end;
 
+  /* Back up the CURRENT file (if any) before overwriting it. Each backup is
+     a timestamped copy under <userid>/data/backups/, so every Save is
+     recoverable. Format: sas_auth_state_test_state_YYYYMMDD_HHMMSS.json */
+  data _null_;
+    length ts $20 bkpath $512;
+    src = "&fpath.";
+    if fileexist(src) then do;
+      if not fileexist("&bk_dir.") then rc0 = dcreate('backups', "&ddir.");
+      ts     = translate(compress(put(datetime(), B8601DT15.)), '_', 'T'); /* 20260202_091500 */
+      bkpath = catx('/', "&bk_dir.", 'sas_auth_state_test_state_' || strip(ts) || '.json');
+      rc1 = filename('bksrc', src);
+      rc2 = filename('bkdst', bkpath);
+      rc3 = fcopy('bksrc', 'bkdst');
+      rc4 = filename('bksrc'); rc5 = filename('bkdst');
+      if rc3 = 0 then do;
+        put "NOTE: [sas_auth_state_test_api] backup created: " bkpath;
+        call symputx('backup_path', bkpath, 'G');
+      end;
+      else do;
+        put "WARNING: [sas_auth_state_test_api] backup FAILED (rc=" rc3 ") for " bkpath;
+        call symputx('backup_path', '', 'G');
+      end;
+    end;
+    else call symputx('backup_path', '', 'G');  /* nothing to back up (first save) */
+  run;
+
   /* Write the store file: { userid, items, updated }. We stream the
      received array text verbatim between the wrapper braces. */
   %let now_ts = %sysfunc(datetime(), datetime20.);
@@ -142,7 +169,7 @@ ods html    close;
 
   /* Echo success + the saved payload back to the caller. */
   data _null_;
-    length line $32767;
+    length line $32767 bkline $600 bk $512;
     file _webout lrecl=32767;
     put 'Content-type: application/json; charset=utf-8';
     put 'Cache-Control: no-store';
@@ -152,7 +179,11 @@ ods html    close;
     put "  ""userid"": ""&safe_user."",";
     line = '  "items": ' || strip(symget('items_in')) || ',';
     put line;
-    put "  ""updated"": ""&now_ts.""";
+    put "  ""updated"": ""&now_ts."",";
+    bk = symget('backup_path');
+    if missing(bk) then bkline = '  "backup": null';
+    else bkline = '  "backup": "' || strip(bk) || '"';
+    put bkline;
     put '}';
   run;
 %mend do_save;
@@ -214,4 +245,5 @@ ods html    close;
 %put NOTE: [sas_auth_state_test_api] _USERNAME: &_USERNAME.;
 %put NOTE: [sas_auth_state_test_api] safe_user: &safe_user.;
 %put NOTE: [sas_auth_state_test_api] file     : &fpath.;
+%put NOTE: [sas_auth_state_test_api] backup   : &backup_path.;
 %put NOTE: ============================================================;
