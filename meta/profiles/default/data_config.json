@@ -10,6 +10,7 @@
     "DME_JB_SYNPUF_100rows": "DME_JB_SYNPUF_100rows.json",
     "DME_JB_SYNPUF_1000rows": "DME_JB_SYNPUF_1000rows.json",
     "DME_JB_SYNPUF_100rows_V2": "DME_JB_SYNPUF_100rows_V2.json",
-    "DME_JB_SYNPUF_100rows_06_2026": "DME_JB_SYNPUF_100rows_06_2026.json"
+    "DME_JB_SYNPUF_100rows_06_2026": "DME_JB_SYNPUF_100rows_06_2026.json",
+    "CMS_LCD_SIJ_COMMENTS": "CMS_LCD_SIJ_SynPUF_Comments.json"
   }
 }

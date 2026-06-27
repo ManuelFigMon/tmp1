@@ -1,4 +1,19 @@
 {
+  "CMS_LCD_SIJ_COMMENTS": {
+    "data_src_name": "CMS_LCD_SIJ_COMMENTS",
+    "dmsrc_type": "file",
+    "lob": "CMS",
+    "columns": ["id", "agencyId", "postedDate", "title", "comment", "docketId", "attachmentCount"],
+    "types": {
+      "id": "character",
+      "agencyId": "character",
+      "postedDate": "date",
+      "title": "character",
+      "comment": "character",
+      "docketId": "character",
+      "attachmentCount": "numeric"
+    }
+  },
   "DME_JB_PALS_SYNPUF_FEB2026": {
     "data_src_name": "DME_JB_PALS_SYNPUF_FEB2026",
     "dmsrc_type": "file",
