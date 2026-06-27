@@ -72,6 +72,39 @@ print(f"Downloaded {len(comments)} comments")
 
 The output JSON (an array of `{id, agencyId, postedDate, title, comment, docketId, attachmentCount}`) can be wired into the dashboard as a `file`-type dataset via `data_config.json` / `datasets.json`, using a `comment` column as the dashboard's Text Column.
 
+## Built-in sample dataset (CMS LCD — SIJ injections)
+
+A ready-to-load sample ships with the repo so the dashboard has data out of the box:
+
+| Item | Value |
+|---|---|
+| Data file | `v3/data/CMS_LCD_SIJ_SynPUF_Comments.json` (24 synthetic public comments on a CMS **Local Coverage Determination for sacroiliac joint (SIJ) injections**) |
+| `data_config.json` mapping | `"CMS_LCD_SIJ_COMMENTS": "CMS_LCD_SIJ_SynPUF_Comments.json"` |
+| `datasets.json` entry | `CMS_LCD_SIJ_COMMENTS` (file type; `comment` is the free-text column) |
+
+**To use it:** open the dashboard, choose **CMS_LCD_SIJ_COMMENTS** in the dataset dropdown, then select **comment** as the Text Column. The KPI strip, heatmap, word cloud, and summaries populate automatically. The records mirror the regulations.gov downloader output shape, so swapping in real downloaded comments is a drop-in replacement. (Comments are synthetic and written for demonstration only.)
+
+### Local vs. production data path (important)
+
+`baseFileURL` in `data_config.json` points at the production server
+(`https://cgssaswebu.a70admed.com/.../v3/data/`), the same as every other
+`file` dataset. The dashboard fetches data from `baseFileURL + <mapped filename>`,
+so for production the JSON must live in that server's `v3/data/` folder — the
+repo's `v3/data/` directory mirrors it.
+
+For **purely local / offline testing** without that server, temporarily set
+`baseFileURL` to a path that reaches your local `v3/data/` folder relative to the
+report. Reports resolve config one level above `reports/` (`getProfileBasePath()`
+returns `'../'`), so from `meta/profiles/default/reports/` a local value such as:
+
+```json
+"baseFileURL": "../../../../v3/data/"
+```
+
+points back at the repo-root `v3/data/` directory. Revert to the production URL
+before deploying. (This path constraint applies to every `file` dataset, not just
+the sample.)
+
 ## Air-gapped guarantees
 
 - D3 v7.9.0 is pasted inline into a `<script>` tag — the HTML makes **no** external network calls for libraries.
