@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAS Monitor — Dashboard</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; }
+  body {
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background:#f0f0f0; font-size:11px; color:#222;
+    display:flex; flex-direction:column; min-height:100vh;
+  }
+  .header {
+    background:#4a7ba7; color:#fff; padding:12px 20px;
+    border-bottom:2px solid #3a6b97;
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+  .header h1 { font-size:16px; font-weight:600; }
+  .header p  { font-size:11px; opacity:.95; margin-top:2px; }
+  .header-right { display:flex; gap:8px; align-items:center; }
+
+  .toolbar {
+    background:#fff; border-bottom:1px solid #d0d7de;
+    padding:10px 16px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  }
+  .toolbar input[type="search"] {
+    padding:6px 10px; border:1px solid #c0c7cf; border-radius:4px;
+    font-size:12px; min-width:220px;
+  }
+  .btn { padding:6px 12px; font-size:12px; border:1px solid transparent; border-radius:4px; cursor:pointer; font-weight:600; }
+  .btn-primary   { background:#4a7ba7; color:#fff; }
+  .btn-primary:hover  { background:#3a6b97; }
+  .btn-secondary { background:#e6e9ed; color:#222; border-color:#c0c7cf; }
+  .btn-secondary:hover { background:#d6dae0; }
+
+  .info-bar {
+    display:flex; gap:8px; flex-wrap:wrap; padding:8px 16px;
+    background:#fafbfc; border-bottom:1px solid #e1e4e8; font-size:12px;
+  }
+  .pill { background:#fff; border:1px solid #d0d7de; border-radius:14px; padding:3px 10px; }
+  .pill strong { color:#4a7ba7; }
+
+  .table-wrap {
+    flex:1 1 auto; overflow:auto; background:#fff;
+    margin:12px 16px; border:1px solid #d0d7de; min-height:300px;
+  }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  thead th {
+    position:sticky; top:0; background:#eef2f6; color:#222;
+    border-bottom:2px solid #4a7ba7; padding:6px 8px; text-align:left;
+    cursor:pointer; user-select:none; white-space:nowrap;
+  }
+  thead th .sort { color:#4a7ba7; font-size:10px; margin-left:4px; }
+  thead tr.filters th { background:#fff; padding:4px; border-bottom:1px solid #d0d7de; top:30px; }
+  thead tr.filters input {
+    width:100%; padding:3px 6px; font-size:11px;
+    border:1px solid #c0c7cf; border-radius:3px;
+  }
+  tbody td { padding:5px 8px; border-bottom:1px solid #eef0f2; white-space:nowrap; }
+  tbody tr:nth-child(even) { background:#fafbfc; }
+  tbody tr:hover { background:#fff8e1; }
+  .cell-up      { color:#27ae60; font-weight:600; }
+  .cell-down    { color:#c0392b; font-weight:600; }
+  .cell-success { color:#27ae60; }
+  .cell-failed  { color:#c0392b; }
+
+  .pagination {
+    display:flex; gap:8px; align-items:center; padding:10px 16px;
+    background:#fff; border-top:1px solid #d0d7de; flex-wrap:wrap; margin:0 16px 12px;
+  }
+  .pagination select, .pagination button {
+    padding:4px 8px; font-size:12px; border:1px solid #c0c7cf;
+    background:#fff; border-radius:3px; cursor:pointer;
+  }
+  .pagination button:disabled { opacity:.4; cursor:not-allowed; }
+
+  #statusMsg { padding:40px; text-align:center; color:#666; font-size:13px; }
+  #statusMsg.error { color:#c0392b; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>SAS Monitor — Dashboard</h1>
+    <p id="subtitle">Loading data…</p>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-secondary" onclick="location.reload()">&#8635; Refresh</button>
+    <button class="btn btn-secondary" onclick="exportCSV()">&#8659; Export CSV</button>
+    <button class="btn btn-secondary" onclick="clearFilters()">Clear Filters</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <input type="search" id="quickSearch" placeholder="Quick search across all columns…" oninput="onSearch(this.value)">
+  <span id="statusMsg"></span>
+</div>
+
+<div class="info-bar">
+  <span class="pill">Total Rows: <strong id="infoRows">0</strong></span>
+  <span class="pill">Columns: <strong id="infoCols">0</strong></span>
+  <span class="pill">Filtered: <strong id="infoFiltered">0</strong></span>
+</div>
+
+<div class="table-wrap" id="tableWrap">
+  <table id="dataTable" style="display:none;">
+    <thead>
+      <tr id="headerRow"></tr>
+      <tr class="filters" id="filterRow"></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <div id="statusMsg" style="display:none;"></div>
+</div>
+
+<div class="pagination" id="pagination" style="display:none;">
+  <span>Rows per page:</span>
+  <select id="pageSize" onchange="onPageSizeChange()">
+    <option>10</option><option selected>25</option>
+    <option>50</option><option>100</option><option>500</option>
+  </select>
+  <button id="firstBtn" onclick="goPage(1)">«</button>
+  <button id="prevBtn"  onclick="goPage(currentPage-1)">‹</button>
+  <span id="pageInfo">Page 1 of 1</span>
+  <button id="nextBtn"  onclick="goPage(currentPage+1)">›</button>
+  <button id="lastBtn"  onclick="goPage(99999)">»</button>
+</div>
+
+<script>
+var allRows     = [];
+var columns     = [];
+var filteredRows= [];
+var colFilters  = {};
+var quickQ      = '';
+var sortCol     = null, sortDir = 1;
+var currentPage = 1, pageSize = 25;
+
+var COL_ORDER = [
+  'Timestamp_ISO8601','Date_Local','Time_Local','ServerStatus','DetailedStatus',
+  'ServerError','HTTPStatusCode','ResponseTime_ms','UptimePct_24h','ConsecutiveFailures',
+  'DNSResolution_ms','SSLDaysUntilExpiry','SSLCertExpiryDate','FinalURL','ContentLength_bytes',
+  'RedirectCount','OutageEventID','CheckedFromHost','CheckedByUser',
+  'SASTest1_Status','SASTest1_ElapsedSec','SASTest1_RC',
+  'SASTest2_Status','SASTest2_ElapsedSec','SASTest2_RC',
+  'SASTest3_Status','SASTest3_ElapsedSec','SASTest3_RC'
+];
+
+/* ── Load JSON on page open ─────────────────────────────────── */
+window.onload = function() {
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', 'data/sas_monitor_data.json', true);
+  xhr.onload = function() {
+    if (xhr.status === 200) {
+      try {
+        var data = JSON.parse(xhr.responseText);
+        if (!Array.isArray(data) || data.length === 0) {
+          showMsg('sas_monitor_data.json loaded but contains no records.');
+          return;
+        }
+        init(data);
+      } catch(e) {
+        showMsg('Error parsing sas_monitor_data.json: ' + e.message);
+      }
+    } else {
+      showMsg('Could not load data/sas_monitor_data.json (HTTP ' + xhr.status + '). ' +
+              'Make sure the page is served from a web server and the file exists.');
+    }
+  };
+  xhr.onerror = function() {
+    showMsg('Could not reach data/sas_monitor_data.json. ' +
+            'Open this page from a web server (e.g. python -m http.server 8080), not directly from the file system.');
+  };
+  xhr.send();
+};
+
+function showMsg(txt) {
+  document.getElementById('subtitle').textContent = 'Error loading data';
+  var wrap = document.getElementById('tableWrap');
+  wrap.innerHTML = '<div style="padding:40px;text-align:center;color:#c0392b;font-size:13px;">' +
+    escHtml(txt) + '</div>';
+}
+
+/* ── Init ───────────────────────────────────────────────────── */
+function init(data) {
+  allRows = data;
+
+  // Build ordered column list
+  var keys = Object.keys(allRows[0] || {});
+  var ordered = COL_ORDER.filter(function(k){ return keys.indexOf(k) >= 0; });
+  keys.forEach(function(k){ if (ordered.indexOf(k) < 0) ordered.push(k); });
+  columns = ordered;
+
+  document.getElementById('infoRows').textContent = allRows.length.toLocaleString();
+  document.getElementById('infoCols').textContent = columns.length;
+
+  var first = allRows[0] && allRows[0].Timestamp_ISO8601 ? allRows[0].Timestamp_ISO8601.substring(0,10) : '';
+  var last  = allRows[allRows.length-1] && allRows[allRows.length-1].Timestamp_ISO8601
+              ? allRows[allRows.length-1].Timestamp_ISO8601.substring(0,10) : '';
+  document.getElementById('subtitle').textContent =
+    allRows.length.toLocaleString() + ' records' + (first ? '  ·  ' + first + ' → ' + last : '');
+
+  document.getElementById('dataTable').style.display = '';
+  document.getElementById('pagination').style.display = '';
+
+  renderHeader();
+  applyAndRender();
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+function renderHeader() {
+  var hr = document.getElementById('headerRow');
+  var fr = document.getElementById('filterRow');
+  hr.innerHTML = ''; fr.innerHTML = '';
+
+  columns.forEach(function(col, idx) {
+    var th = document.createElement('th');
+    th.innerHTML = '<span>' + escHtml(col) + '</span><span class="sort" id="sort'+idx+'"></span>';
+    th.onclick = (function(c){ return function(){
+      if (sortCol === c) sortDir = -sortDir; else { sortCol = c; sortDir = 1; }
+      applyAndRender();
+    }; })(col);
+    hr.appendChild(th);
+
+    var fth = document.createElement('th');
+    var inp = document.createElement('input');
+    inp.type = 'text'; inp.placeholder = 'Filter…';
+    inp.value = colFilters[col] || '';
+    inp.oninput = (function(c){ return function(){ colFilters[c] = this.value; currentPage=1; applyAndRender(); }; })(col);
+    fth.appendChild(inp);
+    fr.appendChild(fth);
+  });
+  updateSortIndicators();
+}
+
+function updateSortIndicators() {
+  columns.forEach(function(col, idx) {
+    var el = document.getElementById('sort'+idx);
+    if (el) el.textContent = sortCol===col ? (sortDir>0?'▲':'▼') : '';
+  });
+}
+
+/* ── Filter / sort / paginate ──────────────────────────────── */
+function applyAndRender() {
+  filteredRows = allRows.filter(function(r) {
+    for (var i = 0; i < columns.length; i++) {
+      var c = columns[i];
+      var f = (colFilters[c]||'').trim().toLowerCase();
+      if (f && String(r[c]||'').toLowerCase().indexOf(f) < 0) return false;
+    }
+    if (quickQ) {
+      var hay = columns.map(function(c){ return String(r[c]||''); }).join(' ').toLowerCase();
+      if (hay.indexOf(quickQ) < 0) return false;
+    }
+    return true;
+  });
+
+  if (sortCol) {
+    filteredRows.sort(function(a, b) {
+      var av = a[sortCol], bv = b[sortCol];
+      var an = parseFloat(av), bn = parseFloat(bv);
+      if (!isNaN(an) && !isNaN(bn) && isFinite(an) && isFinite(bn)) return (an-bn)*sortDir;
+      return String(av||'').localeCompare(String(bv||''))*sortDir;
+    });
+  }
+
+  document.getElementById('infoFiltered').textContent = filteredRows.length.toLocaleString();
+  renderBody();
+  updateSortIndicators();
+}
+
+function renderBody() {
+  var total = filteredRows.length;
+  var pages = Math.max(1, Math.ceil(total / pageSize));
+  if (currentPage > pages) currentPage = pages;
+  var start = (currentPage-1)*pageSize;
+  var slice = filteredRows.slice(start, start+pageSize);
+
+  document.getElementById('tableBody').innerHTML = slice.map(function(r) {
+    return '<tr>' + columns.map(function(c) {
+      var v   = r[c] == null ? '' : r[c];
+      var cls = '';
+      if (c === 'ServerStatus')      cls = v==='UP' ? ' class="cell-up"' : ' class="cell-down"';
+      else if (c.indexOf('_Status') > 0)
+        cls = v==='Success' ? ' class="cell-success"' : v==='Failed' ? ' class="cell-failed"' : '';
+      return '<td'+cls+'>'+escHtml(String(v))+'</td>';
+    }).join('') + '</tr>';
+  }).join('');
+
+  document.getElementById('pageInfo').textContent =
+    'Page '+currentPage+' of '+pages+'   ('+total.toLocaleString()+' rows)';
+  document.getElementById('firstBtn').disabled = currentPage <= 1;
+  document.getElementById('prevBtn').disabled  = currentPage <= 1;
+  document.getElementById('nextBtn').disabled  = currentPage >= pages;
+  document.getElementById('lastBtn').disabled  = currentPage >= pages;
+}
+
+/* ── Controls ───────────────────────────────────────────────── */
+function onSearch(val)     { quickQ = val.toLowerCase(); currentPage=1; applyAndRender(); }
+function onPageSizeChange(){ pageSize = parseInt(document.getElementById('pageSize').value)||25; currentPage=1; renderBody(); }
+function goPage(n)         { currentPage=n; renderBody(); }
+
+function clearFilters() {
+  colFilters={}; quickQ='';
+  document.getElementById('quickSearch').value='';
+  document.querySelectorAll('#filterRow input').forEach(function(i){ i.value=''; });
+  currentPage=1; applyAndRender();
+}
+
+/* ── Export CSV ─────────────────────────────────────────────── */
+function exportCSV() {
+  var lines = [columns.map(csvCell).join(',')];
+  filteredRows.forEach(function(r){
+    lines.push(columns.map(function(c){ return csvCell(r[c]); }).join(','));
+  });
+  var blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8;'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sas_monitor_export_' + tsSuffix() + '.csv';
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+function csvCell(v) {
+  if (v==null) return '';
+  var s=String(v);
+  return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function tsSuffix() {
+  var d=new Date(), p=function(n){ return String(n).padStart(2,'0'); };
+  return p(d.getMonth()+1)+'_'+p(d.getDate())+'_'+d.getFullYear()+'_'+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds());
+}
+
+/* ── Utility ────────────────────────────────────────────────── */
+function escHtml(v) {
+  return String(v==null?'':v).replace(/[&<>"']/g, function(ch){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
+}
+</script>
+</body>
+</html>
