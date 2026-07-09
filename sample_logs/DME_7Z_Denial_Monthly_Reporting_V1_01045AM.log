@@ -1,0 +1,65 @@
+1                                                          The SAS System                       10:45 Monday, June 1, 2026
+
+NOTE: Copyright © 2002-2012 by SAS Institute Inc., Cary, NC, USA.
+NOTE: SAS (r) Proprietary Software 9.4 (TS1M7)
+      Licensed to CGS ADMINISTRATORS LLC, Site 70221563.
+NOTE: This session is executing on the X64_SRV16  platform.
+
+
+NOTE: Log file opened at Mon Jun 01 10:45:02 2026
+
+NOTE: Updated analytical products:
+
+      SAS/STAT 15.2
+
+NOTE: AUTOEXEC processing beginning; file is E:\SAS\Config\autoexec_DME_7Z_Denial_Monthly_Reporting.sas.
+
+NOTE: SAS initialization used:
+      real time           0.11 seconds
+      cpu time            0.09 seconds
+
+101  proc sql;
+102      create table work.q01 as
+103      select * from dme.denials_01;
+104  quit;
+NOTE: Table WORK.Q01 created, with 1037 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.15 seconds
+      cpu time            0.11 seconds
+
+102  proc sql;
+103      create table work.q02 as
+104      select * from dme.denials_02;
+105  quit;
+NOTE: Table WORK.Q02 created, with 1074 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.25 seconds
+      cpu time            0.21 seconds
+
+103  proc sql;
+104      create table work.q03 as
+105      select * from dme.denials_03;
+106  quit;
+NOTE: Table WORK.Q03 created, with 1111 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.35 seconds
+      cpu time            0.31 seconds
+
+NOTE: There were 22876 observations read from the data set WORK.MONTHLY.
+NOTE: The data set WORK.MONTHLY_OUT has 22876 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.44 seconds
+      cpu time            0.31 seconds
+
+NOTE: PROCEDURE EXPORT used (Total process time):
+      real time           1.02 seconds
+      cpu time            0.77 seconds
+
+NOTE: The SAS System used:
+      real time           1:02:03.50
+      user cpu time       58.20 seconds
+      system cpu time     4.16 seconds
+      memory              2048.55k
+      OS Memory           18240.00k
+      Timestamp           06/01/2026 11:47:06 AM
+      Step Count                        6  Switch Count  44

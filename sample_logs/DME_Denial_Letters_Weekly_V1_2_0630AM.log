@@ -1,0 +1,51 @@
+1                                                          The SAS System                       06:30 Tuesday, June 2, 2026
+
+NOTE: Copyright © 2002-2012 by SAS Institute Inc., Cary, NC, USA.
+NOTE: SAS (r) Proprietary Software 9.4 (TS1M7)
+      Licensed to CGS ADMINISTRATORS LLC, Site 70221563.
+NOTE: This session is executing on the X64_SRV16  platform.
+
+
+NOTE: Log file opened at Tue Jun 02 06:30:01 2026
+
+NOTE: Updated analytical products:
+
+      SAS/STAT 15.2
+
+NOTE: AUTOEXEC processing beginning; file is E:\SAS\Config\autoexec_DME_Denial_Letters_Weekly.sas.
+
+NOTE: SAS initialization used:
+      real time           0.07 seconds
+      cpu time            0.05 seconds
+
+NOTE: PROCEDURE IMPORT used (Total process time):
+      real time           0.51 seconds
+      cpu time            0.39 seconds
+
+101  proc sql;
+102      create table work.q01 as
+103      select * from dme.denials_01;
+104  quit;
+NOTE: Table WORK.Q01 created, with 1037 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           2:10.90
+      cpu time            55.02 seconds
+
+NOTE: There were 974 observations read from the data set WORK.LETTERS.
+NOTE: The data set WORK.LETTERS_OUT has 974 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.18 seconds
+      cpu time            0.12 seconds
+
+NOTE: PROCEDURE PRINT used (Total process time):
+      real time           0.22 seconds
+      cpu time            0.14 seconds
+
+NOTE: The SAS System used:
+      real time           3:41.77
+      user cpu time       1:02.33
+      system cpu time     2.09 seconds
+      memory              1877.43k
+      OS Memory           12032.00k
+      Timestamp           06/02/2026 06:33:43 AM
+      Step Count                        5  Switch Count  30

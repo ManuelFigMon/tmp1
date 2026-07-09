@@ -1,0 +1,46 @@
+1                                                          The SAS System                       09:15 Thursday, June 4, 2026
+
+NOTE: Copyright © 2002-2012 by SAS Institute Inc., Cary, NC, USA.
+NOTE: SAS (r) Proprietary Software 9.4 (TS1M7)
+      Licensed to CGS ADMINISTRATORS LLC, Site 70221563.
+NOTE: This session is executing on the X64_SRV16  platform.
+
+
+NOTE: Log file opened at Thu Jun 04 09:15:03 2026
+
+NOTE: Updated analytical products:
+
+      SAS/STAT 15.2
+
+NOTE: AUTOEXEC processing beginning; file is E:\SAS\Config\autoexec_DMEB_POE_Qtrly_Report.sas.
+
+NOTE: SAS initialization used:
+      real time           0.10 seconds
+      cpu time            0.08 seconds
+
+101  proc sql;
+102      create table work.q01 as
+103      select * from dme.denials_01;
+104  quit;
+NOTE: Table WORK.Q01 created, with 1037 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.33 seconds
+      cpu time            0.21 seconds
+
+ERROR: File DMEB.POE_REF.DATA does not exist.
+WARNING: The data set WORK.POE_FINAL may be incomplete.  When this step was stopped there were 0 observations and 0 variables.
+
+NOTE: There were 0 observations read from the data set WORK.POE_FINAL.
+NOTE: The data set WORK.POE_FINAL_OUT has 0 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.02 seconds
+      cpu time            0.01 seconds
+
+NOTE: The SAS System used:
+      real time           12.44 seconds
+      user cpu time       0.88 seconds
+      system cpu time     0.30 seconds
+      memory              1102.60k
+      OS Memory           8448.00k
+      Timestamp           06/04/2026 09:15:16 AM
+      Step Count                        3  Switch Count  12
