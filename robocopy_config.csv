@@ -1,0 +1,2 @@
+Source,Target,FileExtension,UpdateIfNewer,IncludeSubfolders,Notes
+\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT,E:\SAS\LogStage\UNIT,log,Y,Y,Stage UNIT logs locally before parsing

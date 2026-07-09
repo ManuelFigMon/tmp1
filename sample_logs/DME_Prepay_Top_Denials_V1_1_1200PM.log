@@ -1,0 +1,282 @@
+1                                                          The SAS System                       12:00 Friday, June 5, 2026
+
+NOTE: Copyright © 2002-2012 by SAS Institute Inc., Cary, NC, USA.
+NOTE: SAS (r) Proprietary Software 9.4 (TS1M7)
+      Licensed to CGS ADMINISTRATORS LLC, Site 70221563.
+NOTE: This session is executing on the X64_SRV16  platform.
+
+
+NOTE: Log file opened at Fri Jun 05 12:00:01 2026
+
+NOTE: Updated analytical products:
+
+      SAS/STAT 15.2
+
+NOTE: AUTOEXEC processing beginning; file is E:\SAS\Config\autoexec_DME_Prepay_Top_Denials.sas.
+
+NOTE: SAS initialization used:
+      real time           2.31 seconds
+      cpu time            1.87 seconds
+
+NOTE: The import data set has 200 observations and 11 variables.
+NOTE: WORK.XLIN_1 data set was successfully created.
+NOTE: PROCEDURE IMPORT used (Total process time):
+      real time           0.610 seconds
+      cpu time            0.410 seconds
+
+NOTE: The import data set has 400 observations and 11 variables.
+NOTE: WORK.XLIN_2 data set was successfully created.
+NOTE: PROCEDURE IMPORT used (Total process time):
+      real time           0.620 seconds
+      cpu time            0.420 seconds
+
+101  proc sql;
+102      create table work.q01 as
+103      select * from dme.denials_01;
+104  quit;
+NOTE: Table WORK.Q01 created, with 1037 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           1.01 seconds
+      cpu time            0.01 seconds
+
+102  proc sql;
+103      create table work.q02 as
+104      select * from dme.denials_02;
+105  quit;
+NOTE: Table WORK.Q02 created, with 1074 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           2.02 seconds
+      cpu time            0.02 seconds
+
+103  proc sql;
+104      create table work.q03 as
+105      select * from dme.denials_03;
+106  quit;
+NOTE: Table WORK.Q03 created, with 1111 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           3.03 seconds
+      cpu time            0.03 seconds
+
+104  proc sql;
+105      create table work.q04 as
+106      select * from dme.denials_04;
+107  quit;
+NOTE: Table WORK.Q04 created, with 1148 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.04 seconds
+      cpu time            0.04 seconds
+
+WARNING: Variable HCPCS has different lengths on BASE and DATA files.
+
+105  proc sql;
+106      create table work.q05 as
+107      select * from dme.denials_05;
+108  quit;
+NOTE: Table WORK.Q05 created, with 1185 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           1.05 seconds
+      cpu time            0.05 seconds
+
+106  proc sql;
+107      create table work.q06 as
+108      select * from dme.denials_06;
+109  quit;
+NOTE: Table WORK.Q06 created, with 1222 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           2.06 seconds
+      cpu time            0.06 seconds
+
+107  proc sql;
+108      create table work.q07 as
+109      select * from dme.denials_07;
+110  quit;
+NOTE: Table WORK.Q07 created, with 1259 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           3.07 seconds
+      cpu time            0.07 seconds
+
+108  proc sql;
+109      create table work.q08 as
+110      select * from dme.denials_08;
+111  quit;
+NOTE: Table WORK.Q08 created, with 1296 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.08 seconds
+      cpu time            0.08 seconds
+
+109  proc sql;
+110      create table work.q09 as
+111      select * from dme.denials_09;
+112  quit;
+NOTE: Table WORK.Q09 created, with 1333 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           1.09 seconds
+      cpu time            0.09 seconds
+
+110  proc sql;
+111      create table work.q10 as
+112      select * from dme.denials_10;
+113  quit;
+NOTE: Table WORK.Q10 created, with 1370 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           2.10 seconds
+      cpu time            0.10 seconds
+
+NOTE: There were 5001 observations read from the data set WORK.DEN_1.
+NOTE: The data set WORK.DEN_1_OUT has 5001 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           1.01 seconds
+      cpu time            0.91 seconds
+
+NOTE: There were 5002 observations read from the data set WORK.DEN_2.
+NOTE: The data set WORK.DEN_2_OUT has 5002 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           1.02 seconds
+      cpu time            0.92 seconds
+
+NOTE: There were 5003 observations read from the data set WORK.DEN_3.
+NOTE: The data set WORK.DEN_3_OUT has 5003 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           1.03 seconds
+      cpu time            0.93 seconds
+
+NOTE: There were 5004 observations read from the data set WORK.DEN_4.
+NOTE: The data set WORK.DEN_4_OUT has 5004 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           1.04 seconds
+      cpu time            0.94 seconds
+
+111  proc sql;
+112      create table work.q11 as
+113      select * from dme.denials_11;
+114  quit;
+NOTE: Table WORK.Q11 created, with 1407 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           3:02.44
+      cpu time            1:15.09
+
+112  proc sql;
+113      create table work.q12 as
+114      select * from dme.denials_12;
+115  quit;
+NOTE: Table WORK.Q12 created, with 1444 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.12 seconds
+      cpu time            0.02 seconds
+
+113  proc sql;
+114      create table work.q13 as
+115      select * from dme.denials_13;
+116  quit;
+NOTE: Table WORK.Q13 created, with 1481 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.13 seconds
+      cpu time            0.03 seconds
+
+114  proc sql;
+115      create table work.q14 as
+116      select * from dme.denials_14;
+117  quit;
+NOTE: Table WORK.Q14 created, with 1518 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.14 seconds
+      cpu time            0.04 seconds
+
+115  proc sql;
+116      create table work.q15 as
+117      select * from dme.denials_15;
+118  quit;
+NOTE: Table WORK.Q15 created, with 1555 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.15 seconds
+      cpu time            0.05 seconds
+
+WARNING: Apparent symbolic reference RPTMON not resolved.
+
+116  proc sql;
+117      create table work.q16 as
+118      select * from dme.denials_16;
+119  quit;
+NOTE: Table WORK.Q16 created, with 1592 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.16 seconds
+      cpu time            0.06 seconds
+
+117  proc sql;
+118      create table work.q17 as
+119      select * from dme.denials_17;
+120  quit;
+NOTE: Table WORK.Q17 created, with 1629 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.17 seconds
+      cpu time            0.07 seconds
+
+118  proc sql;
+119      create table work.q18 as
+120      select * from dme.denials_18;
+121  quit;
+NOTE: Table WORK.Q18 created, with 1666 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.18 seconds
+      cpu time            0.08 seconds
+
+119  proc sql;
+120      create table work.q19 as
+121      select * from dme.denials_19;
+122  quit;
+NOTE: Table WORK.Q19 created, with 1703 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.19 seconds
+      cpu time            0.09 seconds
+
+120  proc sql;
+121      create table work.q20 as
+122      select * from dme.denials_20;
+123  quit;
+NOTE: Table WORK.Q20 created, with 1740 rows and 18 columns.
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           0.20 seconds
+      cpu time            0.10 seconds
+
+NOTE: There were 805 observations read from the data set WORK.RPT_5.
+NOTE: The data set WORK.RPT_5_OUT has 805 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.25 seconds
+      cpu time            0.15 seconds
+
+NOTE: There were 806 observations read from the data set WORK.RPT_6.
+NOTE: The data set WORK.RPT_6_OUT has 806 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.26 seconds
+      cpu time            0.16 seconds
+
+NOTE: There were 807 observations read from the data set WORK.RPT_7.
+NOTE: The data set WORK.RPT_7_OUT has 807 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.27 seconds
+      cpu time            0.17 seconds
+
+NOTE: There were 808 observations read from the data set WORK.RPT_8.
+NOTE: The data set WORK.RPT_8_OUT has 808 observations and 42 variables.
+NOTE: DATA statement used (Total process time):
+      real time           0.28 seconds
+      cpu time            0.18 seconds
+
+NOTE: PROCEDURE PRINT used (Total process time):
+      real time           0.31 seconds
+      cpu time            0.21 seconds
+
+NOTE: PROCEDURE PRINT used (Total process time):
+      real time           0.32 seconds
+      cpu time            0.22 seconds
+
+NOTE: The SAS System used:
+      real time           35:17.06
+      user cpu time       2:45.12
+      system cpu time     15.34 seconds
+      memory              10485.31k
+      OS Memory           35620.00k
+      Timestamp           06/05/2026 12:35:18 PM
+      Step Count                        34  Switch Count  156
+
+NOTE: Log file closing at Fri Jun 05 12:35:18 2026
