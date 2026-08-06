@@ -136,6 +136,36 @@ records = get_comments(
 print(f"Retrieved {len(records)} comments")
 ```
 
+#### Cell 1 variant — pass the key as a parameter (secret-free)
+
+If you don't have a Snowflake secret (e.g. your role can't `CREATE SECRET`), pass
+the key straight to `get_comments` instead — it's the first source
+`resolve_api_key()` checks, so no secret or env var is needed:
+
+```python
+from cgs_ai import get_comments, write_output, build_metadata, write_metadata
+
+API_KEY = "YOUR_REGULATIONS_GOV_API_KEY"   # see the caveat below
+
+records = get_comments(
+    agency="CMS",
+    docket_id="CMS-2022-0193",
+    api_key=API_KEY,
+    download_type="all",
+)
+print(f"Retrieved {len(records)} comments")
+```
+
+You still need the **network rule + external access integration** attached to the
+notebook — passing the key inline only handles authentication, not Snowflake's
+outbound-network block.
+
+**Caveat:** a literal key is visible in the cell and is saved into the notebook's
+stored source/output. Don't commit the notebook with the key in it, clear the
+cell output when done, and prefer the secret path for anything shared or
+production. This variant is best for a quick one-off pull.
+```
+
 ### Cell 2 — write CSV and JSON locally
 
 ```python
