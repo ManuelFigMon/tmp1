@@ -41,15 +41,23 @@ GRANT USAGE ON INTEGRATION regulations_gov_access_integration TO ROLE <your_note
 GRANT READ, WRITE ON STAGE cgs_ai_stage TO ROLE <your_notebook_role>;
 ```
 
-## Make the module importable
+## Make the `cgs_ai` package importable
 
-Pick **one** of these:
+Stage the package as a zip, then put it on the notebook's `sys.path` (Cell 0
+below). Python imports the package straight out of the zip, so
+`from cgs_ai import ...` works exactly as it does locally.
 
-- **Easiest — upload the single file.** In the notebook's left-hand **Files**
-  panel, upload `src/cgs_ai/regulations.py`. Then `import regulations`. It's one
-  stdlib-only file, so nothing else is needed.
-- **Staged package.** `PUT file://cgs_ai.zip @cgs_ai_stage` (see the main
-  README), then add it to the notebook so `import cgs_ai` works.
+Build and upload the zip once (from the project root, e.g. via SnowSQL):
+
+```bash
+# The zip root must be the `cgs_ai/` package dir so `import cgs_ai` resolves.
+( cd src && zip -r ../cgs_ai.zip cgs_ai -x '*__pycache__*' )
+snowsql -q "PUT file://cgs_ai.zip @cgs_ai_stage OVERWRITE=TRUE AUTO_COMPRESS=FALSE"
+```
+
+You can also `PUT` it directly from a notebook cell if you have the file in the
+notebook's Files panel:
+`session.file.put("file://cgs_ai.zip", "@cgs_ai_stage", auto_compress=False, overwrite=True)`.
 
 ## Attach the external access integration to the notebook
 
@@ -62,13 +70,27 @@ will fail. (Restart the notebook session after enabling it.)
 
 ## Notebook cells
 
+### Cell 0 — put the staged `cgs_ai` package on the path
+
+```python
+import sys
+from snowflake.snowpark.context import get_active_session
+session = get_active_session()
+
+# Download the staged zip and import cgs_ai straight out of it (zipimport).
+session.file.get("@cgs_ai_stage/cgs_ai.zip", "/tmp/")
+if "/tmp/cgs_ai.zip" not in sys.path:
+    sys.path.insert(0, "/tmp/cgs_ai.zip")
+
+import cgs_ai
+print("cgs_ai", cgs_ai.__version__)
+```
+
 ### Cell 1 — read the key from the secret and pull the docket
 
 ```python
 import _snowflake
-# If you uploaded the single file, import from `regulations`.
-# If you staged the package, use:  from cgs_ai import ...
-from regulations import get_comments, write_output, build_metadata, write_metadata
+from cgs_ai import get_comments, write_output, build_metadata, write_metadata
 
 api_key = _snowflake.get_generic_secret_string("regulations_gov_api_key")
 
