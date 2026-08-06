@@ -12,8 +12,20 @@ the API key as a secret.
 
 ## One-time setup (run once, as an admin role)
 
+The `SECRET`, `NETWORK RULE`, and `STAGE` are **schema-level** objects, so the
+worksheet must have an active database + schema first. If you skip this you get
+`Cannot perform CREATE SECRET. This session does not have a current database.`
+Replace `<your_db>.<your_schema>` below with your own (e.g.
+`ADM_PRD.CMS_ADM_CGS_MAC`).
+
 ```sql
--- A stage to hold the code and the output files.
+-- Set context FIRST — this is what avoids the "no current database" error.
+USE ROLE ACCOUNTADMIN;             -- or a role with the CREATE INTEGRATION privilege
+USE DATABASE <your_db>;
+USE SCHEMA <your_schema>;
+-- USE WAREHOUSE <your_wh>;        -- only if you have no default warehouse
+
+-- A stage to hold the code and the output files (schema-level).
 CREATE STAGE IF NOT EXISTS cgs_ai_stage
     DIRECTORY = (ENABLE = TRUE)
     ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE');
@@ -23,22 +35,25 @@ CREATE OR REPLACE SECRET regulations_gov_api_key
     TYPE = GENERIC_STRING
     SECRET_STRING = 'PASTE_YOUR_REGULATIONS_GOV_API_KEY_HERE';
 
--- Allow outbound HTTPS to the API host only.
+-- Allow outbound HTTPS to the API host only (schema-level).
 CREATE OR REPLACE NETWORK RULE regulations_gov_network_rule
     MODE = EGRESS
     TYPE = HOST_PORT
     VALUE_LIST = ('api.regulations.gov');
 
 -- Bind the rule + secret into an external access integration.
+-- The EAI is ACCOUNT-level (not affected by USE DATABASE) and needs the
+-- CREATE INTEGRATION privilege (usually ACCOUNTADMIN). Fully-qualify the
+-- objects it references since they live in a schema.
 CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION regulations_gov_access_integration
-    ALLOWED_NETWORK_RULES = (regulations_gov_network_rule)
-    ALLOWED_AUTHENTICATION_SECRETS = (regulations_gov_api_key)
+    ALLOWED_NETWORK_RULES = (<your_db>.<your_schema>.regulations_gov_network_rule)
+    ALLOWED_AUTHENTICATION_SECRETS = (<your_db>.<your_schema>.regulations_gov_api_key)
     ENABLED = TRUE;
 
 -- Grant usage to the role your notebook runs as.
-GRANT USAGE ON SECRET regulations_gov_api_key TO ROLE <your_notebook_role>;
+GRANT USAGE ON SECRET <your_db>.<your_schema>.regulations_gov_api_key TO ROLE <your_notebook_role>;
 GRANT USAGE ON INTEGRATION regulations_gov_access_integration TO ROLE <your_notebook_role>;
-GRANT READ, WRITE ON STAGE cgs_ai_stage TO ROLE <your_notebook_role>;
+GRANT READ, WRITE ON STAGE <your_db>.<your_schema>.cgs_ai_stage TO ROLE <your_notebook_role>;
 ```
 
 ## Make the `cgs_ai` package importable
