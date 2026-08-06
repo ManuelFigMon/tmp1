@@ -37,6 +37,8 @@ import csv
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -57,7 +59,20 @@ API_KEY_ENV_VAR = "REGULATIONS_GOV_API_KEY"
 SNOWFLAKE_SECRET_NAME = "regulations_gov_api_key"
 
 #: Maximum page size supported by the Regulations.gov API.
-_MAX_PAGE_SIZE = 250
+DEFAULT_PAGE_SIZE = 250
+
+#: Safety cap on paginated requests (DEFAULT_PAGE_SIZE * DEFAULT_MAX_PAGES max).
+DEFAULT_MAX_PAGES = 20
+
+#: Delay between paginated requests to respect the API rate limits.
+DEFAULT_REQUEST_DELAY_SEC = 0.4
+
+#: Known agency acronyms -> the ``filter[agencyId]`` value to send. The mapping
+#: is permissive: any agency not listed here is passed through unchanged so the
+#: package can be expanded to new agencies without a code change.
+SUPPORTED_AGENCIES = {
+    "CMS": "CMS",  # Centers for Medicare & Medicaid Services
+}
 
 #: The set of valid ``download_type`` values.
 DOWNLOAD_TYPES = ("comments", "attachments", "metadata", "all")
@@ -145,19 +160,51 @@ def _api_get(path: str, params: Dict[str, Any], api_key: str) -> Dict[str, Any]:
     """Call a Regulations.gov endpoint and return the parsed JSON body.
 
     The API key is sent in the ``X-Api-Key`` header (never in the URL/query
-    string) so it does not leak into logs or proxies that record URLs.
+    string) so it does not leak into logs or proxies that record URLs. This is
+    an intentional change from the original script, which passed the key as an
+    ``api_key`` query parameter.
     """
     query = urllib.parse.urlencode(params, doseq=True)
     url = f"{API_BASE_URL}/{path.lstrip('/')}"
     if query:
         url = f"{url}?{query}"
     headers = {"X-Api-Key": api_key, "Accept": "application/vnd.api+json"}
-    return _http_get_json(url, headers)
+    try:
+        return _http_get_json(url, headers)
+    except urllib.error.HTTPError as exc:
+        # Surface a friendly message. The key lives in a header, so neither the
+        # URL nor this message can contain it.
+        raise urllib.error.HTTPError(
+            exc.url, exc.code, f"regulations.gov API error: {exc.reason}",
+            exc.headers, exc.fp,
+        )
 
 
 # --------------------------------------------------------------------------- #
 # Request construction
 # --------------------------------------------------------------------------- #
+
+def _normalize_agency(agency: str) -> str:
+    """Map a known agency acronym to its ``filter[agencyId]`` value.
+
+    Unknown agencies are passed through unchanged so new agencies work without
+    a code change (the original script hard-failed on anything but CMS).
+    """
+    return SUPPORTED_AGENCIES.get(agency, agency)
+
+
+def _validate_date(value: Optional[str], label: str) -> None:
+    """Validate that an optional date string is ``YYYY-MM-DD``.
+
+    ``None`` is allowed (the filter is simply omitted).
+    """
+    if value is None:
+        return
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError(f"{label} must be in YYYY-MM-DD format, got {value!r}")
+
 
 def build_filters(
     agency: str,
@@ -172,7 +219,7 @@ def build_filters(
     Date filters are only added when the corresponding argument is supplied,
     which is what makes ``start_date``/``end_date`` optional.
     """
-    filters: Dict[str, str] = {"filter[agencyId]": agency}
+    filters: Dict[str, str] = {"filter[agencyId]": _normalize_agency(agency)}
     if docket_id:
         filters["filter[docketId]"] = docket_id
     if keyword:
@@ -196,9 +243,11 @@ def _summary_record(item: Dict[str, Any]) -> Dict[str, Any]:
         "agencyId": attrs.get("agencyId"),
         "postedDate": attrs.get("postedDate"),
         "title": attrs.get("title"),
-        "comment": "",
+        # Keyword searches surface a snippet in highlightedContent even on the
+        # list endpoint; fall back to it so metadata pulls aren't empty.
+        "comment": attrs.get("highlightedContent") or "",
         "docketId": attrs.get("docketId"),
-        "attachmentCount": 0,
+        "attachmentCount": attrs.get("attachmentCount", 0) or 0,
     }
 
 
@@ -236,6 +285,9 @@ def get_comments(
     download_type: str = "all",
     docket_id: Optional[str] = None,
     max_records: Optional[int] = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    request_delay_sec: float = DEFAULT_REQUEST_DELAY_SEC,
 ) -> List[Dict[str, Any]]:
     """Retrieve comments from Regulations.gov.
 
@@ -259,14 +311,22 @@ def get_comments(
         docket_id: Optional docket identifier, e.g. ``"CMS-2022-0193"``. When
             given, results are filtered to that docket.
         max_records: Optional cap on the number of records returned.
+        page_size: Results per page (API max is 250).
+        max_pages: Safety cap on the number of pages fetched.
+        request_delay_sec: Delay between paginated requests (rate limiting).
 
     Returns:
         A list of comment record dicts (see the module data dictionary).
+
+    Raises:
+        ValueError: if ``download_type`` is invalid or a date is malformed.
     """
     if download_type not in DOWNLOAD_TYPES:
         raise ValueError(
             f"download_type must be one of {DOWNLOAD_TYPES}, got {download_type!r}"
         )
+    _validate_date(start_date, "start_date")
+    _validate_date(end_date, "end_date")
 
     api_key = resolve_api_key(api_key)
     filters = build_filters(
@@ -277,7 +337,14 @@ def get_comments(
         docket_id=docket_id,
     )
 
-    summaries = _paginate_comments(filters, api_key, max_records=max_records)
+    summaries = _paginate_comments(
+        filters,
+        api_key,
+        max_records=max_records,
+        page_size=page_size,
+        max_pages=max_pages,
+        request_delay_sec=request_delay_sec,
+    )
 
     # A pure metadata pull needs no per-comment detail calls.
     if download_type == "metadata":
@@ -293,7 +360,12 @@ def get_comments(
         )
         attrs = detail.get("data", {}).get("attributes", {}) or {}
         if want_body:
-            record["comment"] = attrs.get("comment", "") or ""
+            record["comment"] = (
+                attrs.get("comment")
+                or attrs.get("highlightedContent")
+                or record.get("comment")
+                or ""
+            )
         if want_attachments:
             atts = _extract_attachments(detail, include_content=include_attachments)
             record["attachments"] = atts
@@ -307,26 +379,35 @@ def _paginate_comments(
     api_key: str,
     *,
     max_records: Optional[int] = None,
+    page_size: int = DEFAULT_PAGE_SIZE,
+    max_pages: int = DEFAULT_MAX_PAGES,
+    request_delay_sec: float = DEFAULT_REQUEST_DELAY_SEC,
 ) -> List[Dict[str, Any]]:
     """Page through the comments list endpoint and return core records."""
     records: List[Dict[str, Any]] = []
     page_number = 1
-    while True:
+    while page_number <= max_pages:
         params = dict(filters)
-        params["page[size]"] = _MAX_PAGE_SIZE
+        params["page[size]"] = page_size
         params["page[number]"] = page_number
         params["sort"] = "postedDate"
         body = _api_get("comments", params, api_key)
 
-        for item in body.get("data", []) or []:
+        data = body.get("data", []) or []
+        if not data:
+            break
+        for item in data:
             records.append(_summary_record(item))
             if max_records is not None and len(records) >= max_records:
                 return records[:max_records]
 
+        # Stop on the last page: either the API says so, or the page was short.
         meta = body.get("meta", {}) or {}
-        if not meta.get("hasNextPage"):
+        if not meta.get("hasNextPage") or len(data) < page_size:
             break
         page_number += 1
+        if request_delay_sec:
+            time.sleep(request_delay_sec)
     return records
 
 

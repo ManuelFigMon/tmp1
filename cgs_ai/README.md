@@ -68,6 +68,14 @@ output format is inferred from the `--output` extension (`.json`, `.csv`,
 | `include_attachments` | bool | no | Include attachment download URLs (default `False`). |
 | `download_type` | str | no | `comments` \| `attachments` \| `metadata` \| `all` (default `all`). |
 | `docket_id` | str | no | Docket id, e.g. `CMS-2022-0193` (`filter[docketId]`). |
+| `max_records` | int | no | Cap on the number of records returned. |
+| `page_size` | int | no | Results per page (API max / default `250`). |
+| `max_pages` | int | no | Safety cap on pages fetched (default `20`). |
+| `request_delay_sec` | float | no | Delay between pages for rate limiting (default `0.4`). |
+
+Dates are validated as `YYYY-MM-DD` when supplied and omitted from the request
+otherwise. Unknown agencies are passed through to `filter[agencyId]` unchanged,
+so the package can be pointed at agencies beyond CMS without a code change.
 
 **`download_type` semantics**
 
@@ -119,6 +127,14 @@ looks for it in this order:
    `_snowflake` module inside a Snowpark handler).
 
 If none is found, a clear `RuntimeError` is raised (with no key material in it).
+
+> This module is refactored from the original `fetch_regulations_comments.py`
+> standalone script. One intentional behavioral change: the API key is sent in
+> the `X-Api-Key` **header** rather than as an `api_key` **query parameter** (as
+> the original did), so it can never leak into logged/proxied request URLs.
+> `fetch_comments` was renamed to `get_comments`, dates and the API key became
+> optional (resolved from env/secret), and `download_type`, `docket_id`, XML
+> output, and the metadata sidecar were added.
 
 ## Deploying `cgs_ai` in Snowflake
 

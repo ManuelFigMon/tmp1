@@ -126,6 +126,41 @@ def test_keyword_filter_included():
     assert filters["filter[searchTerm]"] == "prior authorization"
 
 
+def test_agency_passthrough_for_unknown_agency():
+    # Original hard-failed on non-CMS; refactor passes unknown agencies through.
+    filters = reg.build_filters("EPA")
+    assert filters["filter[agencyId]"] == "EPA"
+
+
+def test_invalid_date_raises(monkeypatch):
+    _fake_api(monkeypatch)
+    with pytest.raises(ValueError):
+        reg.get_comments("CMS", api_key=SECRET, start_date="2023/01/01")
+
+
+def test_valid_optional_date_accepted(monkeypatch):
+    _fake_api(monkeypatch)
+    # Well-formed dates should not raise.
+    reg.get_comments("CMS", api_key=SECRET, download_type="metadata",
+                     start_date="2023-01-01", end_date="2023-02-01")
+
+
+def test_pagination_stops_on_short_page(monkeypatch):
+    """A page shorter than page_size ends pagination (original behavior)."""
+    calls = {"n": 0}
+
+    def fake_api_get(path, params, api_key):
+        calls["n"] += 1
+        # One record on the only page; page_size is 250 so it's a short page.
+        return {"data": [{"id": "X-1", "attributes": {"agencyId": "CMS"}}],
+                "meta": {"hasNextPage": True}}
+
+    monkeypatch.setattr(reg, "_api_get", fake_api_get)
+    records = reg.get_comments("CMS", api_key=SECRET, download_type="metadata")
+    assert len(records) == 1
+    assert calls["n"] == 1  # did not request a second page
+
+
 # --------------------------------------------------------------------------- #
 # get_comments with mocked HTTP
 # --------------------------------------------------------------------------- #
