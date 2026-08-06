@@ -12,6 +12,24 @@ the API key as a secret.
 
 ## One-time setup (run once, as an admin role)
 
+**Privileges — this is an admin task.** Creating these objects requires
+privileges a typical app/read-write role does not have; you'll otherwise see
+`Insufficient privileges to operate on schema ... must have CREATE SECRET granted`.
+Have an admin either grant them to your role:
+
+```sql
+GRANT CREATE SECRET       ON SCHEMA <your_db>.<your_schema> TO ROLE <your_role>;
+GRANT CREATE NETWORK RULE ON SCHEMA <your_db>.<your_schema> TO ROLE <your_role>;
+GRANT CREATE STAGE        ON SCHEMA <your_db>.<your_schema> TO ROLE <your_role>;
+-- The external access integration is ACCOUNT-level and needs ACCOUNTADMIN:
+GRANT CREATE INTEGRATION  ON ACCOUNT                        TO ROLE <your_role>;
+```
+
+…or, more commonly, have the admin run the whole setup below and then grant your
+role **USAGE** on the secret + integration and **READ, WRITE** on the stage (the
+grants already at the end of the block). Use
+`SHOW GRANTS ON SCHEMA <your_db>.<your_schema>;` to find the owner to ask.
+
 The `SECRET`, `NETWORK RULE`, and `STAGE` are **schema-level** objects, so the
 worksheet must have an active database + schema first. If you skip this you get
 `Cannot perform CREATE SECRET. This session does not have a current database.`
