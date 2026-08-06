@@ -226,3 +226,11 @@ A stored procedure is analogous — swap `CREATE FUNCTION` for
 ```sql
 SELECT fetch_regulations_comments('CMS', 'CMS-2022-0193');
 ```
+
+### Snowflake Notebook (interactive)
+
+For a step-by-step walkthrough of pulling docket **CMS-2022-0193** to CSV and
+JSON from inside a Snowflake Notebook — importing the module, attaching the
+external access integration, reading the key from the secret, and writing the
+files to a stage — see
+[`examples/snowflake_notebook.md`](examples/snowflake_notebook.md).

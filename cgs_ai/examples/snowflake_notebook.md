@@ -1,0 +1,148 @@
+# Using `cgs_ai` in a Snowflake Notebook — CMS-2022-0193 to CSV + JSON
+
+This walks through pulling public comments for docket **CMS-2022-0193** (the CMS
+Interoperability and Prior Authorization Final Rule, CMS-0057-F) from inside a
+Snowflake Notebook and writing them to both a CSV and a JSON file on a stage.
+
+Because `cgs_ai` is standard-library only, there are no packages to install —
+you only need to make the module importable, turn on outbound access, and store
+the API key as a secret.
+
+---
+
+## One-time setup (run once, as an admin role)
+
+```sql
+-- A stage to hold the code and the output files.
+CREATE STAGE IF NOT EXISTS cgs_ai_stage
+    DIRECTORY = (ENABLE = TRUE)
+    ENCRYPTION = (TYPE = 'SNOWFLAKE_SSE');
+
+-- Store the regulations.gov API key as a secret (never pass it as a parameter).
+CREATE OR REPLACE SECRET regulations_gov_api_key
+    TYPE = GENERIC_STRING
+    SECRET_STRING = 'PASTE_YOUR_REGULATIONS_GOV_API_KEY_HERE';
+
+-- Allow outbound HTTPS to the API host only.
+CREATE OR REPLACE NETWORK RULE regulations_gov_network_rule
+    MODE = EGRESS
+    TYPE = HOST_PORT
+    VALUE_LIST = ('api.regulations.gov');
+
+-- Bind the rule + secret into an external access integration.
+CREATE OR REPLACE EXTERNAL ACCESS INTEGRATION regulations_gov_access_integration
+    ALLOWED_NETWORK_RULES = (regulations_gov_network_rule)
+    ALLOWED_AUTHENTICATION_SECRETS = (regulations_gov_api_key)
+    ENABLED = TRUE;
+
+-- Grant usage to the role your notebook runs as.
+GRANT USAGE ON SECRET regulations_gov_api_key TO ROLE <your_notebook_role>;
+GRANT USAGE ON INTEGRATION regulations_gov_access_integration TO ROLE <your_notebook_role>;
+GRANT READ, WRITE ON STAGE cgs_ai_stage TO ROLE <your_notebook_role>;
+```
+
+## Make the module importable
+
+Pick **one** of these:
+
+- **Easiest — upload the single file.** In the notebook's left-hand **Files**
+  panel, upload `src/cgs_ai/regulations.py`. Then `import regulations`. It's one
+  stdlib-only file, so nothing else is needed.
+- **Staged package.** `PUT file://cgs_ai.zip @cgs_ai_stage` (see the main
+  README), then add it to the notebook so `import cgs_ai` works.
+
+## Attach the external access integration to the notebook
+
+In Snowsight: open the notebook → **⋮** (top-right) → **Notebook settings** →
+**External access** → toggle on `REGULATIONS_GOV_ACCESS_INTEGRATION`. Without
+this, the outbound call to `api.regulations.gov` is blocked and `get_comments`
+will fail. (Restart the notebook session after enabling it.)
+
+---
+
+## Notebook cells
+
+### Cell 1 — read the key from the secret and pull the docket
+
+```python
+import _snowflake
+# If you uploaded the single file, import from `regulations`.
+# If you staged the package, use:  from cgs_ai import ...
+from regulations import get_comments, write_output, build_metadata, write_metadata
+
+api_key = _snowflake.get_generic_secret_string("regulations_gov_api_key")
+
+records = get_comments(
+    agency="CMS",
+    docket_id="CMS-2022-0193",
+    api_key=api_key,
+    download_type="all",   # comment bodies + attachment metadata
+)
+print(f"Retrieved {len(records)} comments")
+```
+
+### Cell 2 — write CSV and JSON locally
+
+```python
+write_output(records, "cms_2022_0193_comments.csv")   # dispatch by extension
+write_output(records, "cms_2022_0193_comments.json")
+write_metadata(
+    build_metadata(agency="CMS", docket_id="CMS-2022-0193", records=records),
+    "cms_2022_0193_comments.metadata.json",
+)
+```
+
+### Cell 3 — persist the files to the stage
+
+A notebook's local filesystem is ephemeral, so copy the files to the stage to
+keep them:
+
+```python
+from snowflake.snowpark.context import get_active_session
+session = get_active_session()
+
+for name in ("cms_2022_0193_comments.csv",
+             "cms_2022_0193_comments.json",
+             "cms_2022_0193_comments.metadata.json"):
+    session.file.put(f"file://{name}", "@cgs_ai_stage",
+                     auto_compress=False, overwrite=True)
+
+# Confirm they landed.
+session.sql("LS @cgs_ai_stage").show()
+```
+
+### Cell 4 (optional) — load into a table for Cortex
+
+If the point is to run Cortex functions (sentiment, summarize) on the comments,
+load the records straight into a table:
+
+```python
+df = session.create_dataframe(
+    [{k: r.get(k) for k in
+      ("id", "agencyId", "postedDate", "title", "comment", "docketId", "attachmentCount")}
+     for r in records]
+)
+df.write.mode("overwrite").save_as_table("CMS_2022_0193_COMMENTS")
+
+# Example Cortex sentiment over the comment bodies:
+session.sql("""
+    SELECT id, title,
+           SNOWFLAKE.CORTEX.SENTIMENT(comment) AS sentiment
+    FROM CMS_2022_0193_COMMENTS
+    WHERE comment <> ''
+    LIMIT 20
+""").show()
+```
+
+---
+
+## Notes
+
+- The API key is read from the secret and never printed, logged, or written to
+  any output/metadata file.
+- `download_type="all"` fetches comment bodies plus attachment metadata. Use
+  `"metadata"` for a fast identifiers-only pull, or `"comments"` for bodies
+  without attachments.
+- To download the staged files to your machine:
+  `GET @cgs_ai_stage/cms_2022_0193_comments.csv file:///tmp/`.
+```
