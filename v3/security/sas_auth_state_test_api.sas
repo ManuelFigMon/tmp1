@@ -1,0 +1,249 @@
+/*=============================================================
+  Stored Process: sas_auth_state_test_api.sas
+  Purpose : Read / write a per-user JSON datastore that backs the
+            data-driven dropdown in sas_auth_state_test.html.
+
+            The store lives at:
+              meta/profiles/<userid>/data/sas_auth_state_test_state.json
+
+            Shape:
+              { "userid":"731o",
+                "items":[ {"id":1,"value":"..."}, ... ],
+                "updated":"02FEB2026:09:15:00" }
+
+  Registration (SAS Management Console):
+    - Output type : Streaming
+    - Result type : Streaming (we emit application/json)
+    - Grant the stored-process identity read/write on profile_root.
+
+  Query parameters:
+    action = read | save           (default: read)
+    userid = <folder-safe userid>  (falls back to &_USERNAME)
+    items  = <URL-encoded JSON array of {id,value}>   (action=save only)
+
+  Examples:
+    .../do?_program=/.../sas_auth_state_test_api&action=read&userid=731o
+    .../do?_program=/.../sas_auth_state_test_api&action=save&userid=731o
+           &items=%5B%7B%22id%22%3A1%2C%22value%22%3A%22Region%3A%20Midwest%22%7D%5D
+
+  SECURITY NOTES (read before production use):
+    - PRODUCTION_MODE (set in CONFIG below) controls this: when =1 the API
+      IGNORES the client-supplied &userid and trusts ONLY &_USERNAME, so a
+      user cannot read/write another user's store. Ship with PRODUCTION_MODE=1.
+      =0 accepts &userid as a convenience for offline testing only.
+    - Validate/escape &items; this demo writes the received JSON text
+      after a light bracket check. Harden before exposing externally.
+=============================================================*/
+
+
+/* ----------------------------------------------------------
+   0.  CONFIG — must match sas_auth_state_test_redirect.sas
+---------------------------------------------------------- */
+%let profile_root = /custom/projects/dmq/temp/v3/meta/profiles;
+%let state_file   = sas_auth_state_test_state.json;
+
+/* PRODUCTION_MODE controls WHOSE datastore this API may touch:
+     1 = trust the authenticated SAS identity (&_USERNAME) ONLY. The client
+         &userid query parameter is ignored, so a user can never read or write
+         another user's store by editing the URL. USE THIS IN PRODUCTION.
+     0 = allow the &userid query parameter (falling back to &_USERNAME). This
+         is a convenience for offline/local testing where no real SAS session
+         identity is present. DO NOT ship with this value. */
+%let PRODUCTION_MODE = 1;
+
+
+/* ----------------------------------------------------------
+   1.  Resolve action + a filesystem-safe userid.
+       When PRODUCTION_MODE=1 the userid is derived strictly from &_USERNAME
+       and the client-supplied &userid is ignored.
+---------------------------------------------------------- */
+%global action userid items backup_path;
+%if %superq(action) = %then %let action = read;
+
+%if &PRODUCTION_MODE. = 1 %then %do;
+  /* Trust ONLY the SAS-authenticated identity. */
+  %let src_user = &_USERNAME.;
+%end;
+%else %do;
+  /* Testing convenience: accept &userid, fall back to &_USERNAME. */
+  %let src_user = %superq(userid);
+  %if %length(&src_user.) = 0 %then %let src_user = &_USERNAME.;
+%end;
+
+data _null_;
+  u = symget('src_user');
+  if index(u,'\')>0 then u = substr(u, index(u,'\')+1);
+  if index(u,'/')>0 then u = substr(u, index(u,'/')+1);
+  if index(u,'@')>0 then u = substr(u, 1, index(u,'@')-1);
+  u = prxchange('s/[^A-Za-z0-9_\-]//', -1, strip(u));
+  call symputx('safe_user', u, 'G');
+run;
+
+%let udir   = &profile_root./&safe_user.;
+%let ddir   = &udir./data;
+%let fpath  = &ddir./&state_file.;
+%let bk_dir = &ddir./backups;   /* timestamped pre-overwrite backups land here */
+
+
+/* ----------------------------------------------------------
+   2.  Make sure the target folder exists (idempotent).
+---------------------------------------------------------- */
+data _null_;
+  base="&profile_root."; uid="&safe_user."; udir="&udir."; ddir="&ddir.";
+  if not fileexist(udir) then rc1 = dcreate(uid, base);
+  if not fileexist(ddir) then rc2 = dcreate('data', udir);
+run;
+
+
+/* Close ODS so we control the raw stream. */
+ods listing close;
+ods html    close;
+
+
+/* ==========================================================
+   ACTION: SAVE
+   ========================================================== */
+%macro do_save;
+  /* Pull the raw items JSON the client sent (already URL-decoded
+     by SAS into the &items macro var). Guard against empties. */
+  %let items_in = %superq(items);
+  %if %length(&items_in.) = 0 %then %let items_in = [];
+
+  /* Light validation: must start with '[' and end with ']'. */
+  data _null_;
+    s = strip(symget('items_in'));
+    ok = (first(s)='[') and (substr(s,length(s),1)=']');
+    call symputx('items_ok', ok, 'G');
+  run;
+
+  %if &items_ok. = 0 %then %do;
+    data _null_;
+      file _webout;
+      put 'Content-type: application/json; charset=utf-8';
+      put 'Cache-Control: no-store';
+      put '';
+      put '{"status":"error","message":"items must be a JSON array"}';
+    run;
+    %return;
+  %end;
+
+  /* Back up the CURRENT file (if any) before overwriting it. Each backup is
+     a timestamped copy under <userid>/data/backups/, so every Save is
+     recoverable. Format: sas_auth_state_test_state_YYYYMMDD_HHMMSS.json */
+  data _null_;
+    length ts $20 bkpath $512;
+    src = "&fpath.";
+    if fileexist(src) then do;
+      if not fileexist("&bk_dir.") then rc0 = dcreate('backups', "&ddir.");
+      ts     = translate(compress(put(datetime(), B8601DT15.)), '_', 'T'); /* 20260202_091500 */
+      bkpath = catx('/', "&bk_dir.", 'sas_auth_state_test_state_' || strip(ts) || '.json');
+      rc1 = filename('bksrc', src);
+      rc2 = filename('bkdst', bkpath);
+      rc3 = fcopy('bksrc', 'bkdst');
+      rc4 = filename('bksrc'); rc5 = filename('bkdst');
+      if rc3 = 0 then do;
+        put "NOTE: [sas_auth_state_test_api] backup created: " bkpath;
+        call symputx('backup_path', bkpath, 'G');
+      end;
+      else do;
+        put "WARNING: [sas_auth_state_test_api] backup FAILED (rc=" rc3 ") for " bkpath;
+        call symputx('backup_path', '', 'G');
+      end;
+    end;
+    else call symputx('backup_path', '', 'G');  /* nothing to back up (first save) */
+  run;
+
+  /* Write the store file: { userid, items, updated }. We stream the
+     received array text verbatim between the wrapper braces. */
+  %let now_ts = %sysfunc(datetime(), datetime20.);
+  data _null_;
+    length line $32767;
+    file "&fpath." lrecl=32767;
+    put '{';
+    put "  ""userid"": ""&safe_user."",";
+    line = '  "items": ' || strip(symget('items_in')) || ',';
+    put line;
+    put "  ""updated"": ""&now_ts.""";
+    put '}';
+  run;
+
+  /* Echo success + the saved payload back to the caller. */
+  data _null_;
+    length line $32767 bkline $600 bk $512;
+    file _webout lrecl=32767;
+    put 'Content-type: application/json; charset=utf-8';
+    put 'Cache-Control: no-store';
+    put '';
+    put '{';
+    put "  ""status"": ""saved"",";
+    put "  ""userid"": ""&safe_user."",";
+    line = '  "items": ' || strip(symget('items_in')) || ',';
+    put line;
+    put "  ""updated"": ""&now_ts."",";
+    bk = symget('backup_path');
+    if missing(bk) then bkline = '  "backup": null';
+    else bkline = '  "backup": "' || strip(bk) || '"';
+    put bkline;
+    put '}';
+  run;
+%mend do_save;
+
+
+/* ==========================================================
+   ACTION: READ
+   ========================================================== */
+%macro do_read;
+  %if %sysfunc(fileexist(&fpath.)) %then %do;
+    /* Stream the existing file straight back. */
+    data _null_;
+      length line $32767;
+      infile "&fpath." lrecl=32767 pad end=eof;
+      file _webout lrecl=32767;
+      if _n_=1 then do;
+        put 'Content-type: application/json; charset=utf-8';
+        put 'Cache-Control: no-store';
+        put '';
+      end;
+      input;
+      line = _infile_;
+      put line;
+    run;
+  %end;
+  %else %do;
+    /* No store yet — return an empty, well-formed document. */
+    data _null_;
+      file _webout;
+      put 'Content-type: application/json; charset=utf-8';
+      put 'Cache-Control: no-store';
+      put '';
+      put '{';
+      put "  ""userid"": ""&safe_user."",";
+      put '  "items": [],';
+      put '  "updated": null';
+      put '}';
+    run;
+  %end;
+%mend do_read;
+
+
+/* ----------------------------------------------------------
+   3.  Dispatch.
+---------------------------------------------------------- */
+%macro dispatch;
+  %if %lowcase(&action.) = save %then %do; %do_save; %end;
+  %else %do; %do_read; %end;
+%mend dispatch;
+%dispatch;
+
+
+/* ----------------------------------------------------------
+   4.  Audit log.
+---------------------------------------------------------- */
+%put NOTE: ============================================================;
+%put NOTE: [sas_auth_state_test_api] action   : &action.;
+%put NOTE: [sas_auth_state_test_api] prod_mode: &PRODUCTION_MODE.;
+%put NOTE: [sas_auth_state_test_api] _USERNAME: &_USERNAME.;
+%put NOTE: [sas_auth_state_test_api] safe_user: &safe_user.;
+%put NOTE: [sas_auth_state_test_api] file     : &fpath.;
+%put NOTE: [sas_auth_state_test_api] backup   : &backup_path.;
+%put NOTE: ============================================================;
