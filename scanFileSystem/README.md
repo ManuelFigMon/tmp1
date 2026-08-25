@@ -90,6 +90,50 @@ automatically; click ▶ to run all 42, or the ▶ beside a single test. Or
 **Just want a terminal?** ``Ctrl+` `` and run any command from the
 [Examples](#examples) section directly.
 
+## Running it from SAS
+
+The optional SYSTASK wrapper is split in two:
+
+| File | Contents |
+|---|---|
+| `sas/Run_scanFileSystem_v1.sas` | The `%scanFileSystem()` **macro definition** only, plus the `PYTHON_EXE` / `SCRIPT_PATH` configuration. |
+| `sas/Examples_scanFileSystem_v1.sas` | **Example calls** that `%INCLUDE` the macro. All commented out by default. |
+
+```sas
+%include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_v1.sas";
+```
+
+**List parameters** (`input_folder_root`, `folder_exclusion_list`,
+`extract_keyword`, `file_exclusion_list`) take **semicolon-delimited** strings
+wrapped in `%str()`. Python splits them back into a list — verified to produce
+byte-identical output to passing the values as separate CLI arguments.
+
+This command line:
+
+```bat
+python scanFileSystem.py ^
+  --input-folder-root "\\A70admed.com\r1\...\UNIT\HHH\Old_Programs\Old_logs" "\\A70admed.com\r1\...\UNIT\DME\Logs" ^
+  --output-file-path "C:\code\python\cgs_ai\tests\scanFileSystem\scan.xlsx" ^
+  --metric-profile sas_log ^
+  --extract-keyword "real time" "cpu time"
+```
+
+becomes this macro call (Example A in the examples file) — two roots joined by
+`;`, two keywords joined by `;`:
+
+```sas
+%scanFileSystem(
+  input_folder_root=%str(\\A70admed.com\r1\...\UNIT\HHH\Old_Programs\Old_logs;\\A70admed.com\r1\...\UNIT\DME\Logs),
+  output_file_path=C:\code\python\cgs_ai\tests\scanFileSystem\scan.xlsx,
+  metric_profile=sas_log,
+  extract_keyword=%str(real time;cpu time)
+);
+```
+
+The macro mirrors the Python validation (a missing `input_folder_root` aborts
+before launching), and `%abort`s with the Python exit code when the scan fails
+(`2` = config error, `3` = I/O error), so a failed scan fails the SAS job.
+
 ## Design — three separable concerns
 
 This is **not** a SAS-only tool. The architecture keeps three concerns apart so
@@ -312,7 +356,9 @@ scanFileSystem/
 ├── README.md
 ├── CLAUDE.md
 ├── .vscode/                        # launch/tasks/settings for VS Code
-├── sas/Run_scanFileSystem_v1.sas   # optional SYSTASK wrapper
+├── sas/
+│   ├── Run_scanFileSystem_v1.sas      # macro definition (SYSTASK wrapper)
+│   └── Examples_scanFileSystem_v1.sas # example calls (%INCLUDEs the macro)
 └── tests/
     ├── make_fixtures.py             # generates the synthetic tree
     ├── fixtures/logs/...            # .log/.txt/.sas + Old/ Test/ Older/ + dated + malformed
