@@ -41,7 +41,7 @@
     %let xcmd_ok = %eval(%sysfunc(getoption(xcmd)) = XCMD);
 
     %if not &xcmd_ok %then
-        %put NOTE: XCMD is disabled at this site; using filesystem probes only.;
+        %put %str(NOTE: XCMD is disabled at this site; using filesystem probes only.);
 
     /*-----------------------------------------------------------------
       PROBE 1 - the project virtual environment (preferred).
@@ -122,7 +122,7 @@
     %if %superq(&out) = %then %do;
         %put ERROR: Could not locate python.exe.;
         %put ERROR- Run this in a terminal where Python works, and paste the result:;
-        %put ERROR-     python -c "import sys; print(sys.executable)";
+        %put %str(ERROR-     python -c "import sys; print(sys.executable)");
         %return;
     %end;
 

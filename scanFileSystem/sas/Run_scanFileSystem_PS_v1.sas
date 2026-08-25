@@ -81,10 +81,14 @@
 
     %let _cmd = &_cmd -InputFolderRoot &_dq.%superq(input_folder_root)&_dq;
 
-    %if %superq(output_file_path) ne %then
+    %if %superq(output_file_path) ne %then %do;
         %let _cmd = &_cmd -OutputFilePath &_dq.%superq(output_file_path)&_dq;
-    %else
-        %put NOTE: OUTPUT_FILE_PATH not supplied; the script will auto-name scan_YYYYMMDD_HHMMSS.csv.;
+    %end;
+    %else %do;
+        /* %str() masks the semicolon in the message text. Without it the ';'
+           ends the %put and the rest becomes stray open code (ERROR 180-322). */
+        %put %str(NOTE: OUTPUT_FILE_PATH not supplied; the script will auto-name scan_YYYYMMDD_HHMMSS.csv.);
+    %end;
 
     %if %superq(file_extensions) ne %then
         %let _cmd = &_cmd -FileExtensions &_dq.%superq(file_extensions)&_dq;
@@ -93,10 +97,12 @@
        every argument arrives as a string, so the script takes
        -IncludeSubdirectories as text and parses 1/0/true/false/yes/no
        itself. Verified against the script in -File mode. */
-    %if &include_subdirectories = 0 %then
+    %if &include_subdirectories = 0 %then %do;
         %let _cmd = &_cmd -IncludeSubdirectories 0;
-    %else
+    %end;
+    %else %do;
         %let _cmd = &_cmd -IncludeSubdirectories 1;
+    %end;
 
     %if %superq(folder_exclusion_list) ne %then
         %let _cmd = &_cmd -FolderExclusionList &_dq.%superq(folder_exclusion_list)&_dq;

@@ -71,10 +71,14 @@
     %let _cmd = &_dq.&PYTHON_EXE.&_dq &_dq.&SCRIPT_PATH.&_dq;
     %let _cmd = &_cmd --input-folder-root &_dq.%superq(input_folder_root)&_dq;
 
-    %if %superq(output_file_path) ne %then
+    %if %superq(output_file_path) ne %then %do;
         %let _cmd = &_cmd --output-file-path &_dq.%superq(output_file_path)&_dq;
-    %else
-        %put NOTE: OUTPUT_FILE_PATH not supplied; Python will auto-name scan_YYYYMMDD_HHMMSS.csv.;
+    %end;
+    %else %do;
+        /* %str() masks the semicolon in the message text. Without it the ';'
+           ends the %put and the rest becomes stray open code (ERROR 180-322). */
+        %put %str(NOTE: OUTPUT_FILE_PATH not supplied; Python will auto-name scan_YYYYMMDD_HHMMSS.csv.);
+    %end;
 
     %if %superq(file_extensions) ne %then
         %let _cmd = &_cmd --file-extensions &_dq.%superq(file_extensions)&_dq;
