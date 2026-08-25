@@ -1,6 +1,6 @@
 # scanFileSystem
 
-**v1.3.2** · A general-purpose file-system scanner and text-extraction utility.
+**v1.3.3** · A general-purpose file-system scanner and text-extraction utility.
 
 `scanFileSystem.py` crawls one or more directory roots, captures filesystem
 metadata for every matching file, extracts keywords with surrounding context,
@@ -12,6 +12,12 @@ generalizes to any keyword sweep or log-metric use case.
 Built to run unattended under Windows Task Scheduler (or from a SAS `SYSTASK`
 wrapper). It never prompts, logs everything to stderr, and exits non-zero on
 failure so the scheduler can detect it.
+
+**Dependencies are minimal by design (v1.3.3):** CSV output uses only the
+Python standard library. XLSX output needs `openpyxl` (or `xlsxwriter`); with
+neither installed the scan falls back to CSV with a warning. **pandas and numpy
+are not used** — they were the source of an `Unable to import required
+dependency numpy` failure and bought nothing over the stdlib `csv` module.
 
 ---
 
@@ -159,6 +165,7 @@ Metric columns are zero/blank when `metric_profile="none"`.
 | `.xlsx` | Sheet `Files`; sheet `StepDetail` added when a profile is active. |
 | `.csv` | Main file (Files); companion `<stem>_StepDetail.csv` when a profile is active (an INFO line names it). |
 | `.xlsx`, no Excel engine | Falls back to CSV for the active grain(s) with a warning. |
+| Engine order | `openpyxl` → `xlsxwriter` → CSV fallback. Written directly, no pandas. |
 | `metric_profile="none"` | No StepDetail sheet or companion at all. |
 
 `program_name` = filename minus extension, minus any prefix/token in
@@ -284,6 +291,17 @@ kw_accdb_context =
 | `0` | Success |
 | `2` | Config error — missing `input_folder_root`, unknown profile/date_field, bad or inverted date |
 | `3` | I/O error — no reachable root, unwritable output |
+
+The output path is resolved (and its parent created) **before** crawling, so a
+bad output path fails in seconds rather than after a long network scan.
+
+### Troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| `Unable to import required dependency numpy` | A broken pandas install in an older version. v1.3.3 removed pandas entirely — pull the latest and re-run. |
+| `no Excel engine ... falling back to CSV` | `pip install openpyxl` if you want `.xlsx`; otherwise the CSV output is complete. |
+| `none of the supplied input_folder_root path(s) are reachable` | UNC path typo, or the share isn't mounted for the account running the scan. |
 
 ## Layout
 

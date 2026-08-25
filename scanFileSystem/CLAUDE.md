@@ -18,6 +18,12 @@ Guidance for agents (and humans) changing this code.
    filesystem.
 5. **No secrets, no network.** The scanner reads the local/UNC filesystem only.
    Don't add API calls, telemetry, or credentials.
+6. **Keep the dependency surface tiny (v1.3.3).** CSV output must stay pure
+   standard library; XLSX may use `openpyxl`/`xlsxwriter` only, imported lazily
+   inside the writer. **Do not reintroduce pandas or numpy** — a broken pandas
+   install caused a hard failure in the field, and this code is headed for
+   `cgs_ai`, which must run stdlib-only inside Snowflake. The tests are
+   pandas-free too (stdlib `csv` + `openpyxl` for read-back).
 
 ## Architecture — keep the three layers separate
 

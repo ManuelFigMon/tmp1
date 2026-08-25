@@ -1,9 +1,14 @@
-# scanFileSystem.py runtime + test dependencies (pinned).
-# The scanner itself needs only pandas + one Excel engine; it degrades to CSV
-# when no Excel engine is present.
-pandas==3.0.5
-openpyxl==3.1.5
-xlsxwriter==3.2.9
+# scanFileSystem.py dependencies.
+#
+# CSV output needs NOTHING beyond the Python standard library.
+# XLSX output needs one Excel engine; without either, the scan falls back to
+# CSV with a warning. pandas/numpy are deliberately NOT used -- they were the
+# source of an "Unable to import required dependency numpy" failure and bought
+# nothing over the stdlib csv module.
 
-# Self-checks
+# --- runtime (only needed for .xlsx output) ---
+openpyxl==3.1.5
+# xlsxwriter==3.2.9        # optional alternative Excel engine
+
+# --- tests ---
 pytest==9.1.1

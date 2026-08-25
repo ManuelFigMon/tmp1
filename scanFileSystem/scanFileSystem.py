@@ -11,9 +11,14 @@
                   metrics from log files. The flagship profile extracts SAS
                   per-step "real time" and "cpu time", but the same engine
                   generalizes to any keyword sweep or log-metric use case.
-  Version       : 1.3.2
+  Version       : 1.3.3
   Created       : 2026-08-20
   Last Modified : 2026-08-25
+
+  Dependencies:
+    CSV output requires nothing beyond the Python standard library. XLSX
+    output requires openpyxl (or xlsxwriter); without either, the scan falls
+    back to CSV with a warning. pandas/numpy are NOT used.
 
   Description:
     Runs unattended on a schedule (Windows Task Scheduler) or, optionally,
@@ -83,12 +88,17 @@
              unless specified).
     v1.3.2 - output_file_path is now optional; when omitted the scan writes
              scan_YYYYMMDD_HHMMSS.csv to the current directory.
+    v1.3.3 - Dropped the pandas/numpy dependency: CSV output is now pure
+             standard library and XLSX is written directly via openpyxl (or
+             xlsxwriter). Output path is resolved before crawling so a bad
+             path fails fast. Control characters Excel rejects are stripped.
 =====================================================================
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import os
 import re
@@ -96,7 +106,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 # =====================================================================
 # CONFIG -- edit ONLY this block (or pass the equivalent CLI flags).
@@ -603,12 +613,19 @@ def resolve_output_path(raw: str) -> Path:
     return path
 
 
-def _frame(rows: List[Dict[str, Any]], columns: List[str]):
-    import pandas as pd
-    return pd.DataFrame(rows, columns=columns) if rows else pd.DataFrame(columns=columns)
+#: Control characters Excel refuses inside a cell (openpyxl raises on these).
+_ILLEGAL_XLSX_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
-def _first_available_excel_engine() -> Optional[str]:
+def excel_safe(value: Any) -> Any:
+    """Strip control characters Excel rejects; pass non-strings through."""
+    if isinstance(value, str):
+        return _ILLEGAL_XLSX_CHARS.sub("", value)
+    return value
+
+
+def first_available_excel_engine() -> Optional[str]:
+    """openpyxl -> xlsxwriter -> None (caller falls back to CSV)."""
     for engine in ("openpyxl", "xlsxwriter"):
         try:
             __import__(engine)
@@ -618,6 +635,44 @@ def _first_available_excel_engine() -> Optional[str]:
     return None
 
 
+def _write_csv(rows: List[Dict[str, Any]], columns: List[str], target: Path) -> None:
+    """Write rows as CSV using only the standard library (no index column)."""
+    with open(target, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({column: row.get(column, "") for column in columns})
+
+
+def _write_xlsx(sheets: List[Tuple[str, List[Dict[str, Any]], List[str]]],
+                target: Path, engine: str) -> None:
+    """Write one or more sheets directly via openpyxl or xlsxwriter."""
+    if engine == "openpyxl":
+        from openpyxl import Workbook
+        workbook = Workbook()
+        workbook.remove(workbook.active)            # drop the default sheet
+        for title, rows, columns in sheets:
+            sheet = workbook.create_sheet(title)
+            sheet.append(columns)
+            for row in rows:
+                sheet.append([excel_safe(row.get(column, "")) for column in columns])
+        workbook.save(target)
+        return
+
+    import xlsxwriter
+    workbook = xlsxwriter.Workbook(str(target), {"constant_memory": True})
+    try:
+        for title, rows, columns in sheets:
+            sheet = workbook.add_worksheet(title)
+            for index, column in enumerate(columns):
+                sheet.write(0, index, column)
+            for row_index, row in enumerate(rows, start=1):
+                for index, column in enumerate(columns):
+                    sheet.write(row_index, index, excel_safe(row.get(column, "")))
+    finally:
+        workbook.close()
+
+
 def write_output(
     files_rows: List[Dict[str, Any]],
     step_rows: List[Dict[str, Any]],
@@ -625,37 +680,38 @@ def write_output(
     keywords: Sequence[str],
     profile_active: bool,
 ) -> List[Path]:
-    """Write the Files grain (+ StepDetail when a profile is active)."""
+    """Write the Files grain (+ StepDetail when a profile is active).
+
+    CSV output is pure standard library. XLSX uses openpyxl or xlsxwriter
+    directly -- no pandas/numpy anywhere on the runtime path.
+    """
     columns = FILES_BASE_COLUMNS + keyword_columns(keywords) + FILES_TAIL_COLUMNS
-    files_df = _frame(files_rows, columns)
-    steps_df = _frame(step_rows, STEPDETAIL_COLUMNS)
     written: List[Path] = []
 
     if target.suffix.lower() == ".xlsx":
-        engine = _first_available_excel_engine()
+        engine = first_available_excel_engine()
         if engine is None:
             log_warn("no Excel engine (openpyxl/xlsxwriter) available; falling back to CSV")
             target = target.with_suffix(".csv")
         else:
-            import pandas as pd
-            with pd.ExcelWriter(target, engine=engine) as writer:
-                files_df.to_excel(writer, sheet_name=FILES_SHEET, index=False)
-                if profile_active:
-                    steps_df.to_excel(writer, sheet_name=STEPDETAIL_SHEET, index=False)
-            written.append(target)
-            log_info(f"wrote {len(files_df)} Files row(s) to {target} [{engine}]")
+            sheets = [(FILES_SHEET, files_rows, columns)]
             if profile_active:
-                log_info(f"wrote {len(steps_df)} StepDetail row(s) to sheet '{STEPDETAIL_SHEET}'")
+                sheets.append((STEPDETAIL_SHEET, step_rows, STEPDETAIL_COLUMNS))
+            _write_xlsx(sheets, target, engine)
+            written.append(target)
+            log_info(f"wrote {len(files_rows)} Files row(s) to {target} [{engine}]")
+            if profile_active:
+                log_info(f"wrote {len(step_rows)} StepDetail row(s) to sheet '{STEPDETAIL_SHEET}'")
             return written
 
-    files_df.to_csv(target, index=False)
+    _write_csv(files_rows, columns, target)
     written.append(target)
-    log_info(f"wrote {len(files_df)} Files row(s) to {target}")
+    log_info(f"wrote {len(files_rows)} Files row(s) to {target}")
     if profile_active:
         companion = target.with_name(f"{target.stem}_StepDetail.csv")
-        steps_df.to_csv(companion, index=False)
+        _write_csv(step_rows, STEPDETAIL_COLUMNS, companion)
         written.append(companion)
-        log_info(f"wrote {len(steps_df)} StepDetail row(s) to companion {companion}")
+        log_info(f"wrote {len(step_rows)} StepDetail row(s) to companion {companion}")
     return written
 
 
@@ -772,6 +828,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     log_info(f"scanFileSystem {__version__} starting; profile={profile.name}; "
              f"roots={len(settings['roots'])}")
 
+    # Resolve (and create the parent of) the output target BEFORE crawling, so a
+    # bad path fails in seconds instead of after a long network scan.
+    try:
+        if settings["output"] and str(settings["output"]).strip():
+            target = resolve_output_path(settings["output"])
+        else:
+            target = default_output_name()
+            log_info(f"output_file_path not supplied; writing {target}")
+    except OSError as exc:
+        log_error(f"cannot prepare output path: {exc}")
+        return EXIT_IO_ERROR
+
     try:
         files_rows, step_rows, reachable = scan(
             settings["roots"],
@@ -794,11 +862,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_IO_ERROR
 
     try:
-        if settings["output"] and str(settings["output"]).strip():
-            target = resolve_output_path(settings["output"])
-        else:
-            target = default_output_name()
-            log_info(f"output_file_path not supplied; writing {target}")
         written = write_output(files_rows, step_rows, target,
                                settings["keywords"], profile.active)
     except (OSError, ImportError) as exc:
