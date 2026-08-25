@@ -1,0 +1,4 @@
+1    proc print data=sashelp.class; run;
+NOTE: PROCEDURE PRINT used (Total process time):
+      real time           0.40 seconds
+      cpu time            0.20 seconds

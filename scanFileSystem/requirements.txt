@@ -1,0 +1,9 @@
+# scanFileSystem.py runtime + test dependencies (pinned).
+# The scanner itself needs only pandas + one Excel engine; it degrades to CSV
+# when no Excel engine is present.
+pandas==3.0.5
+openpyxl==3.1.5
+xlsxwriter==3.2.9
+
+# Self-checks
+pytest==9.1.1
