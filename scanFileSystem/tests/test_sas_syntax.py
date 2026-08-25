@@ -95,3 +95,35 @@ def test_examples_file_has_no_live_macro_calls():
         if re.match(r"^\s*%scanFileSystem(PS)?\s*\(", line):
             live.append(f"{number}: {stripped}")
     assert not live, "uncommented example call(s):\n  " + "\n  ".join(live)
+
+
+def test_wrappers_do_not_pass_macro_quoted_text_to_systask():
+    """v1.3.4: the command must NOT be assembled with %str(%") into a macro
+    variable handed to SYSTASK -- macro-quoting characters could reach the
+    SAS shell module and crash it (sasxshel access violation). The command
+    is built in a DATA step via symget() and run from a .bat instead."""
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        raw = (SAS_DIR / name).read_text()
+        # Strip /* */ comments -- the header legitimately *describes* the old
+        # approach; only live code matters here.
+        code = re.sub(r"/\*.*?\*/", "", raw, flags=re.DOTALL)
+        assert "%str(%\")" not in code, f"{name}: macro-quoted quote reintroduced"
+        assert 'systask command """&_bat"""' in code, \
+            f"{name}: must launch the generated .bat"
+        assert "symget(" in code, f"{name}: command must be built via symget()"
+
+
+def test_wrappers_refuse_to_run_under_noxcmd():
+    """SYSTASK needs XCMD; without it the wrapper must abort cleanly rather
+    than letting the shell module fail."""
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        text = (SAS_DIR / name).read_text()
+        assert "getoption(xcmd)" in text, f"{name}: missing XCMD guard"
+
+
+def test_wrappers_expose_a_debug_switch():
+    """debug=1 must build the command without executing it, so a crashing
+    site can still inspect exactly what would have run."""
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        text = (SAS_DIR / name).read_text()
+        assert "debug" in text.lower() and "%return" in text, f"{name}: no debug path"
