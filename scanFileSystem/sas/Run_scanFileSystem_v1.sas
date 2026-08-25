@@ -2,7 +2,7 @@
   Program Name : Run_scanFileSystem_v1.sas
   Author       : Manuel Figallo
   Purpose      : Optional SYSTASK wrapper that launches scanFileSystem.py.
-  Version      : 1.3.1
+  Version      : 1.3.2
 
   NOTE: The authoritative parameter documentation lives in the header of
         scanFileSystem.py. This wrapper only mirrors those parameters onto a
@@ -22,7 +22,8 @@
 
 %macro scanFileSystem(
     input_folder_root      =,          /* REQUIRED; semicolon-delimited   */
-    output_file_path       =,          /* REQUIRED; .csv or .xlsx         */
+    output_file_path       =,          /* optional; .csv or .xlsx; omit    */
+                                       /* to auto-name scan_<stamp>.csv    */
     file_extensions        =,          /* semicolon-delimited             */
     include_subdirectories = 1,        /* 1 = recurse, 0 = top level only */
     folder_exclusion_list  =,          /* semicolon-delimited; default none */
@@ -38,13 +39,11 @@
 
     /*-----------------------------------------------------------------
       Mirror the Python required-parameter validation BEFORE launching.
+      OUTPUT_FILE_PATH is optional (v1.3.2): when omitted, Python writes
+      scan_YYYYMMDD_HHMMSS.csv into the working directory.
     -----------------------------------------------------------------*/
     %if %superq(input_folder_root) = %then %do;
         %put ERROR: Required parameter INPUT_FOLDER_ROOT is missing or empty.;
-        %abort cancel 8;
-    %end;
-    %if %superq(output_file_path) = %then %do;
-        %put ERROR: Required parameter OUTPUT_FILE_PATH is missing or empty.;
         %abort cancel 8;
     %end;
 
@@ -53,7 +52,11 @@
     -----------------------------------------------------------------*/
     %let _cmd = "&PYTHON_EXE" "&SCRIPT_PATH";
     %let _cmd = &_cmd --input-folder-root "%superq(input_folder_root)";
-    %let _cmd = &_cmd --output-file-path "%superq(output_file_path)";
+
+    %if %superq(output_file_path) ne %then
+        %let _cmd = &_cmd --output-file-path "%superq(output_file_path)";
+    %else
+        %put NOTE: OUTPUT_FILE_PATH not supplied; Python will auto-name scan_YYYYMMDD_HHMMSS.csv.;
 
     %if %superq(file_extensions) ne %then
         %let _cmd = &_cmd --file-extensions "%superq(file_extensions)";
@@ -137,5 +140,12 @@
 %scanFileSystem(
   input_folder_root=%str(\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT),
   output_file_path=C:\Logs\scan.csv
+);
+*;
+
+/* E. No output path -- auto-names scan_YYYYMMDD_HHMMSS.csv in the cwd */
+%*
+%scanFileSystem(
+  input_folder_root=%str(\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT)
 );
 *;

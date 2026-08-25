@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -73,8 +74,9 @@ def test_directory_output_autonames_timestamped_csv(tmp_path, logs_root):
     outdir = tmp_path / "dropbox"
     outdir.mkdir()
     assert run(["--input-folder-root", logs_root, "--output-file-path", outdir]) == 0
-    generated = list(outdir.glob("scanFileSystem_*.csv"))
+    generated = list(outdir.glob("scan_*.csv"))
     assert len(generated) == 1, "a directory target must auto-name one timestamped CSV"
+    assert re.fullmatch(r"scan_\d{8}_\d{6}\.csv", generated[0].name), generated[0].name
 
 
 # --------------------------------------------------------------------- #
@@ -182,11 +184,31 @@ def test_empty_input_folder_root_errors(tmp_path, monkeypatch, capsys):
     assert "input_folder_root" in capsys.readouterr().err
 
 
-def test_empty_output_file_path_errors(logs_root, monkeypatch, capsys):
+def test_omitted_output_file_path_autonames_scan_csv(tmp_path, logs_root, monkeypatch):
+    """v1.3.2: output_file_path is optional -> scan_YYYYMMDD_HHMMSS.csv in cwd."""
     monkeypatch.setattr(sfs, "output_file_path", None)
-    rc = run(["--input-folder-root", logs_root])
-    assert rc != 0
-    assert "output_file_path" in capsys.readouterr().err
+    monkeypatch.chdir(tmp_path)
+    assert run(["--input-folder-root", logs_root]) == 0
+    generated = list(tmp_path.glob("scan_*.csv"))
+    assert len(generated) == 1, "exactly one auto-named CSV must be produced"
+    name = generated[0].name
+    assert re.fullmatch(r"scan_\d{8}_\d{6}\.csv", name), name
+    assert not files_of(generated[0]).empty
+
+
+def test_omitted_output_with_profile_still_writes_companion(tmp_path, logs_root, monkeypatch):
+    monkeypatch.setattr(sfs, "output_file_path", None)
+    monkeypatch.chdir(tmp_path)
+    assert run(["--input-folder-root", logs_root, "--metric-profile", "sas_log"]) == 0
+    main_csv = list(tmp_path.glob("scan_*.csv"))
+    companion = [p for p in main_csv if p.name.endswith("_StepDetail.csv")]
+    assert len(companion) == 1, "the auto-named run must still emit StepDetail"
+
+
+def test_default_output_name_shape():
+    generated = sfs.default_output_name()
+    assert re.fullmatch(r"scan_\d{8}_\d{6}\.csv", generated.name), generated.name
+    assert sfs.default_output_name(Path("/tmp/x")).parent == Path("/tmp/x")
 
 
 def test_unknown_metric_profile_errors(tmp_path, logs_root, capsys):

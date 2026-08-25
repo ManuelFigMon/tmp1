@@ -1,6 +1,6 @@
 # scanFileSystem
 
-**v1.3.1** · A general-purpose file-system scanner and text-extraction utility.
+**v1.3.2** · A general-purpose file-system scanner and text-extraction utility.
 
 `scanFileSystem.py` crawls one or more directory roots, captures filesystem
 metadata for every matching file, extracts keywords with surrounding context,
@@ -26,7 +26,7 @@ pip install -r requirements.txt
 Run the self-checks:
 
 ```bash
-pytest -q                        # 40 passed
+pytest -q                        # 42 passed
 ```
 
 ## Design — three separable concerns
@@ -59,7 +59,7 @@ Every parameter has a module-level default in the **CONFIG** block at the top of
 | Name (Python) | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `input_folder_root` | list[str] | **Yes** | UNC default root | One or more root paths. Accepts a single string or an array. Empty → ERROR + non-zero exit. |
-| `output_file_path` | str | **Yes** | *(none)* | `.csv` → CSV (no index); `.xlsx` → Excel, by extension. A directory auto-names `scanFileSystem_YYYYMMDD_HHMMSS.csv` inside it. Empty → ERROR + non-zero exit. |
+| `output_file_path` | str | No | *(auto)* | `.csv` → CSV (no index); `.xlsx` → Excel, by extension. A directory auto-names `scan_YYYYMMDD_HHMMSS.csv` inside it. **Omit entirely and the scan writes `scan_YYYYMMDD_HHMMSS.csv` to the current directory.** |
 | `file_extensions` | list[str] | No | `["log","txt","sas"]` | Extensions to include. Case-insensitive, with or without a leading dot. |
 | `include_subdirectories` | bool | No | `True` | `True` recurses; `False` is top level only. |
 | `folder_exclusion_list` | list[str] | No | `[]` | Folder names/tokens to exclude, e.g. `["Old","Test"]`. **Empty default — nothing is excluded unless set.** Matches an ancestor directory segment (case-insensitive) or a full-path prefix. |
@@ -71,10 +71,15 @@ Every parameter has a module-level default in the **CONFIG** block at the top of
 | `metric_profile` | str | No | `"none"` | `"none"` = off (no StepDetail at all); `"sas_log"` = per-step real/cpu time. |
 
 **Validation.** Before any crawling, the scanner checks that `input_folder_root`
-and `output_file_path` are present and non-empty, and that `metric_profile` /
-`date_field` are known values. Any failure logs a specific `ERROR` naming the
-parameter and exits non-zero — it never prompts. (A directory given as
-`output_file_path` is valid; only empty/None is an error.)
+is present and non-empty, and that `metric_profile` / `date_field` are known
+values. Any failure logs a specific `ERROR` naming the parameter and exits
+non-zero — it never prompts.
+
+**Output naming (v1.3.2).** `output_file_path` is optional. Omit it and the scan
+writes `scan_YYYYMMDD_HHMMSS.csv` to the current directory; pass a directory and
+the same name is generated inside it; pass a `.csv`/`.xlsx` path to control it
+exactly. With a metric profile active the companion follows the same stem, e.g.
+`scan_20260825_014044_StepDetail.csv`.
 
 ## Output
 
@@ -159,6 +164,21 @@ Uses the default root; `folder_exclusion_list` is empty so nothing is excluded;
 python scanFileSystem.py --output-file-path "C:\Logs\scan.csv"
 ```
 
+### E. No output path at all — auto-named CSV
+
+Writes `scan_YYYYMMDD_HHMMSS.csv` (plus a matching `_StepDetail.csv` when a
+profile is active) into the current directory.
+
+```bat
+python scanFileSystem.py --input-folder-root "\\srv\logs"
+```
+
+```
+INFO  output_file_path not supplied; writing scan_20260825_014044.csv
+INFO  wrote 13 Files row(s) to scan_20260825_014044.csv
+INFO  wrote 9 StepDetail row(s) to companion scan_20260825_014044_StepDetail.csv
+```
+
 > The UNC roots above are not reachable from a dev box. To try the examples,
 > point `--input-folder-root` at `tests/fixtures/logs`.
 
@@ -207,7 +227,7 @@ kw_accdb_context =
 | Code | Meaning |
 |---|---|
 | `0` | Success |
-| `2` | Config error — missing required parameter, unknown profile/date_field, bad or inverted date |
+| `2` | Config error — missing `input_folder_root`, unknown profile/date_field, bad or inverted date |
 | `3` | I/O error — no reachable root, unwritable output |
 
 ## Layout
@@ -222,5 +242,5 @@ scanFileSystem/
 └── tests/
     ├── make_fixtures.py             # generates the synthetic tree
     ├── fixtures/logs/...            # .log/.txt/.sas + Old/ Test/ Older/ + dated + malformed
-    └── test_scanFileSystem.py       # 40 self-checks
+    └── test_scanFileSystem.py       # 42 self-checks
 ```

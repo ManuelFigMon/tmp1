@@ -11,15 +11,15 @@
                   metrics from log files. The flagship profile extracts SAS
                   per-step "real time" and "cpu time", but the same engine
                   generalizes to any keyword sweep or log-metric use case.
-  Version       : 1.3.1
+  Version       : 1.3.2
   Created       : 2026-08-20
-  Last Modified : 2026-08-20
+  Last Modified : 2026-08-25
 
   Description:
     Runs unattended on a schedule (Windows Task Scheduler) or, optionally,
     from a SAS SYSTASK wrapper. Fully parameterized at the top of the file
-    with CLI overrides; never prompts interactively. Validates required
-    parameters at startup and exits non-zero with a clear ERROR if any are
+    with CLI overrides; never prompts interactively. Validates the required
+    parameter at startup and exits non-zero with a clear ERROR if it is
     missing. Emits a Files grain (one row per file), plus a StepDetail grain
     (second .xlsx sheet or companion "_StepDetail.csv") when a metric
     profile is active.
@@ -37,9 +37,10 @@
   Input Parameters (required first):
     input_folder_root      (REQUIRED, list[str]) - root path(s) to search;
                              single string or array. Empty/None -> ERROR + exit.
-    output_file_path       (REQUIRED, str) - .csv or .xlsx by extension;
+    output_file_path       (optional, str) - .csv or .xlsx by extension;
                              a directory auto-names a timestamped .csv inside
-                             it. Empty/None -> ERROR + exit.
+                             it. When omitted entirely, writes
+                             scan_YYYYMMDD_HHMMSS.csv to the current directory.
     file_extensions        (list[str], default ["log","txt","sas"]) -
                              extensions to include; case-insensitive.
     include_subdirectories (bool, default True) - recurse when True.
@@ -80,6 +81,8 @@
              date-range filter.
     v1.3.1 - folder_exclusion_list now defaults to empty (nothing excluded
              unless specified).
+    v1.3.2 - output_file_path is now optional; when omitted the scan writes
+             scan_YYYYMMDD_HHMMSS.csv to the current directory.
 =====================================================================
 """
 
@@ -93,7 +96,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-__version__ = "1.3.1"
+__version__ = "1.3.2"
 
 # =====================================================================
 # CONFIG -- edit ONLY this block (or pass the equivalent CLI flags).
@@ -102,7 +105,7 @@ __version__ = "1.3.1"
 input_folder_root: List[str] = [
     r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT"
 ]
-output_file_path: Optional[str] = None
+output_file_path: Optional[str] = None   # optional; None -> scan_YYYYMMDD_HHMMSS.csv
 file_extensions: List[str] = ["log", "txt", "sas"]
 include_subdirectories: bool = True
 folder_exclusion_list: List[str] = []          # v1.3.1: empty = nothing excluded
@@ -119,6 +122,12 @@ metric_profile: str = "none"                    # none | sas_log
 
 CONTEXT_LINES = 3                               # +/- N lines around a keyword hit
 VALID_DATE_FIELDS = ("created", "modified", "accessed")
+
+#: Auto-generated output name when output_file_path is not supplied:
+#: "scan" + _YYYYMMDD_HHMMSS + ".csv", written to the current directory.
+DEFAULT_OUTPUT_PREFIX = "scan"
+DEFAULT_OUTPUT_SUFFIX = ".csv"
+TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 
 EXIT_OK = 0
 EXIT_CONFIG_ERROR = 2                           # bad/missing params, bad dates
@@ -566,6 +575,17 @@ def scan(
 # Output
 # =====================================================================
 
+def default_output_name(directory: Optional[Path] = None) -> Path:
+    """Build the auto-generated output name: scan_YYYYMMDD_HHMMSS.csv.
+
+    Used when output_file_path is not supplied (writes to the current
+    directory) and when the caller supplies a directory instead of a file.
+    """
+    stamp = dt.datetime.now().strftime(TIMESTAMP_FORMAT)
+    filename = f"{DEFAULT_OUTPUT_PREFIX}_{stamp}{DEFAULT_OUTPUT_SUFFIX}"
+    return (directory / filename) if directory is not None else Path(filename)
+
+
 def resolve_output_path(raw: str) -> Path:
     """Resolve the output target; a directory auto-names a timestamped .csv."""
     path = Path(str(raw).strip())
@@ -575,9 +595,8 @@ def resolve_output_path(raw: str) -> Path:
         or path.suffix.lower() not in (".csv", ".xlsx")
     )
     if looks_like_dir:
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
         path.mkdir(parents=True, exist_ok=True)
-        generated = path / f"scanFileSystem_{stamp}.csv"
+        generated = default_output_name(path)
         log_info(f"output path is a directory; writing {generated}")
         return generated
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -665,7 +684,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="One or more root paths to scan (REQUIRED).")
     parser.add_argument("--output-file-path", default=None,
                         help=".csv or .xlsx by extension; a directory auto-names a "
-                             "timestamped .csv inside it (REQUIRED).")
+                             "timestamped .csv inside it. Optional -- omit to write "
+                             "scan_YYYYMMDD_HHMMSS.csv in the current directory.")
     parser.add_argument("--file-extensions", nargs="+", default=None,
                         help='Extensions to include (default: log txt sas).')
     parser.add_argument("--include-subdirectories", action=argparse.BooleanOptionalAction,
@@ -718,9 +738,8 @@ def validate(settings: Dict[str, Any]) -> Optional[str]:
     if not settings["roots"]:
         return ("required parameter 'input_folder_root' is missing or empty; "
                 "pass --input-folder-root or set it in the CONFIG block")
-    if not settings["output"] or not str(settings["output"]).strip():
-        return ("required parameter 'output_file_path' is missing or empty; "
-                "pass --output-file-path or set it in the CONFIG block")
+    # output_file_path is OPTIONAL (v1.3.2): when absent, main() auto-names
+    # scan_YYYYMMDD_HHMMSS.csv in the current directory.
     if settings["metric_profile"] not in METRIC_PROFILES:
         return (f"unknown metric_profile {settings['metric_profile']!r}; "
                 f"expected one of: {', '.join(METRIC_PROFILES)}")
@@ -775,7 +794,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_IO_ERROR
 
     try:
-        target = resolve_output_path(settings["output"])
+        if settings["output"] and str(settings["output"]).strip():
+            target = resolve_output_path(settings["output"])
+        else:
+            target = default_output_name()
+            log_info(f"output_file_path not supplied; writing {target}")
         written = write_output(files_rows, step_rows, target,
                                settings["keywords"], profile.active)
     except (OSError, ImportError) as exc:
