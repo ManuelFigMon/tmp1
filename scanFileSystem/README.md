@@ -98,6 +98,7 @@ The optional SYSTASK wrapper is split in two:
 |---|---|
 | `sas/Run_scanFileSystem_v1.sas` | The `%scanFileSystem()` **macro definition** only, plus the `PYTHON_EXE` / `SCRIPT_PATH` configuration. |
 | `sas/Examples_scanFileSystem_v1.sas` | **Example calls** that `%INCLUDE` the macro. All commented out by default. |
+| `sas/Find_python_exe.sas` | `%findPython()` — locates `python.exe` and sets `PYTHON_EXE` for you. |
 
 ```sas
 %include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_v1.sas";
@@ -133,6 +134,34 @@ becomes this macro call (Example A in the examples file) — two roots joined by
 The macro mirrors the Python validation (a missing `input_folder_root` aborts
 before launching), and `%abort`s with the Python exit code when the scan fails
 (`2` = config error, `3` = I/O error), so a failed scan fails the SAS job.
+
+### Finding `python.exe`
+
+`PYTHON_EXE` must point at the interpreter that has the dependencies — if you
+installed into `.venv`, that is `<project>\.venv\Scripts\python.exe`, **not**
+the system Python that `where python` finds first. The system one lacks
+`openpyxl`, so `.xlsx` output would quietly fall back to CSV.
+
+The authoritative answer comes from Python itself, run in the terminal where
+your command already works:
+
+```bat
+python -c "import sys; print(sys.executable)"
+```
+
+From SAS, `%findPython()` probes the venv first, then `PATH`, then the `py`
+launcher, then standard install locations, and validates that `openpyxl`
+imports:
+
+```sas
+%include "C:\code\python\cgs_ai\scanFileSystem\sas\Find_python_exe.sas";
+%findPython(project_root=C:\code\python\cgs_ai\scanFileSystem);
+%put &=PYTHON_EXE;
+```
+
+`FILENAME PIPE` needs the `XCMD` option; check with
+`%put %sysfunc(getoption(xcmd));`. Under `NOXCMD` the pipe probes are skipped
+and only the filesystem probes run.
 
 ## Design — three separable concerns
 
