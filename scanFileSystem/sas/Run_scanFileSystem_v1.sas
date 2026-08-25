@@ -117,6 +117,10 @@
       parameters are just data.
     -----------------------------------------------------------------*/
     data _null_;
+        /* NOTE: `piece` is padded to its full declared length on assignment,
+           so ALWAYS concatenate strip(piece) -- concatenating the padded
+           value overflows `cmd` and silently truncates the trailing quote,
+           producing an unterminated command line. */
         length cmd $32767 piece $32767;
         file "&_bat" lrecl=32767;
 
@@ -127,34 +131,34 @@
               || strip(symget('input_folder_root')) || '"';
 
         piece = strip(symget('output_file_path'));
-        if piece ne '' then cmd = strip(cmd) || ' --output-file-path "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --output-file-path "' || strip(piece) || '"';
 
         piece = strip(symget('file_extensions'));
-        if piece ne '' then cmd = strip(cmd) || ' --file-extensions "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --file-extensions "' || strip(piece) || '"';
 
         if strip(symget('include_subdirectories')) = '0'
             then cmd = strip(cmd) || ' --no-include-subdirectories';
 
         piece = strip(symget('folder_exclusion_list'));
-        if piece ne '' then cmd = strip(cmd) || ' --folder-exclusion-list "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --folder-exclusion-list "' || strip(piece) || '"';
 
         piece = strip(symget('file_exclusion_list'));
-        if piece ne '' then cmd = strip(cmd) || ' --file-exclusion-list "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --file-exclusion-list "' || strip(piece) || '"';
 
         piece = strip(symget('extract_keyword'));
-        if piece ne '' then cmd = strip(cmd) || ' --extract-keyword "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --extract-keyword "' || strip(piece) || '"';
 
         piece = strip(symget('date_from'));
-        if piece ne '' then cmd = strip(cmd) || ' --date-from "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --date-from "' || strip(piece) || '"';
 
         piece = strip(symget('date_to'));
-        if piece ne '' then cmd = strip(cmd) || ' --date-to "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --date-to "' || strip(piece) || '"';
 
         piece = strip(symget('date_field'));
-        if piece ne '' then cmd = strip(cmd) || ' --date-field "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --date-field "' || strip(piece) || '"';
 
         piece = strip(symget('metric_profile'));
-        if piece ne '' then cmd = strip(cmd) || ' --metric-profile "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' --metric-profile "' || strip(piece) || '"';
 
         /* Redirect the interpreter's stdout AND stderr to a log file. All
            progress and error messages go to stderr, so without this the SAS

@@ -165,3 +165,41 @@ def test_sas_wrappers_capture_interpreter_output():
         code = re.sub(r"/\*.*?\*/", "", (SAS_DIR / name).read_text(), flags=re.DOTALL)
         assert "2>&1" in code, f"{name}: interpreter output not redirected"
         assert "infile \"&_log\"" in code, f"{name}: captured log not echoed"
+
+
+@pytest.mark.parametrize("path", SAS_FILES, ids=lambda p: p.name)
+def test_char_vars_are_stripped_before_concatenation(path):
+    """A SAS character variable is PADDED to its declared length on assignment.
+
+    Concatenating the padded value into another fixed-length variable
+    overflows it and SILENTLY TRUNCATES the tail -- which cost us an
+    unterminated command line (the closing quote was cut off, so PowerShell
+    got a malformed command and the output redirect never happened).
+    Always concatenate strip(var).
+    """
+    code = re.sub(r"/\*.*?\*/", "", path.read_text(), flags=re.DOTALL)
+    offenders = [
+        f"{path.name}:{n}: {line.strip()}"
+        for n, line in enumerate(code.splitlines(), 1)
+        if "|| piece ||" in line or "|| cmd ||" in line
+    ]
+    assert not offenders, (
+        "concatenate strip(...) -- a padded value truncates the result:\n  "
+        + "\n  ".join(offenders))
+
+
+@pytest.mark.parametrize("path", SAS_FILES, ids=lambda p: p.name)
+def test_bat_writer_emits_only_the_command(path):
+    """Any PUT while `file "&_bat"` is in effect lands INSIDE the .bat.
+
+    A stray informational PUT added a third line that cmd.exe would try to
+    execute. Only '@echo off' and the command itself may be written.
+    """
+    code = re.sub(r"/\*.*?\*/", "", path.read_text(), flags=re.DOTALL)
+    block = re.search(r'file "&_bat".*?^    run;', code, re.DOTALL | re.MULTILINE)
+    if not block:
+        pytest.skip("no .bat writer in this file")
+    puts = re.findall(r"^\s*put\s+(.*?);", block.group(0), re.MULTILINE)
+    for statement in puts:
+        assert ("'@echo off'" in statement or "cmd " in statement), \
+            f"{path.name}: stray PUT writes into the .bat: put {statement};"

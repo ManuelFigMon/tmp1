@@ -121,6 +121,10 @@
       parameters are just data.
     -----------------------------------------------------------------*/
     data _null_;
+        /* NOTE: `piece` is padded to its full declared length on assignment,
+           so ALWAYS concatenate strip(piece) -- concatenating the padded
+           value overflows `cmd` and silently truncates the trailing quote,
+           producing an unterminated command line. */
         length cmd $32767 piece $32767;
         file "&_bat" lrecl=32767;
 
@@ -132,10 +136,10 @@
               || strip(symget('input_folder_root')) || '"';
 
         piece = strip(symget('output_file_path'));
-        if piece ne '' then cmd = strip(cmd) || ' -OutputFilePath "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -OutputFilePath "' || strip(piece) || '"';
 
         piece = strip(symget('file_extensions'));
-        if piece ne '' then cmd = strip(cmd) || ' -FileExtensions "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -FileExtensions "' || strip(piece) || '"';
 
         /* Pass 1/0: with "powershell.exe -File" every argument arrives as a
            string, so the script parses 1/0/true/false/yes/no itself. */
@@ -144,25 +148,25 @@
             else cmd = strip(cmd) || ' -IncludeSubdirectories 1';
 
         piece = strip(symget('folder_exclusion_list'));
-        if piece ne '' then cmd = strip(cmd) || ' -FolderExclusionList "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -FolderExclusionList "' || strip(piece) || '"';
 
         piece = strip(symget('file_exclusion_list'));
-        if piece ne '' then cmd = strip(cmd) || ' -FileExclusionList "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -FileExclusionList "' || strip(piece) || '"';
 
         piece = strip(symget('extract_keyword'));
-        if piece ne '' then cmd = strip(cmd) || ' -ExtractKeyword "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -ExtractKeyword "' || strip(piece) || '"';
 
         piece = strip(symget('date_from'));
-        if piece ne '' then cmd = strip(cmd) || ' -DateFrom "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -DateFrom "' || strip(piece) || '"';
 
         piece = strip(symget('date_to'));
-        if piece ne '' then cmd = strip(cmd) || ' -DateTo "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -DateTo "' || strip(piece) || '"';
 
         piece = strip(symget('date_field'));
-        if piece ne '' then cmd = strip(cmd) || ' -DateField "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -DateField "' || strip(piece) || '"';
 
         piece = strip(symget('metric_profile'));
-        if piece ne '' then cmd = strip(cmd) || ' -MetricProfile "' || piece || '"';
+        if piece ne '' then cmd = strip(cmd) || ' -MetricProfile "' || strip(piece) || '"';
 
         /* Redirect the interpreter's stdout AND stderr to a log file. All
            progress and error messages go to stderr, so without this the SAS
@@ -172,9 +176,6 @@
         put '@echo off';
         len = length(strip(cmd));
         put cmd $varying32767. len;
-
-        /* Echo to the log so you can copy/paste and run it by hand. */
-        put "NOTE: command written to &_bat" ;
     run;
 
     /*-----------------------------------------------------------------
