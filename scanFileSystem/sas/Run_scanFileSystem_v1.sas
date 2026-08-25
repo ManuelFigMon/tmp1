@@ -64,7 +64,7 @@
     debug                  = 0         /* 1 = build the .bat, do NOT run it*/
 );
 
-    %local _bat _rc;
+    %local _bat _log _rc;
 
     /*-----------------------------------------------------------------
       Refuse to run when shell access is disabled, instead of letting
@@ -86,6 +86,17 @@
         %abort cancel 8;
     %end;
 
+    /*-----------------------------------------------------------------
+      Fail early with a clear message if the script is missing. Otherwise
+      the interpreter exits 1 and SAS shows only a bare return code.
+    -----------------------------------------------------------------*/
+    %if not %sysfunc(fileexist(%superq(SCRIPT_PATH))) %then %do;
+        %put ERROR: Script not found: %superq(SCRIPT_PATH);
+        %put ERROR- Fix the SCRIPT_PATH macro variable at the top of this file.;
+        %abort cancel 8;
+    %end;
+
+    %let _log = %sysfunc(pathname(work))\scanpy_output.log;
     %let _bat = %sysfunc(pathname(work))\scanFileSystemPy.bat;
 
     /*-----------------------------------------------------------------
@@ -137,6 +148,11 @@
         piece = strip(symget('metric_profile'));
         if piece ne '' then cmd = strip(cmd) || ' --metric-profile "' || piece || '"';
 
+        /* Redirect the interpreter's stdout AND stderr to a log file. All
+           progress and error messages go to stderr, so without this the SAS
+           log shows only a bare return code with no explanation. */
+        cmd = strip(cmd) || ' > "' || strip(symget('_log')) || '" 2>&1';
+
         put '@echo off';
         len = length(strip(cmd));
         put cmd $varying32767. len;
@@ -171,12 +187,29 @@
     systask command """&_bat""" taskname=scanpy status=scanrc wait;
     waitfor scanpy;
 
+    /*-----------------------------------------------------------------
+      Echo everything the interpreter printed. This is what turns a bare
+      "return code 1" into an actionable message.
+    -----------------------------------------------------------------*/
+    %put NOTE: ---- scanFileSystem.py output ----;
+    %if %sysfunc(fileexist(&_log)) %then %do;
+        data _null_;
+            infile "&_log" truncover;
+            input line $32767.;
+            put line;
+        run;
+    %end;
+    %else %put NOTE: (no output captured at &_log);
+
     %let _rc = &scanrc;
     %put NOTE: scanFileSystem.py returned &_rc..;
 
     %if &_rc ne 0 %then %do;
         %put ERROR: scanFileSystem.py failed with return code &_rc..;
         %put ERROR- 2 = config error (bad/missing parameter), 3 = I/O error.;
+        %put ERROR- 1 = the interpreter itself failed to run the script;
+        %put ERROR-     (bad path, blocked script, or a parameter it rejected).;
+        %put ERROR-     See the captured output above, and re-run the .bat by hand.;
         %abort cancel &_rc;
     %end;
 

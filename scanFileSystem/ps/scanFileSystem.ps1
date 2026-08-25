@@ -380,14 +380,14 @@ function Read-TextLines {
 
 function Invoke-MetricProfile {
     <#  Return @{ Steps = @(...); Counters = @{...} } for the given profile. #>
-    param([hashtable] $Profile, [string[]] $Lines)
+    param([hashtable] $ProfileDef, [string[]] $Lines)
 
     $steps = New-Object System.Collections.Generic.List[object]
     $counters = [ordered]@{ error_count = 0; warning_count = 0 }
-    if (-not $Profile.Active) { return @{ Steps = $steps.ToArray(); Counters = $counters } }
+    if (-not $ProfileDef.Active) { return @{ Steps = $steps.ToArray(); Counters = $counters } }
 
     for ($i = 0; $i -lt $Lines.Count; $i++) {
-        $header = [regex]::Match($Lines[$i], $Profile.StepPattern,
+        $header = [regex]::Match($Lines[$i], $ProfileDef.StepPattern,
                   [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         if (-not $header.Success) { continue }
 
@@ -395,12 +395,12 @@ function Invoke-MetricProfile {
             step_index = $steps.Count + 1
             step_label = $header.Groups['label'].Value.Trim()
         }
-        $windowEnd = [Math]::Min($Lines.Count - 1, $i + $Profile.Lookahead)
-        foreach ($metric in $Profile.Metrics.Keys) {
+        $windowEnd = [Math]::Min($Lines.Count - 1, $i + $ProfileDef.Lookahead)
+        foreach ($metric in $ProfileDef.Metrics.Keys) {
             $step[$metric] = $null
             if ($i + 1 -gt $windowEnd) { continue }
             foreach ($candidate in $Lines[($i + 1)..$windowEnd]) {
-                $hit = [regex]::Match($candidate, $Profile.Metrics[$metric],
+                $hit = [regex]::Match($candidate, $ProfileDef.Metrics[$metric],
                        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
                 if ($hit.Success) {
                     $step[$metric] = Get-DurationSeconds $hit.Groups['value'].Value
@@ -412,8 +412,8 @@ function Invoke-MetricProfile {
     }
 
     foreach ($line in $Lines) {
-        foreach ($counter in $Profile.Counters.Keys) {
-            if ([regex]::IsMatch($line, $Profile.Counters[$counter],
+        foreach ($counter in $ProfileDef.Counters.Keys) {
+            if ([regex]::IsMatch($line, $ProfileDef.Counters[$counter],
                 [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
                 $counters[$counter] = $counters[$counter] + 1
             }
@@ -486,7 +486,7 @@ function Invoke-Scan {
         [string[]] $FolderExclusions,
         [string[]] $FileExclusions,
         [string[]] $Keywords,
-        [hashtable] $Profile,
+        [hashtable] $ProfileDef,
         [object]   $DateLow,
         [object]   $DateHigh,
         [string]   $WhichDate
@@ -568,11 +568,11 @@ function Invoke-Scan {
                 $extracted = Get-KeywordExtract -Lines $lines -Keywords $Keywords
                 foreach ($key in $extracted.Keys) { $row[$key] = $extracted[$key] }
             }
-            $parsed = Invoke-MetricProfile -Profile $Profile -Lines $lines
+            $parsed = Invoke-MetricProfile -ProfileDef $ProfileDef -Lines $lines
             $row['error_count']   = $parsed.Counters['error_count']
             $row['warning_count'] = $parsed.Counters['warning_count']
 
-            if ($Profile.Active) {
+            if ($ProfileDef.Active) {
                 $aggregate = Get-StepAggregate -Steps $parsed.Steps
                 foreach ($key in $aggregate.Keys) { $row[$key] = $aggregate[$key] }
                 foreach ($step in $parsed.Steps) {
@@ -777,7 +777,7 @@ function Invoke-Main {
         return $script:ExitConfigError
     }
 
-    $profile = $script:MetricProfiles[$MetricProfile]
+    $profileDef = $script:MetricProfiles[$MetricProfile]
     Write-InfoLog ("scanFileSystem {0} (PowerShell) starting; profile={1}; roots={2}" -f `
                    $script:Version, $MetricProfile, $roots.Count)
 
@@ -797,7 +797,7 @@ function Invoke-Main {
     try {
         $scan = Invoke-Scan -Roots $roots -Extensions $extensions `
                     -Recurse $recurse -FolderExclusions $folderExclusions `
-                    -FileExclusions $fileExclusions -Keywords $keywords -Profile $profile `
+                    -FileExclusions $fileExclusions -Keywords $keywords -ProfileDef $profileDef `
                     -DateLow $dateLow -DateHigh $dateHigh -WhichDate $DateField
     } catch {
         Write-ErrorLog "fatal I/O error while scanning: $($_.Exception.Message)"
@@ -811,7 +811,7 @@ function Invoke-Main {
 
     try {
         $written = Write-ScanOutput -FilesRows $scan.Files -StepRows $scan.Steps `
-                       -Target $target -Keywords $keywords -ProfileActive $profile.Active
+                       -Target $target -Keywords $keywords -ProfileActive $profileDef.Active
     } catch {
         Write-ErrorLog "cannot write output: $($_.Exception.Message)"
         return $script:ExitIoError
@@ -822,4 +822,15 @@ function Invoke-Main {
     return $script:ExitOk
 }
 
-exit (Invoke-Main)
+# A trailing exception would exit 1, which is indistinguishable from
+# "powershell.exe could not start the script at all". Catch everything and
+# report a controlled I/O error code with a real message instead.
+try {
+    exit (Invoke-Main)
+} catch {
+    Write-ErrorLog ("unhandled error: {0}" -f $_.Exception.Message)
+    if ($_.ScriptStackTrace) {
+        Write-ErrorLog ("at: {0}" -f ($_.ScriptStackTrace -split "`n")[0])
+    }
+    exit $script:ExitIoError
+}
