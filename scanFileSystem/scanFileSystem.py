@@ -11,7 +11,7 @@
                   metrics from log files. The flagship profile extracts SAS
                   per-step "real time" and "cpu time", but the same engine
                   generalizes to any keyword sweep or log-metric use case.
-  Version       : 1.3.3
+  Version       : 1.3.5
   Created       : 2026-08-20
   Last Modified : 2026-08-25
 
@@ -92,6 +92,8 @@
              standard library and XLSX is written directly via openpyxl (or
              xlsxwriter). Output path is resolved before crawling so a bad
              path fails fast. Control characters Excel rejects are stripped.
+    v1.3.5 - Version aligned across the Python, PowerShell and SAS
+             components so a stale copy is obvious in the logs.
 =====================================================================
 """
 
@@ -106,7 +108,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-__version__ = "1.3.3"
+__version__ = "1.3.5"
 
 # =====================================================================
 # CONFIG -- edit ONLY this block (or pass the equivalent CLI flags).

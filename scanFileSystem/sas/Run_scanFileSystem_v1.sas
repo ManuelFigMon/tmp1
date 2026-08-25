@@ -2,7 +2,7 @@
   Program Name : Run_scanFileSystem_v1.sas
   Author       : Manuel Figallo
   Purpose      : Optional SYSTASK wrapper that launches scanFileSystem.py.
-  Version      : 1.3.4
+  Version      : 1.3.5
 
   This file contains the MACRO DEFINITION ONLY. Example calls live in
   sas/Examples_scanFileSystem_v1.sas, which %INCLUDEs this file.
@@ -65,6 +65,14 @@
 );
 
     %local _bat _log _rc;
+
+    /*-----------------------------------------------------------------
+      Announce the wrapper version FIRST. If you do not see this line in
+      the log, you are running an OLD copy of this file -- refresh it
+      before debugging anything else. The Python script logs its own
+      version too, so the two can be compared.
+    -----------------------------------------------------------------*/
+    %put NOTE: %nrstr(%scanFileSystem) wrapper version 1.3.5;
 
     /*-----------------------------------------------------------------
       Refuse to run when shell access is disabled, instead of letting

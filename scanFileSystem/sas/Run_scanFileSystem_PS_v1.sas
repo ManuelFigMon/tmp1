@@ -3,7 +3,7 @@
   Author       : Manuel Figallo
   Purpose      : SYSTASK wrapper that launches the PowerShell port,
                  ps\scanFileSystem.ps1.
-  Version      : 1.3.4
+  Version      : 1.3.5
 
   This file contains the MACRO DEFINITION ONLY. Example calls live in
   sas/Examples_scanFileSystem_v1.sas.
@@ -69,6 +69,14 @@
 );
 
     %local _bat _log _rc;
+
+    /*-----------------------------------------------------------------
+      Announce the wrapper version FIRST. If you do not see this line in
+      the log, you are running an OLD copy of this file -- refresh it
+      before debugging anything else. The PowerShell script logs its own
+      version too, so the two can be compared.
+    -----------------------------------------------------------------*/
+    %put NOTE: %nrstr(%scanFileSystemPS) wrapper version 1.3.5;
 
     /*-----------------------------------------------------------------
       Refuse to run when shell access is disabled, instead of letting

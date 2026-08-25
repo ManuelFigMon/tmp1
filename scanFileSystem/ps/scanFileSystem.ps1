@@ -11,7 +11,7 @@
                   metrics from log files. The flagship profile extracts SAS
                   per-step "real time" and "cpu time", but the same engine
                   generalizes to any keyword sweep or log-metric use case.
-  Version       : 1.3.3
+  Version       : 1.3.5
   Created       : 2026-08-25
   Last Modified : 2026-08-25
 
@@ -71,6 +71,10 @@
         -MetricProfile sas_log -ExtractKeyword "real time","cpu time"
 
   Change Log:
+    v1.3.5 - $Profile parameter renamed ($PROFILE is an automatic variable);
+             top-level try/catch so an unhandled error reports exit 3 with a
+             message instead of a bare exit 1; version aligned across
+             components so a stale copy is obvious in the logs.
     v1.3.3 - Initial PowerShell port, feature-matched to scanFileSystem.py
              v1.3.3 (optional output path, empty folder exclusions by
              default, opt-in metric profiles, no third-party CSV deps).
@@ -105,7 +109,7 @@ $ErrorActionPreference = 'Stop'
 # Constants (mirror scanFileSystem.py)
 # =====================================================================
 
-$script:Version           = '1.3.3'
+$script:Version           = '1.3.5'
 $script:ContextLines      = 3
 $script:ValidDateFields   = @('created', 'modified', 'accessed')
 $script:DefaultOutPrefix  = 'scan'

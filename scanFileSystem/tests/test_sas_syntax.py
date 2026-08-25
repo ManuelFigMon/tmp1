@@ -127,3 +127,41 @@ def test_wrappers_expose_a_debug_switch():
     for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
         text = (SAS_DIR / name).read_text()
         assert "debug" in text.lower() and "%return" in text, f"{name}: no debug path"
+
+
+def test_all_components_declare_the_same_version():
+    """Python, PowerShell and both SAS wrappers must agree on one version.
+
+    Staleness has been the single most expensive failure mode here: an old
+    copy of one file against a new copy of another produces errors that look
+    like code bugs. One shared version number makes it visible in the logs.
+    """
+    root = SAS_DIR.parent
+    found = {}
+
+    py = (root / "scanFileSystem.py").read_text()
+    found["scanFileSystem.py"] = re.search(r'__version__ = "([\d.]+)"', py).group(1)
+
+    ps = (root / "ps" / "scanFileSystem.ps1").read_text()
+    found["scanFileSystem.ps1"] = re.search(r"\$script:Version\s*=\s*'([\d.]+)'", ps).group(1)
+
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        text = (SAS_DIR / name).read_text()
+        found[name] = re.search(r"Version\s*:\s*([\d.]+)", text).group(1)
+
+    assert len(set(found.values())) == 1, f"version drift: {found}"
+
+
+def test_sas_wrappers_announce_their_version():
+    """The banner is how a stale wrapper is spotted in a SAS log."""
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        text = (SAS_DIR / name).read_text()
+        assert "wrapper version" in text, f"{name}: no version banner"
+
+
+def test_sas_wrappers_capture_interpreter_output():
+    """Without this the SAS log shows a bare return code and no message."""
+    for name in ("Run_scanFileSystem_v1.sas", "Run_scanFileSystem_PS_v1.sas"):
+        code = re.sub(r"/\*.*?\*/", "", (SAS_DIR / name).read_text(), flags=re.DOTALL)
+        assert "2>&1" in code, f"{name}: interpreter output not redirected"
+        assert "infile \"&_log\"" in code, f"{name}: captured log not echoed"
