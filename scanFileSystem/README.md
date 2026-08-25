@@ -29,6 +29,61 @@ Run the self-checks:
 pytest -q                        # 42 passed
 ```
 
+## Running it in VS Code
+
+Open the **`scanFileSystem` folder itself** as the workspace (not the repo
+root) — the bundled `.vscode/` configs use `${workspaceFolder}` paths.
+
+**One-time setup**
+
+1. Install the Microsoft **Python** extension.
+2. Create the venv and install deps (VS Code terminal, ``Ctrl+` ``):
+   ```bash
+   python -m venv .venv
+   .venv\Scripts\activate            # Linux/macOS: source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. `Ctrl+Shift+P` → **Python: Select Interpreter** → pick `./.venv`.
+
+**Run it** — `F5`, or the Run and Debug panel (`Ctrl+Shift+D`), then pick:
+
+| Configuration | What it does |
+|---|---|
+| `scan: fixtures -> xlsx (sas_log)` | Safe first run against the bundled fixtures → `out/scan.xlsx` |
+| `scan: fixtures -> auto-named CSV` | Omits `--output-file-path` → `out/scan_YYYYMMDD_HHMMSS.csv` |
+| `scan: .accdb/.mdb keyword sweep` | Pure keyword run, no metric profile |
+| `scan: prompt for root + output` | Prompts for root/output/profile — use this for real UNC roots |
+| `Python: current file` | Debugs the focused file |
+
+Set breakpoints in the gutter and `F5` stops on them. Log lines go to stderr in
+the integrated terminal.
+
+> The prompting in `scan: prompt for root + output` is **VS Code's**, not the
+> scanner's — `scanFileSystem.py` never prompts, so it stays safe to run
+> unattended under Task Scheduler.
+
+**Edit the arguments.** To change flags permanently, edit the `args` array in
+`.vscode/launch.json`. Each flag and its value are separate strings:
+
+```jsonc
+"args": [
+  "--input-folder-root", "\\\\A70admed.com\\r1\\CGS\\...\\HHH", "\\\\A70admed.com\\r1\\CGS\\...\\DME",
+  "--output-file-path", "C:\\Logs\\scan.xlsx",
+  "--metric-profile", "sas_log"
+]
+```
+
+Backslashes must be doubled inside JSON, so a UNC root `\\server\share`
+is written `"\\\\server\\share"`.
+
+**Tests** — the Test Explorer (beaker icon) discovers the pytest suite
+automatically; click ▶ to run all 42, or the ▶ beside a single test. Or
+`Ctrl+Shift+P` → **Tasks: Run Task** → `run tests` / `install deps` /
+`rebuild fixtures`.
+
+**Just want a terminal?** ``Ctrl+` `` and run any command from the
+[Examples](#examples) section directly.
+
 ## Design — three separable concerns
 
 This is **not** a SAS-only tool. The architecture keeps three concerns apart so
@@ -238,6 +293,7 @@ scanFileSystem/
 ├── requirements.txt
 ├── README.md
 ├── CLAUDE.md
+├── .vscode/                        # launch/tasks/settings for VS Code
 ├── sas/Run_scanFileSystem_v1.sas   # optional SYSTASK wrapper
 └── tests/
     ├── make_fixtures.py             # generates the synthetic tree
