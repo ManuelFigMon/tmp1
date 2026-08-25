@@ -218,7 +218,14 @@
             put line;
         run;
     %end;
-    %else %put NOTE: (no output captured at &_log);
+    %else %do;
+        %put WARNING: No output was captured at &_log..;
+        %put WARNING- That means cmd.exe could not even create the log file,;
+        %put WARNING- so PowerShell was probably never started. Usual causes:;
+        %put WARNING-   * the interpreter is not on PATH (check POWERSHELL_EXE/PYTHON_EXE);
+        %put WARNING-   * the WORK path is not writable;
+        %put WARNING- Run the .bat shown above by hand in a cmd window.;
+    %end;
 
     %let _rc = &scanpsrc;
     %put NOTE: scanFileSystem.ps1 returned &_rc..;
