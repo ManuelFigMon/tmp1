@@ -27,6 +27,9 @@
 ---------------------------------------------------------------------*/
 %include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_v1.sas";
 
+/* PowerShell engine (same parameter list, launches ps\scanFileSystem.ps1) */
+%*include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_PS_v1.sas";
+
 /*---------------------------------------------------------------------
   2. Optional: override the interpreter / script location for this run.
 ---------------------------------------------------------------------*/
@@ -131,5 +134,47 @@
   folder_exclusion_list=%str(Old;Test),
   include_subdirectories=0,
   metric_profile=sas_log
+);
+*;
+
+
+/*=====================================================================
+  POWERSHELL ENGINE - %scanFileSystemPS()
+  ---------------------------------------------------------------------
+  Identical parameter list to %scanFileSystem(); only the macro name
+  changes, so you can swap engines without touching the arguments.
+  Requires: %include of sas\Run_scanFileSystem_PS_v1.sas (above).
+
+  NOTE .xlsx output from the PowerShell engine needs the ImportExcel
+       module (Install-Module ImportExcel -Scope CurrentUser). Without it
+       the scan falls back to .csv with a WARNING -- the same way the
+       Python engine falls back when openpyxl is missing.
+=====================================================================*/
+
+/* PS-A. The HHH Old_logs + DME Logs scan, PowerShell engine */
+%*
+%scanFileSystemPS(
+  input_folder_root=%str(\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT\HHH\Old_Programs\Old_logs;\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT\DME\Logs),
+  output_file_path=C:\code\python\cgs_ai\tests\scanFileSystem\scan_ps.csv,
+  metric_profile=sas_log,
+  extract_keyword=%str(real time;cpu time)
+);
+*;
+
+/* PS-B. Exclude Old/ and Test/, top level only */
+%*
+%scanFileSystemPS(
+  input_folder_root=%str(\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT),
+  output_file_path=C:\Logs\filtered_ps.csv,
+  folder_exclusion_list=%str(Old;Test),
+  include_subdirectories=0,
+  metric_profile=sas_log
+);
+*;
+
+/* PS-C. No output path: auto-names scan_YYYYMMDD_HHMMSS.csv */
+%*
+%scanFileSystemPS(
+  input_folder_root=%str(\\A70admed.com\r1\CGS\APPS\SAS\UNIT\SAS_G\SAS\Manuel\data\logs\UNIT\DME\Logs)
 );
 *;

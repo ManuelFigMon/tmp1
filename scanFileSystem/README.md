@@ -32,7 +32,7 @@ pip install -r requirements.txt
 Run the self-checks:
 
 ```bash
-pytest -q                        # 42 passed
+pytest -q                        # 60 passed (46 + 14 parity)
 ```
 
 ## Running it in VS Code
@@ -99,6 +99,7 @@ The optional SYSTASK wrapper is split in two:
 | `sas/Run_scanFileSystem_v1.sas` | The `%scanFileSystem()` **macro definition** only, plus the `PYTHON_EXE` / `SCRIPT_PATH` configuration. |
 | `sas/Examples_scanFileSystem_v1.sas` | **Example calls** that `%INCLUDE` the macro. All commented out by default. |
 | `sas/Find_python_exe.sas` | `%findPython()` — locates `python.exe` and sets `PYTHON_EXE` for you. |
+| `sas/Run_scanFileSystem_PS_v1.sas` | `%scanFileSystemPS()` — same parameters, launches the **PowerShell** port instead. |
 
 ```sas
 %include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_v1.sas";
@@ -162,6 +163,59 @@ imports:
 `FILENAME PIPE` needs the `XCMD` option; check with
 `%put %sysfunc(getoption(xcmd));`. Under `NOXCMD` the pipe probes are skipped
 and only the filesystem probes run.
+
+## PowerShell port
+
+`ps/scanFileSystem.ps1` is a feature-matched port of `scanFileSystem.py` — same
+parameters, same output columns, same row order, same exit codes (`0`/`2`/`3`).
+Use it where Python isn't installed but PowerShell is (i.e. any Windows box).
+
+```powershell
+.\ps\scanFileSystem.ps1 -InputFolderRoot "\\srv\logs\HHH","\\srv\logs\DME" `
+    -OutputFilePath "C:\Logs\scan.csv" -MetricProfile sas_log `
+    -ExtractKeyword "real time","cpu time"
+```
+
+**Verified parity.** `tests/test_parity_powershell.py` runs both engines over the
+same fixtures and asserts the Files grain, StepDetail grain, column order, row
+order, exclusions, date filter, and exit codes all match. It skips
+automatically when no PowerShell interpreter is on `PATH`.
+
+**Dependencies:** CSV needs nothing (Windows PowerShell 5.1 is enough). `.xlsx`
+needs the ImportExcel module (`Install-Module ImportExcel -Scope CurrentUser`);
+without it the scan falls back to CSV with a warning — the same contract as the
+Python port without `openpyxl`.
+
+### Two deliberate differences from the Python port
+
+| | Why |
+|---|---|
+| `-IncludeSubdirectories` takes `true`/`false`/`1`/`0`/`yes`/`no` as a **string**, not `[bool]` | `powershell.exe -File` passes every argument as a string, so a `[bool]` parameter **cannot be set at all** (`Cannot convert value "System.String" to type "System.Boolean"`). The script parses it itself. |
+| `full_path` / `directory` are always absolute | `Get-ChildItem` returns full paths; Python echoes the root as you passed it. Identical when you pass absolute/UNC roots, which is the normal case. |
+
+No parameter is declared `Mandatory` — a mandatory parameter would make
+PowerShell **prompt**, hanging an unattended Task Scheduler or SYSTASK run.
+Missing values are validated manually and exit `2`.
+
+### Calling it from SAS
+
+`%scanFileSystemPS()` takes the **identical parameter list** as
+`%scanFileSystem()`, so switching engines means changing only the macro name:
+
+```sas
+%include "C:\code\python\cgs_ai\scanFileSystem\sas\Run_scanFileSystem_PS_v1.sas";
+
+%scanFileSystemPS(
+  input_folder_root=%str(\\A70admed.com\r1\...\UNIT\HHH\Old_Programs\Old_logs;\\A70admed.com\r1\...\UNIT\DME\Logs),
+  output_file_path=C:\code\python\cgs_ai\tests\scanFileSystem\scan_ps.csv,
+  metric_profile=sas_log,
+  extract_keyword=%str(real time;cpu time)
+);
+```
+
+It launches `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+-File ...` and `%abort`s with the script's exit code. Examples PS-A through PS-C
+are in `sas/Examples_scanFileSystem_v1.sas`.
 
 ## Design — three separable concerns
 
@@ -385,11 +439,13 @@ scanFileSystem/
 ├── README.md
 ├── CLAUDE.md
 ├── .vscode/                        # launch/tasks/settings for VS Code
+├── ps/scanFileSystem.ps1           # PowerShell port (parity-tested)
 ├── sas/
 │   ├── Run_scanFileSystem_v1.sas      # macro definition (SYSTASK wrapper)
 │   └── Examples_scanFileSystem_v1.sas # example calls (%INCLUDEs the macro)
 └── tests/
     ├── make_fixtures.py             # generates the synthetic tree
     ├── fixtures/logs/...            # .log/.txt/.sas + Old/ Test/ Older/ + dated + malformed
-    └── test_scanFileSystem.py       # 42 self-checks
+    ├── test_scanFileSystem.py       # 46 self-checks
+    └── test_parity_powershell.py    # 14 Python/PowerShell parity checks
 ```
