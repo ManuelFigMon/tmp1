@@ -1,0 +1,23 @@
+# cgs_ai dependencies -- deliberately minimal.
+#
+# The package imports with NOTHING beyond the Python standard library.
+# Every entry below is OPTIONAL and imported LAZILY by exactly one function,
+# so a missing package produces a clear message from that function instead of
+# breaking the import of cgs_ai.
+
+# --- Excel output: formatCSV, copyExcelSheet2CSV, scanFileSystem(metric_profile)
+openpyxl>=3.1
+
+# --- SAS conversion: convertSAS2Pandas ---------------------------------------
+# pandas>=2.0
+# pyreadstat>=1.2      # optional, faster and keeps column labels
+# pyarrow>=14.0        # only for .parquet output
+
+# --- SQL Server: runSQLServerQuery (Python only; the PowerShell twin needs none)
+# pyodbc>=5.0
+
+# --- richer host metrics: collectSystemMetrics (works without it) ------------
+# psutil>=5.9
+
+# --- tests -------------------------------------------------------------------
+pytest>=8.0

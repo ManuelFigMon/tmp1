@@ -1,7 +1,32 @@
+# --- secrets / environment ---------------------------------------------------
+# .env may contain passwords, tokens or API keys -- never commit it.
+.env
+.env.*
+!.env.example
+
+# --- python ------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
+.venv/
+venv/
 .pytest_cache/
+
+# --- generated output --------------------------------------------------------
+logs/*
+!logs/.gitkeep
+data/output/
 *.zip
+scan_*.csv
+scan_*.xlsx
+
+# --- editors / OS ------------------------------------------------------------
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+.idea/
+.DS_Store
+Thumbs.db
