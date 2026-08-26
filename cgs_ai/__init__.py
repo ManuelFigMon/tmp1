@@ -30,6 +30,7 @@
     personalized_hello       - greeting with input protection
     detailed_hello           - structured greeting dictionary
     scanFileSystem           - keyword scan of directory roots; one row/match
+    get_comments             - retrieve public comments from Regulations.gov
     runSQLServerQuery        - SQL Server query via Integrated Security
     formatCSV                - CSV to styled Excel (SAS ODS look and feel)
     downloadBulkFiles        - bulk HTTP download from a CSV link column
@@ -98,6 +99,10 @@ from src.py.runSQLServerQuery import runSQLServerQuery          # noqa: E402
 from src.py.scanFileSystem import scanFileSystem                # noqa: E402
 from src.py.sendEmail import sendEmail                          # noqa: E402
 from src.py.zipFolder import zipFolder                          # noqa: E402
+# Regulations.gov retrieval (the package's first module, kept importable).
+from src.py import regulations                                  # noqa: E402
+from src.py.regulations import (build_metadata, get_comments,   # noqa: E402
+                                write_metadata, write_output)
 from src.pipelines.filescan_pipeline import runFilescanPipeline  # noqa: E402
 
 # Shared utilities, exposed for callers who need them directly.
@@ -112,6 +117,9 @@ __all__ = [
     "scanFileSystem", "runSQLServerQuery", "formatCSV", "downloadBulkFiles",
     "sendEmail", "convertSAS2Pandas", "copyExcelSheet2CSV",
     "collectSystemMetrics", "zipFolder", "runFilescanPipeline",
+    # regulations.gov
+    "regulations", "get_comments", "write_output", "build_metadata",
+    "write_metadata",
     # utilities
     "getConfig", "loadConfig", "logInfo", "logWarn", "logError",
 ]

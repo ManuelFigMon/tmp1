@@ -8,9 +8,13 @@ import json
 import os
 import xml.etree.ElementTree as ET
 
+import sys
+from pathlib import Path
+
 import pytest
 
-from cgs_ai import regulations as reg
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.py import regulations as reg
 
 SECRET = "SECRET-API-KEY-should-never-appear"
 
