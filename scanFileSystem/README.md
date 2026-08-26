@@ -239,6 +239,117 @@ Adding a profile means adding one entry to `METRIC_PROFILES`:
 )
 ```
 
+## `metric_profile` — what it is and how far it generalizes
+
+`metric_profile` is the only part of the scanner that converts unstructured log
+**text** into structured **numbers**. Everything else produces inventory (paths,
+sizes, dates) or text search hits. It is opt-in: the default `none` skips it
+entirely and the metric columns stay zero.
+
+### The contract
+
+A profile turns one file's lines into two things:
+
+1. **StepDetail rows** — one row per detected "step", each carrying a label and
+   up to two numeric metrics.
+2. **File-level counters** — occurrences of patterns anywhere in the file.
+
+These feed the two output grains: StepDetail directly, and the Files grain via
+`Get-StepAggregate` / `aggregate_steps` (`step_count`, `total_*`,
+`max_step_real_time_sec`, `max_step_label`, `error_count`, `warning_count`).
+
+### The mechanism
+
+```
+for each line:
+    if line matches StepPattern:              -> a step begins; capture (?<label>)
+        for each metric in Metrics:
+            scan the next `Lookahead` lines for that metric's regex
+            take (?<value>) and parse it as a duration
+        emit a StepDetail row
+for each line:
+    for each counter in Counters: if it matches, increment
+```
+
+Two named capture groups are the whole interface: `(?<label>)` on the step
+pattern, `(?<value>)` on each metric. Values run through the duration parser,
+which accepts plain numbers (`0.05`, `1.20 seconds`) and clock forms
+(`1:03.05` = mm:ss, `1:00:30.00` = hh:mm:ss).
+
+### The profile schema
+
+A profile is five fields in a registry (`$script:MetricProfiles` in PowerShell,
+`METRIC_PROFILES` in Python):
+
+| Field | Meaning |
+|---|---|
+| `Active` | `$false` short-circuits everything (that is all `none` is). |
+| `StepPattern` | Regex marking the start of a step; must expose `(?<label>)`. |
+| `Metrics` | Ordered map of *output column* → regex exposing `(?<value>)`. |
+| `Counters` | Ordered map of *counter column* → regex counted line-wise. |
+| `Lookahead` | How many lines after the header to search for each metric. |
+
+### What generalizes — demonstrated, not asserted
+
+Adding a profile requires **no change to the crawl, filter, or output code**.
+As a check, an unrelated ETL format was parsed by adding one registry entry and
+nothing else:
+
+```
+[2026-08-25 06:00:01] BEGIN TASK ExtractClaims
+    elapsed 41.20 s
+    rows    1204553
+```
+```powershell
+'etl_log' = @{
+    Active = $true
+    StepPattern = '^\[.*?\]\s+BEGIN TASK\s+(?<label>.+)$'
+    Metrics  = [ordered]@{ real_time_sec = '^\s*elapsed\s+(?<value>[0-9:.]+)'
+                           cpu_time_sec  = '^\s*rows\s+(?<value>[0-9.]+)' }
+    Counters = [ordered]@{ error_count = '^FATAL'; warning_count = '^WARN' }
+    Lookahead = 4
+}
+```
+Result: 3 StepDetail rows, correct labels, `1:12.40` parsed to `72.4`, and the
+Files-grain rollup (`step_count=3`, `total_real_time_sec=116.65`,
+`max_step_label=LoadWarehouse`, `error_count=1`) all populated.
+
+So the engine handles any format that is **header-then-indented-detail**:
+robocopy summaries, ETL job logs, batch schedulers, build logs, anything where
+a labeled event is followed within a few lines by numbers.
+
+### What does NOT generalize — the honest limits
+
+The example above exposes the ceiling. Note that row counts had to be stored in
+a column named `cpu_time_sec`.
+
+1. **The output schema is fixed and SAS-flavoured.** StepDetail is exactly
+   `step_index, step_label, real_time_sec, cpu_time_sec`. A profile cannot add
+   a third metric or rename a column, so non-time metrics arrive mislabelled.
+   This is the single biggest constraint.
+2. **Exactly two metrics per step.** More than two, and you lose them.
+3. **Counters are fixed to `error_count` / `warning_count`.** No custom
+   counters reach the output.
+4. **All values pass through the duration parser.** Non-numeric metrics
+   (statuses, IDs, filenames) cannot be captured at all.
+5. **One profile per run**, chosen up front — no auto-detection, no mixing.
+6. **Line-oriented and forward-only.** A metric appearing *before* its header,
+   or further away than `Lookahead`, is missed silently.
+7. **Profiles live in the script.** On a shared network deployment, adding one
+   is a code change rather than a config change.
+
+### Assessment
+
+The *parsing engine* is genuinely general; the *data model* is not. Point 1 is
+what would need to change for this to be a real multi-format log parser: let a
+profile declare its own metric columns, and have the writer derive StepDetail's
+columns from the active profile rather than a constant. That is a contained
+change — the parse loop already iterates `Metrics` by name.
+
+Until a second format actually needs it, the current shape is the right
+trade-off: near-zero cost to carry, and it is the feature that turns a file
+inventory into a performance dataset.
+
 ## Parameters
 
 Every parameter has a module-level default in the **CONFIG** block at the top of
