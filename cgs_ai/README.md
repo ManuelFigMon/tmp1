@@ -6,6 +6,10 @@
 > folder structure and why it matters in data engineering, a reference for every
 > function (parameters and claims-processing uses), the `.env` configuration
 > rules, a Visual Studio Code tutorial, and the version-control table.
+>
+> **[`CGS_AI_Presentation.pptx`](CGS_AI_Presentation.pptx)** is the briefing deck
+> ("From GUI to Code using CGS_AI"), regenerated with
+> `python src/utils/build_presentation.py <template.pptx> CGS_AI_Presentation.pptx`.
 
 ## Quickstart
 
