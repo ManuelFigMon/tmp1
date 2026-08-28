@@ -73,7 +73,7 @@ def buildBody() -> str:
     parts.append(para(
         "import runpy\n"
         f'SHARE = r"{SHARE}"\n'
-        'runpy.run_path(SHARE + r"\\src\\py\\lite\\__init__.py", '
+        'runpy.run_path(SHARE + r"\\src\\py\\lite\\cgs_ai\\__init__.py", '
         'run_name="__init__")\n'
         "from cgs_ai import formatCSV, sendEmail",
         style="Code", size=8, mono=True, spaceAfter=50))

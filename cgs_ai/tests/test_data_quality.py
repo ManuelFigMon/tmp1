@@ -186,7 +186,8 @@ def test_unknown_format_type_names_the_valid_ones(tmp_path):
 
 def test_lite_build_offers_the_same_format_types():
     """The lite formatCSV must stay in step with the full one."""
-    namespace = runpy.run_path(str(ROOT / "src" / "py" / "lite" / "__init__.py"),
+    namespace = runpy.run_path(str(ROOT / "src" / "py" / "lite" / "cgs_ai"
+                                    / "__init__.py"),
                                run_name="cgs_ai_lite_test")
     assert namespace["FORMAT_STYLES"] == FORMAT_STYLES
     assert namespace["STRIPED_FORMATS"] == STRIPED_FORMATS

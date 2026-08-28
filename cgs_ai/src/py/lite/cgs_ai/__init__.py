@@ -20,7 +20,7 @@
     straight off a UNC share:
 
         import runpy
-        runpy.run_path(r"\\\\server\\...\\src\\py\\lite\\__init__.py",
+        runpy.run_path(r"\\\\server\\...\\src\\py\\lite\\cgs_ai\\__init__.py",
                        run_name="__init__")
         from cgs_ai import formatCSV, sendEmail
 

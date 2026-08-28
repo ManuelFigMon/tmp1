@@ -10,7 +10,7 @@ SHARE = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai"
 
 # STEP 1. Import the python package
 import runpy
-runpy.run_path(SHARE + r"\src\py\lite\__init__.py", run_name="__init__")
+runpy.run_path(SHARE + r"\src\py\lite\cgs_ai\__init__.py", run_name="__init__")
 from cgs_ai import formatCSV, sendEmail
 
 

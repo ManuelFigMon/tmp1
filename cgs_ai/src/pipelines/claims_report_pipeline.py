@@ -9,7 +9,7 @@
   Last Modified : 2026-08-28
 
   Dependencies:
-    cgs_ai LITE (src/py/lite/__init__.py) -- loaded from the share at run
+    cgs_ai LITE (src/py/lite/cgs_ai/__init__.py) -- loaded from the share at run
     time, no installation. openpyxl is required by formatCSV. pandas is
     used for the DataFrame if present; if it is not, the pipeline falls
     back to the standard-library csv module and still runs.
@@ -45,7 +45,7 @@ __version__ = "1.0beta"
 
 SHARE = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai"
 
-LITE_PACKAGE = rf"{SHARE}\src\py\lite\__init__.py"
+LITE_PACKAGE = rf"{SHARE}\src\py\lite\cgs_ai\__init__.py"
 CLAIMS_CSV = rf"{SHARE}\data\synthetic_medicare_claims.csv"
 OUTPUT_XLSX = rf"{SHARE}\data\synthetic_medicare_claims_corporate.xlsx"
 
@@ -66,7 +66,7 @@ def loadPackage(packagePath: str = LITE_PACKAGE) -> Any:
     """Load the cgs_ai lite package straight off the network share.
 
     Parameters:
-        packagePath (str) - full path to src/py/lite/__init__.py.
+        packagePath (str) - full path to src/py/lite/cgs_ai/__init__.py.
     Returns: the imported cgs_ai module, exposing formatCSV and sendEmail.
     Raises: FileNotFoundError if the share is unreachable or the path is wrong.
 

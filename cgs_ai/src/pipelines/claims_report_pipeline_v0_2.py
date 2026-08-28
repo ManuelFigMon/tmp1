@@ -5,9 +5,15 @@ Same as v0_1, except cgs_ai is imported the way any Python package is
 imported, instead of being loaded from a file. Needs openpyxl.
 """
 
+SHARE = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai"
+
 # The folder that CONTAINS the cgs_ai package folder.
-CGS_AI_HOME = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL"
-SHARE = CGS_AI_HOME + r"\cgs_ai"
+# This one holds the lite package: formatCSV and sendEmail.
+CGS_AI_HOME = SHARE + r"\src\py\lite"
+
+# For the FULL package instead -- all 22 functions -- use the folder that
+# holds the cgs_ai project itself:
+# CGS_AI_HOME = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL"
 
 
 # STEP 1. Import the python package
