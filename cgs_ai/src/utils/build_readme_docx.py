@@ -188,10 +188,15 @@ DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </Relationships>"""
 
 
-def writeDocx(bodyXml: str, outputPath: str) -> str:
+def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080) -> str:
     """Zip the OOXML parts into a .docx.
 
-    Parameters: bodyXml (str) - the <w:body> content; outputPath (str).
+    Parameters:
+        bodyXml (str)    - the <w:body> content.
+        outputPath (str) - destination .docx.
+        margin (int)     - page margin in twips on all four sides; the
+                           default 1080 is 0.75in. Pass 720 (0.5in) to fit
+                           more on a single page.
     Returns: the path written.
     """
     document = (
@@ -199,7 +204,8 @@ def writeDocx(bodyXml: str, outputPath: str) -> str:
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         f"<w:body>{bodyXml}"
         '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-        '<w:pgMar w:top="1080" w:right="1080" w:bottom="1080" w:left="1080"/>'
+        f'<w:pgMar w:top="{margin}" w:right="{margin}" '
+        f'w:bottom="{margin}" w:left="{margin}"/>'
         "</w:sectPr></w:body></w:document>")
     target = Path(outputPath)
     target.parent.mkdir(parents=True, exist_ok=True)
