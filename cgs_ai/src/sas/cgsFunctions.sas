@@ -126,7 +126,8 @@
 %macro formatCSV(
     InputCsvPath    =,             /* REQUIRED                            */
     OutputExcelPath =,             /* REQUIRED                            */
-    FormatType      = corporate,   /* corporate | plain | minimal         */
+    FormatType      = corporate,   /* corporate | corporatev2 | plain |   */
+                                   /* minimal                            */
     SheetName       = Report,
     Title           =,
     engine          = ps,

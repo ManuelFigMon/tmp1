@@ -454,9 +454,9 @@ def buildSlides(images: Dict[str, Tuple[str, float]]
                        [["formatCSV",
                          "(InputCsvPath, OutputExcelPath,\n "
                          "FormatType='corporate',\n SheetName='Report', Title='')",
-                         "Converts a CSV to a styled .xlsx — corporate, plain or "
-                         "minimal. Saves via BytesIO to bypass the Snowflake "
-                         "workspace seek limitation. Returns a result dict."],
+                         "Converts a CSV to a styled .xlsx — corporate, "
+                         "corporatev2, plain or minimal. Saves via BytesIO to "
+                         "bypass the Snowflake workspace seek limitation."],
                         ["createExecutiveBriefing",
                          "(input_csv, text_col='comment',\n secondary_cols=None,\n "
                          "output_file='...md')",

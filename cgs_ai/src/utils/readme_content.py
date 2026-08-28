@@ -350,7 +350,7 @@ def buildBody() -> str:
          "auto-filtered header.",
          [("InputCsvPath", "REQUIRED. Source CSV."),
           ("OutputExcelPath", "REQUIRED. Destination .xlsx."),
-          ("FormatType", "corporate (default), plain or minimal."),
+          ("FormatType", "corporate (default), corporatev2, plain or\n                          minimal. corporate and corporatev2 render the\n                          same navy/blue/zebra look."),
           ("SheetName", "Worksheet name. Default Report."),
           ("Title", "Banner text. Defaults to the CSV filename.")],
          "Turn a raw scan result or claims extract into a report a manager or "

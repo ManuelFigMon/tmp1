@@ -124,3 +124,69 @@ def test_env_parsing_rules(tmp_path):
     assert values["WINPATH"] == "\\\\srv\\share\\x"   # backslashes preserved
     assert "NOEQUALS" not in values
     assert not any(k.startswith("#") for k in values)
+
+
+# --- formatCSV: the corporatev2 style ----------------------------------------
+
+import runpy                                             # noqa: E402
+from src.py.formatCSV import FORMAT_STYLES, STRIPED_FORMATS  # noqa: E402
+
+
+def _sampleCsv(tmp_path):
+    """Write a small CSV and return its path. Parameters: tmp_path (Path)."""
+    path = tmp_path / "claims.csv"
+    path.write_text("ClaimId,Amount\nA1,10\nA2,20\nA3,30\n", encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("style", ["corporate", "corporatev2", "plain", "minimal"])
+def test_every_declared_format_type_is_accepted(tmp_path, style):
+    result = formatCSV(InputCsvPath=str(_sampleCsv(tmp_path)),
+                       OutputExcelPath=str(tmp_path / f"{style}.xlsx"),
+                       FormatType=style)
+    assert result["FormatType"] == style
+    assert result["RowCount"] == 3
+
+
+def test_corporatev2_is_registered_and_striped():
+    assert "corporatev2" in FORMAT_STYLES
+    assert "corporatev2" in STRIPED_FORMATS
+    # v2 is the versioned name for the corporate look; the palettes must match.
+    assert FORMAT_STYLES["corporatev2"] == FORMAT_STYLES["corporate"]
+
+
+def test_corporatev2_renders_banner_header_and_stripes(tmp_path):
+    output = tmp_path / "v2.xlsx"
+    formatCSV(InputCsvPath=str(_sampleCsv(tmp_path)),
+              OutputExcelPath=str(output), FormatType="corporatev2",
+              SheetName="Claims", Title="CMS Reporting and Analysis")
+    sheet = openpyxl.load_workbook(output)["Claims"]
+    assert sheet["A1"].value == "CMS Reporting and Analysis"
+    assert sheet["A1"].fill.fgColor.rgb.endswith("1F3864")   # navy banner
+    assert sheet["A2"].fill.fgColor.rgb.endswith("2E75B6")   # blue header
+    assert sheet["A3"].fill.fgColor.rgb.endswith("DCE6F1")   # zebra stripe
+    assert sheet.freeze_panes == "A3"
+    assert sheet.auto_filter.ref == "A2:B5"
+
+
+def test_plain_format_is_not_striped(tmp_path):
+    output = tmp_path / "plain.xlsx"
+    formatCSV(InputCsvPath=str(_sampleCsv(tmp_path)),
+              OutputExcelPath=str(output), FormatType="plain")
+    sheet = openpyxl.load_workbook(output).active
+    assert sheet["A3"].fill.fgColor.rgb in ("00000000", None)
+
+
+def test_unknown_format_type_names_the_valid_ones(tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        formatCSV(InputCsvPath=str(_sampleCsv(tmp_path)),
+                  OutputExcelPath=str(tmp_path / "x.xlsx"), FormatType="bogus")
+    assert "corporatev2" in str(excinfo.value)
+
+
+def test_lite_build_offers_the_same_format_types():
+    """The lite formatCSV must stay in step with the full one."""
+    namespace = runpy.run_path(str(ROOT / "src" / "py" / "lite" / "__init__.py"),
+                               run_name="cgs_ai_lite_test")
+    assert namespace["FORMAT_STYLES"] == FORMAT_STYLES
+    assert namespace["STRIPED_FORMATS"] == STRIPED_FORMATS

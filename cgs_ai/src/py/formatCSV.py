@@ -21,7 +21,7 @@
     InputCsvPath    (REQUIRED, str) - source CSV.
     OutputExcelPath (REQUIRED, str) - destination .xlsx.
     FormatType      (optional, str, default "corporate") - corporate |
-                      plain | minimal.
+                      corporatev2 | plain | minimal.
     SheetName       (optional, str, default "Report")
     Title           (optional, str) - banner text; defaults to the CSV name.
 =====================================================================
@@ -29,6 +29,7 @@
 
 from __future__ import annotations
 
+import io
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -44,13 +45,17 @@ __version__ = "1.0beta"
 
 #: Palette per format type: (banner, header, stripe, header font colour).
 FORMAT_STYLES: Dict[str, Dict[str, str]] = {
-    "corporate": {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
-                  "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
-    "plain":     {"banner": "FFFFFF", "header": "D9D9D9", "stripe": "FFFFFF",
-                  "headerFont": "000000", "bannerFont": "000000"},
-    "minimal":   {"banner": "FFFFFF", "header": "FFFFFF", "stripe": "FFFFFF",
-                  "headerFont": "000000", "bannerFont": "000000"},
+    "corporate":   {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
+                    "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
+    "corporatev2": {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
+                    "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
+    "plain":       {"banner": "FFFFFF", "header": "D9D9D9", "stripe": "FFFFFF",
+                    "headerFont": "000000", "bannerFont": "000000"},
+    "minimal":     {"banner": "FFFFFF", "header": "FFFFFF", "stripe": "FFFFFF",
+                    "headerFont": "000000", "bannerFont": "000000"},
 }
+#: Format types that get zebra striping on the data rows.
+STRIPED_FORMATS = frozenset({"corporate", "corporatev2"})
 DEFAULT_FORMAT_TYPE = "corporate"
 MAX_COLUMN_WIDTH = 60
 
@@ -64,9 +69,12 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
     Parameters:
         InputCsvPath (str)    - REQUIRED source CSV.
         OutputExcelPath (str) - REQUIRED destination .xlsx.
-        FormatType (str)      - corporate (default) | plain | minimal.
-                                "corporate" is a navy banner, blue header,
-                                zebra striping.
+        FormatType (str)      - corporate (default) | corporatev2 |
+                                plain | minimal. "corporate" and
+                                "corporatev2" are a navy banner, blue header
+                                and zebra striping; they render identically,
+                                with corporatev2 reserved as the versioned
+                                name for that look.
         SheetName (str)       - worksheet name; default "Report".
         Title (str)           - banner text; defaults to the CSV filename.
     Returns:
@@ -129,7 +137,7 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
         for colIndex, column in enumerate(columns, start=1):
             dataCell = sheet.cell(row=rowIndex, column=colIndex,
                                   value=row.get(column, ""))
-            if FormatType == "corporate" and rowIndex % 2 == 1:
+            if FormatType in STRIPED_FORMATS and rowIndex % 2 == 1:
                 dataCell.fill = stripe
 
     if columns:
@@ -143,7 +151,14 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
                 min(MAX_COLUMN_WIDTH, max(10, widest + 2))
 
     ensureParent(OutputExcelPath)
-    workbook.save(OutputExcelPath)
+    # Save via BytesIO: the Snowflake workspace filesystem does not support
+    # seek() on writable files, which openpyxl's ZIP writer requires. Writing
+    # to an in-memory buffer and flushing it bypasses that limit, and behaves
+    # identically everywhere else.
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    with open(OutputExcelPath, "wb") as handle:
+        handle.write(buffer.getvalue())
     logInfo(f"formatted {len(rows)} row(s) x {len(columns)} column(s) "
             f"[{FormatType}] -> {OutputExcelPath}")
     return {"OutputExcelPath": OutputExcelPath, "RowCount": len(rows),

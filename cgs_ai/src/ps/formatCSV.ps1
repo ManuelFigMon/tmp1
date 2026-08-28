@@ -18,7 +18,7 @@
 
   Input Parameters (required first):
     -InputCsvPath (REQUIRED)  -OutputExcelPath (REQUIRED)
-    -FormatType (default corporate; corporate|plain|minimal)
+    -FormatType (default corporate; corporate|corporatev2|plain|minimal)
     -SheetName (default Report)  -Title (defaults to the CSV name)
   Exit codes: 0 = success, 2 = config error, 3 = I/O error.
 =====================================================================
@@ -37,10 +37,14 @@ $ErrorActionPreference = 'Stop'
 
 # Palette per format type -- matches FORMAT_STYLES in the Python twin.
 $script:FormatStyles = @{
-    'corporate' = @{ Banner='#1F3864'; Header='#2E75B6'; Stripe='#DCE6F1'; HeaderFont='White'; BannerFont='White' }
-    'plain'     = @{ Banner='#FFFFFF'; Header='#D9D9D9'; Stripe='#FFFFFF'; HeaderFont='Black'; BannerFont='Black' }
-    'minimal'   = @{ Banner='#FFFFFF'; Header='#FFFFFF'; Stripe='#FFFFFF'; HeaderFont='Black'; BannerFont='Black' }
+    'corporate'   = @{ Banner='#1F3864'; Header='#2E75B6'; Stripe='#DCE6F1'; HeaderFont='White'; BannerFont='White' }
+    'corporatev2' = @{ Banner='#1F3864'; Header='#2E75B6'; Stripe='#DCE6F1'; HeaderFont='White'; BannerFont='White' }
+    'plain'       = @{ Banner='#FFFFFF'; Header='#D9D9D9'; Stripe='#FFFFFF'; HeaderFont='Black'; BannerFont='Black' }
+    'minimal'     = @{ Banner='#FFFFFF'; Header='#FFFFFF'; Stripe='#FFFFFF'; HeaderFont='Black'; BannerFont='Black' }
 }
+
+# Format types that get zebra striping -- matches STRIPED_FORMATS in Python.
+$script:StripedFormats = @('corporate', 'corporatev2')
 
 function Invoke-Main {
     <# .SYNOPSIS Style the CSV into a workbook. .OUTPUTS [int] exit code. #>
@@ -72,7 +76,7 @@ function Invoke-Main {
         -BackgroundColor $style.Banner -FontColor $style.BannerFont -Bold -Value $banner
     Set-ExcelRange -Worksheet $sheet -Range "A2:$([char](64+$columnCount))2" `
         -BackgroundColor $style.Header -FontColor $style.HeaderFont -Bold
-    if ($FormatType -eq 'corporate') {
+    if ($script:StripedFormats -contains $FormatType) {
         for ($r = 3; $r -lt (3 + $rows.Count); $r++) {
             if ($r % 2 -eq 1) {
                 Set-ExcelRange -Worksheet $sheet -Range "A${r}:$([char](64+$columnCount))${r}" -BackgroundColor $style.Stripe

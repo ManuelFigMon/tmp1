@@ -35,18 +35,22 @@
         formatCSV, sendEmail = ns["formatCSV"], ns["sendEmail"]
 
   Function Index:
-    formatCSV  - CSV to a styled Excel workbook (SAS ODS look and feel)
+    formatCSV  - CSV to a styled Excel workbook (SAS ODS look and feel);
+                 FormatType corporate | corporatev2 | plain | minimal
     sendEmail  - SMTP notification to one or many recipients
 
   Change Log:
     v1.0beta-lite - First lite build. formatCSV and sendEmail only, with
                     every src.utils helper inlined so the file stands alone.
+                    Adds the corporatev2 FormatType and saves the workbook
+                    through BytesIO for Snowflake workspace compatibility.
 =====================================================================
 """
 
 from __future__ import annotations
 
 import csv
+import io
 import smtplib
 import sys
 import types
@@ -64,13 +68,17 @@ __all__ = ["formatCSV", "sendEmail", "__version__"]
 
 #: Palette per format type: banner, header, stripe and font colours.
 FORMAT_STYLES: Dict[str, Dict[str, str]] = {
-    "corporate": {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
-                  "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
-    "plain":     {"banner": "FFFFFF", "header": "D9D9D9", "stripe": "FFFFFF",
-                  "headerFont": "000000", "bannerFont": "000000"},
-    "minimal":   {"banner": "FFFFFF", "header": "FFFFFF", "stripe": "FFFFFF",
-                  "headerFont": "000000", "bannerFont": "000000"},
+    "corporate":   {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
+                    "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
+    "corporatev2": {"banner": "1F3864", "header": "2E75B6", "stripe": "DCE6F1",
+                    "headerFont": "FFFFFF", "bannerFont": "FFFFFF"},
+    "plain":       {"banner": "FFFFFF", "header": "D9D9D9", "stripe": "FFFFFF",
+                    "headerFont": "000000", "bannerFont": "000000"},
+    "minimal":     {"banner": "FFFFFF", "header": "FFFFFF", "stripe": "FFFFFF",
+                    "headerFont": "000000", "bannerFont": "000000"},
 }
+#: Format types that get zebra striping on the data rows.
+STRIPED_FORMATS = frozenset({"corporate", "corporatev2"})
 DEFAULT_FORMAT_TYPE = "corporate"
 MAX_COLUMN_WIDTH = 60
 DEFAULT_SMTP_SERVER = "smtp.example.com"
@@ -134,9 +142,12 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
     Parameters:
         InputCsvPath (str)    - REQUIRED source CSV.
         OutputExcelPath (str) - REQUIRED destination .xlsx.
-        FormatType (str)      - corporate (default) | plain | minimal.
-                                "corporate" is a navy banner, blue header,
-                                zebra striping.
+        FormatType (str)      - corporate (default) | corporatev2 |
+                                plain | minimal. "corporate" and
+                                "corporatev2" are a navy banner, blue header
+                                and zebra striping; they render identically,
+                                with corporatev2 reserved as the versioned
+                                name for that look.
         SheetName (str)       - worksheet name; default "Report".
         Title (str)           - banner text; defaults to the CSV filename.
     Returns:
@@ -198,7 +209,7 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
         for colIndex, column in enumerate(columns, start=1):
             dataCell = sheet.cell(row=rowIndex, column=colIndex,
                                   value=row.get(column, ""))
-            if FormatType == "corporate" and rowIndex % 2 == 1:
+            if FormatType in STRIPED_FORMATS and rowIndex % 2 == 1:
                 dataCell.fill = stripe
 
     if columns:
@@ -212,7 +223,14 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
                 min(MAX_COLUMN_WIDTH, max(10, widest + 2))
 
     ensureParent(OutputExcelPath)
-    workbook.save(OutputExcelPath)
+    # Save via BytesIO: the Snowflake workspace filesystem does not support
+    # seek() on writable files, which openpyxl's ZIP writer requires. Writing
+    # to an in-memory buffer and flushing it bypasses that limit, and behaves
+    # identically everywhere else.
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    with open(OutputExcelPath, "wb") as handle:
+        handle.write(buffer.getvalue())
     logInfo(f"formatted {len(rows)} row(s) x {len(columns)} column(s) "
             f"[{FormatType}] -> {OutputExcelPath}")
     return {"OutputExcelPath": OutputExcelPath, "RowCount": len(rows),
