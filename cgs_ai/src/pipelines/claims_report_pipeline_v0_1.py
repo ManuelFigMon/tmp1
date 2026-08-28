@@ -14,10 +14,13 @@ runpy.run_path(SHARE + r"\src\py\lite\__init__.py", run_name="__init__")
 from cgs_ai import formatCSV, sendEmail
 
 
-# STEP 2. Load the csv data into a python dataframe
-import pandas as pd
-df = pd.read_csv(SHARE + r"\data\synthetic_medicare_claims.csv")
-print(df.shape)
+# STEP 2. Load the csv data into python
+# csv is built into Python, so there is nothing to install.
+import csv
+with open(SHARE + r"\data\synthetic_medicare_claims.csv", newline='',
+          encoding='utf-8-sig') as f:
+    rows = list(csv.DictReader(f))
+print(len(rows), 'rows x', len(rows[0]), 'columns')
 
 
 # STEP 3. Update the csv into an Excel file with ODS like formatting
