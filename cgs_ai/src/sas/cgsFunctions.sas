@@ -174,22 +174,37 @@
     OutputExcelPath =,             /* REQUIRED                            */
     SheetName       = Report,
     Title           =,
+    ColumnLength    = 1024,        /* per-column character width          */
     debug           = 0
 );
 /* The ODS1 renderer behind %formatCSV(FormatType=ODS1).
 
-   Reads the CSV with PROC IMPORT and writes the workbook with ODS EXCEL,
+   Reads the CSV with a DATA step and writes the workbook with ODS EXCEL,
    so the whole job stays inside SAS. Colours match FORMAT_STYLES
    "corporate" in the Python twin: banner 1F3864, header 2E75B6, stripe
    DCE6F1.
 
+   WHY NOT PROC IMPORT: it samples the file to guess column types, and a
+   CSV with a header but no data rows -- which is exactly what
+   scanFileSystem writes when nothing matches -- fails with "Unable to
+   sample external file, no data in first 5 records. ERROR: Import
+   unsuccessful." A DATA step does not sample, so a header-only file
+   produces a workbook with headers and no rows, matching the Python twin.
+
+   Every column is read as CHARACTER, which is also what the Python and
+   PowerShell twins write. That keeps leading zeros on identifiers such as
+   contractor numbers instead of silently turning them into numbers.
+
    NOTE: the banded rows come from a NOPRINT counter column and a compute
    block. PROC REPORT evaluates compute blocks in column order, so the
    counter must be the FIRST item in the COLUMN statement for CALL DEFINE
-   to colour the row before it is written.                                */
+   to colour the row before it is written.
 
-  %local _cgsVars _cgsBanner _cgsRc;
-  %let _cgsRc = 0;
+   LIMITATION: a column heading containing & or % will be resolved as a
+   macro reference when the labels are applied. Rename such a column in the
+   source CSV, or use engine=ps / engine=py instead.                      */
+
+  %local _cgsBanner _cgsHdr _cgsN _cgsLabels _cgsVarList _cgsRows;
 
   %if %superq(InputCsvPath) = %str() %then %do;
       %put ERROR: required parameter InputCsvPath is missing or empty.;
@@ -209,10 +224,48 @@
       %let _cgsBanner = %scan(%superq(InputCsvPath), -2, %str(\./));
   %else %let _cgsBanner = %superq(Title);
 
-  proc import datafile="%superq(InputCsvPath)" out=work._cgsFmt
-              dbms=csv replace;
-      getnames=yes;
-      guessingrows=max;
+  /* Read the header line only. */
+  %let _cgsHdr = ;
+  data _null_;
+      infile "%superq(InputCsvPath)" lrecl=32767 truncover obs=1;
+      input line $char32767.;
+      call symputx('_cgsHdr', line, 'L');
+  run;
+
+  %if %superq(_cgsHdr) = %str() %then %do;
+      %put ERROR: the CSV has no header row (the file is empty): %superq(InputCsvPath);
+      %return;
+  %end;
+
+  /* Turn the header into column count and labels. Columns are named
+     _c1.._cN so that no header text can produce an invalid or duplicate
+     SAS name; the original text is carried as the label, which is what
+     PROC REPORT prints. */
+  data _null_;
+      length hdr $ 32767 lab $ 1000 labels $ 32767;
+      hdr = symget('_cgsHdr');
+      /* Drop a UTF-8 byte-order mark; the Python twin reads utf-8-sig. */
+      if substr(hdr, 1, 3) = 'EFBBBF'x then hdr = substr(hdr, 4);
+      n = countw(hdr, ',', 'mq');
+      do i = 1 to n;
+          lab = dequote(strip(scan(hdr, i, ',', 'mq')));
+          labels = catx(' ', labels, cats('_c', i, '=') || quote(trim(lab)));
+      end;
+      call symputx('_cgsN', n, 'L');
+      call symputx('_cgsLabels', labels, 'L');
+  run;
+
+  /* A single column cannot be written as the range _c1-_c1. */
+  %if &_cgsN = 1 %then %let _cgsVarList = _c1;
+  %else %let _cgsVarList = _c1-_c&_cgsN;
+
+  data work._cgsFmt;
+      length &_cgsVarList $ &ColumnLength;
+      infile "%superq(InputCsvPath)" dsd dlm=',' lrecl=32767 truncover
+             firstobs=2;
+      input &_cgsVarList;
+      _cgsRow_ = _n_;
+      label &_cgsLabels;
   run;
 
   %if &syserr > 4 %then %do;
@@ -220,20 +273,14 @@
       %return;
   %end;
 
-  /* A row counter drives the zebra striping. */
-  data work._cgsFmt;
-      set work._cgsFmt;
-      _cgsRow_ = _n_;
-  run;
+  %local _cgsDsid _cgsRc;
+  %let _cgsDsid = %sysfunc(open(work._cgsFmt));
+  %let _cgsRows = %sysfunc(attrn(&_cgsDsid, nlobs));
+  %let _cgsRc   = %sysfunc(close(&_cgsDsid));
 
-  /* Every column except the counter, in position order. */
-  proc sql noprint;
-      select name into :_cgsVars separated by ' '
-      from dictionary.columns
-      where libname = 'WORK' and memname = '_CGSFMT'
-        and upcase(name) ne '_CGSROW_'
-      order by varnum;
-  quit;
+  %if &_cgsRows = 0 %then %do;
+      %put NOTE: the CSV has a header but no data rows - the workbook will hold the banner only.;
+  %end;
 
   ods escapechar='^';
   ods excel file="%superq(OutputExcelPath)"
@@ -250,7 +297,7 @@
        style(report)=[rules=all frame=box cellspacing=0]
        style(header)=[background=cx2E75B6 foreground=cxFFFFFF fontweight=bold
                       vjust=center just=left];
-      column _cgsRow_ &_cgsVars;
+      column _cgsRow_ &_cgsVarList;
       define _cgsRow_ / display noprint;
       compute _cgsRow_;
           if mod(_cgsRow_, 2) = 1 then

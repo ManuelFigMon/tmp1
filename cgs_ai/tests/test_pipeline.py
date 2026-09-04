@@ -197,12 +197,51 @@ def test_sas_formatcsv_routes_ods1_without_leaving_sas():
 def test_sas_ods1_renderer_is_self_contained():
     block = re.search(r"%macro cgsFormatCsvOds\b.*?%mend cgsFormatCsvOds;",
                       SAS_FUNCTIONS, re.DOTALL).group(0)
-    for needed in ("proc import", "ods excel", "proc report", "ods excel close",
+    for needed in ("ods excel", "proc report", "ods excel close",
                    "cx1F3864", "cx2E75B6", "cxDCE6F1", "frozen_headers",
                    "autofilter"):
         assert needed in block, f"ODS1 renderer is missing {needed!r}"
     # It must not shell out; that is the whole point of ODS1.
     assert "%cgsRun" not in block
+    # PROC IMPORT samples the file to guess types and fails outright on a
+    # header-only CSV -- which is what scanFileSystem writes when nothing
+    # matches. The DATA step reader does not sample. Check the CODE only:
+    # the comments in this macro discuss PROC IMPORT by name.
+    code = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL).lower()
+    assert "proc import" not in code, \
+        "ODS1 must not use PROC IMPORT; it cannot read a header-only CSV"
+    assert "infile" in code and "firstobs=2" in code
+
+
+def test_sas_ods1_handles_a_header_only_csv():
+    """scanFileSystem writes a header and no rows when nothing matches."""
+    block = re.search(r"%macro cgsFormatCsvOds\b.*?%mend cgsFormatCsvOds;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    # It must count the rows and say so rather than failing.
+    assert "nlobs" in block
+    assert "no data rows" in block
+    # A truly empty file is a different, clearly reported condition.
+    assert "no header row" in block
+
+
+def test_sas_ods1_reads_every_column_as_character():
+    """Matches the Python and PowerShell twins, and keeps leading zeros."""
+    block = re.search(r"%macro cgsFormatCsvOds\b.*?%mend cgsFormatCsvOds;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    assert "length &_cgsVarList $ &ColumnLength;" in block
+    # A one-column CSV cannot be written as the range _c1-_c1.
+    assert "%if &_cgsN = 1 %then %let _cgsVarList = _c1;" in block
+    # open() must be paired with close() or the dataset id leaks.
+    assert block.count("%sysfunc(open(") == block.count("%sysfunc(close(")
+
+
+#: Tokens a SAS/macro statement may legitimately begin with.
+SAS_STATEMENT_STARTS = (
+    "%", "/*", "*", ";", "data ", "proc ", "run;", "quit;", "ods ", "title",
+    "footnote", "libname", "filename", "options", "label", "column", "define",
+    "compute", "endcomp", "if ", "call ", "set ", "infile", "input", "length",
+    "end;", "do ", "select", "attrib", "format", "keep", "drop", "where",
+)
 
 
 def test_sas_put_statements_have_no_embedded_semicolons():
@@ -213,6 +252,29 @@ def test_sas_put_statements_have_no_embedded_semicolons():
             body = stripped[len("%put"):].rstrip()
             assert body.count(";") == 1 and body.endswith(";"), \
                 f"%put with an embedded semicolon: {stripped}"
+
+
+def test_sas_put_statements_are_not_continued_onto_the_next_line():
+    """A %put that ends with ';' cannot be continued.
+
+    Text on the following line is no longer part of the message; it becomes
+    stray macro text that SAS tries to execute. This is the same defect as
+    an embedded semicolon, one line further down, and the single-line check
+    above does not see it.
+    """
+    lines = SAS_FUNCTIONS.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip().startswith("%put"):
+            continue
+        if not line.strip().endswith(";"):
+            continue
+        for following in lines[index + 1:]:
+            nextLine = following.strip()
+            if not nextLine:
+                break
+            assert nextLine.lower().startswith(SAS_STATEMENT_STARTS), (
+                f"line {index + 2} continues a finished %put: {nextLine!r}")
+            break
 
 
 def test_powershell_formatcsv_no_longer_fails_without_importexcel():
