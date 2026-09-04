@@ -339,3 +339,67 @@ def test_sas_block_comments_do_not_nest(sasPath):
         f"one was already open -- the outer comment ends early and the rest "
         f"of the file is parsed as code")
     assert not unterminated, f"{sasPath.name}: a block comment is never closed"
+
+
+# --- cgsCore argument building ------------------------------------------------
+
+CGS_CORE = (ROOT / "src" / "sas" / "cgsCore.sas").read_text()
+
+
+def test_cgscore_does_not_separate_arguments_with_a_semicolon():
+    """';' is the delimiter INSIDE list values, so it cannot also separate
+    arguments. When it did, extract_keyword=%str(real time;cpu time;accdb;mdb)
+    became four command-line tokens and PowerShell bound the strays to
+    whatever positional parameter came next -- surfacing as
+    "unparseable date 'accdb'".
+    """
+    assert "scan(args, i, ';')" not in CGS_CORE
+    assert "countw(args, ';')" not in CGS_CORE
+    assert "%str(;)" not in CGS_CORE
+
+
+def test_cgscore_uses_indexed_argument_macro_variables():
+    assert "CGS_ARGNAME&CGS_ARG_N" in CGS_CORE
+    assert "CGS_ARGVAL&CGS_ARG_N" in CGS_CORE
+    assert "cats('CGS_ARGNAME', i)" in CGS_CORE
+    assert "cats('CGS_ARGVAL', i)" in CGS_CORE
+
+
+def test_cgscore_strips_line_breaks_from_argument_values():
+    """A %str() spanning several lines otherwise splits the .bat in two."""
+    assert "compress(symget(cats('CGS_ARGVAL', i)), '0D0A'x)" in CGS_CORE
+
+
+def _buildCommand(arguments):
+    """Mirror the cgsRun DATA step. Parameters: [(name, value, always)]."""
+    recorded = [(name, value) for name, value, always in arguments
+                if len(value) > 0 or always]
+    command = ""
+    for name, value in recorded:
+        value = value.replace("\r", "").replace("\n", "").strip()
+        command += f' {name} "{value}"' if value else f" {name}"
+    return command.strip()
+
+
+def test_semicolon_list_survives_as_one_command_line_argument():
+    """The exact call from the field report."""
+    command = _buildCommand([
+        ("-input_folder_root", "\\\\srv\\HHH\\Old_logs;\n\t\\\\srv\\DME\\Logs", False),
+        ("-extract_keyword", "real time;cpu time;accdb;mdb", False),
+        ("-metric_profile", "sas_log", False),
+    ])
+    assert '-extract_keyword "real time;cpu time;accdb;mdb"' in command
+    assert '-input_folder_root "\\\\srv\\HHH\\Old_logs;\t\\\\srv\\DME\\Logs"' in command
+    # Every token is either a switch or lives inside quotes: no bare strays.
+    outside = re.sub(r'"[^"]*"', "", command).split()
+    assert all(token.startswith("-") for token in outside), \
+        f"stray positional token(s) would bind to the wrong parameter: {outside}"
+
+
+def test_blank_values_are_dropped_unless_always():
+    command = _buildCommand([("-date_from", "", False),
+                             ("-include_subdirectories", "1", True),
+                             ("-flag", "", True)])
+    assert "-date_from" not in command
+    assert '-include_subdirectories "1"' in command
+    assert command.endswith("-flag")

@@ -32,7 +32,7 @@
 /*---------------------------------------------------------------------
   CONFIGURATION - edit for your environment, or set these from .env.
 ---------------------------------------------------------------------*/
-%global PS_FOLDER_PATH PYTHON_FOLDER_PATH POWERSHELL_EXE PYTHON_EXE CGS_ARGS;
+%global PS_FOLDER_PATH PYTHON_FOLDER_PATH POWERSHELL_EXE PYTHON_EXE CGS_ARG_N;
 %let PS_FOLDER_PATH     = \\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\ps\;
 %let PYTHON_FOLDER_PATH = \\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\py\;
 %let POWERSHELL_EXE     = powershell.exe;
@@ -41,19 +41,30 @@
 
 %macro cgsResetArgs;
   /* Start a fresh argument list. Call once per function invocation. */
-  %global CGS_ARGS;
-  %let CGS_ARGS = ;
+  %global CGS_ARG_N;
+  %let CGS_ARG_N = 0;
 %mend cgsResetArgs;
 
 
 %macro cgsAddArg(name=, value=, always=0);
-  /* Append "name value" to the pending argument list.
+  /* Record one argument for the pending call.
      name   - the switch, e.g. -OutputFilePath or --output-file-path
      value  - the value; when blank the argument is omitted unless always=1
-     always - 1 to emit the switch even with a blank value (flags)          */
-  %global CGS_ARGS;
-  %if %superq(value) ne or &always = 1 %then %do;
-    %let CGS_ARGS = &CGS_ARGS.&name.%str( )%nrbquote(%superq(value))%str(;);
+     always - 1 to emit the switch even with a blank value (flags)
+
+     Arguments are held in INDEXED macro variables -- CGS_ARGNAME1,
+     CGS_ARGVAL1, CGS_ARGNAME2, ... -- and never joined into one delimited
+     string. List values are themselves ';'-delimited, so any separator
+     shared with the values tears them apart: a keyword list of
+     "real time;cpu time;accdb;mdb" became four separate command-line
+     tokens, and PowerShell bound the strays to whatever positional
+     parameter came next.                                                  */
+  %global CGS_ARG_N;
+  %if %length(%superq(value)) > 0 or &always = 1 %then %do;
+    %let CGS_ARG_N = %eval(&CGS_ARG_N + 1);
+    %global CGS_ARGNAME&CGS_ARG_N CGS_ARGVAL&CGS_ARG_N;
+    %let CGS_ARGNAME&CGS_ARG_N = &name;
+    %let CGS_ARGVAL&CGS_ARG_N  = %superq(value);
   %end;
 %mend cgsAddArg;
 
@@ -95,7 +106,7 @@
 
   data _null_;
     /* piece is padded on assignment -- ALWAYS concatenate strip(piece). */
-    length cmd $32767 piece $32767 args $32767 name $256 value $32000;
+    length cmd $32767 name $256 value $32000;
     file "&_bat" lrecl=32767;
 
     if upcase(symget('engine')) = 'PS' then
@@ -106,16 +117,17 @@
       cmd = '"' || strip(symget('_exe')) || '" "'
             || strip(symget('_folder')) || strip(symget('script')) || '"';
 
-    /* CGS_ARGS is a ';'-terminated list of "switch value" pairs. */
-    args = symget('CGS_ARGS');
-    do i = 1 to countw(args, ';');
-      piece = strip(scan(args, i, ';'));
-      if piece ne '' then do;
-        name  = strip(scan(piece, 1, ' '));
-        value = strip(substr(piece, length(name) + 1));
-        if value = '' then cmd = strip(cmd) || ' ' || strip(name);
-        else               cmd = strip(cmd) || ' ' || strip(name) || ' "' || strip(value) || '"';
-      end;
+    /* Read the arguments from the indexed macro variables. Nothing is
+       split here, so a value may safely contain ';' -- which every list
+       parameter does. */
+    argCount = input(symget('CGS_ARG_N'), best.);
+    do i = 1 to argCount;
+      name  = strip(symget(cats('CGS_ARGNAME', i)));
+      /* A %str() spanning several lines puts CR/LF inside the value; those
+         would split the .bat into two lines and truncate the command. */
+      value = strip(compress(symget(cats('CGS_ARGVAL', i)), '0D0A'x));
+      if value = '' then cmd = strip(cmd) || ' ' || strip(name);
+      else               cmd = strip(cmd) || ' ' || strip(name) || ' "' || strip(value) || '"';
     end;
 
     /* Redirect stdout AND stderr: all progress and error messages go to
