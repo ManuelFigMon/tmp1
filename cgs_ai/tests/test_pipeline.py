@@ -236,3 +236,44 @@ def test_powershell_native_writer_emits_valid_ooxml_shape():
 def test_powershell_writer_switch_is_documented_and_validated():
     assert "[string] $Writer" in PS_FORMATCSV
     assert "'auto', 'native', 'module'" in PS_FORMATCSV
+
+
+# --- SAS block comments must not nest ----------------------------------------
+
+def _scanBlockComments(text):
+    """Return (nested_line_numbers, unterminated).
+
+    SAS block comments do NOT nest: the first close marker ends the comment,
+    so a nested open means everything after that close is parsed as live code.
+    """
+    depth, index, line, nested = 0, 0, 1, []
+    while index < len(text) - 1:
+        pair = text[index:index + 2]
+        if pair == "/*":
+            if depth:
+                nested.append(line)
+            else:
+                depth = 1
+            index += 2
+            continue
+        if pair == "*/" and depth:
+            depth = 0
+            index += 2
+            continue
+        if text[index] == "\n":
+            line += 1
+        index += 1
+    return nested, bool(depth)
+
+
+@pytest.mark.parametrize(
+    "sasPath",
+    sorted((ROOT / "src" / "sas").glob("*.sas")),
+    ids=lambda p: p.name)
+def test_sas_block_comments_do_not_nest(sasPath):
+    nested, unterminated = _scanBlockComments(sasPath.read_text())
+    assert not nested, (
+        f"{sasPath.name}: block comment opened again at line(s) {nested} while "
+        f"one was already open -- the outer comment ends early and the rest "
+        f"of the file is parsed as code")
+    assert not unterminated, f"{sasPath.name}: a block comment is never closed"

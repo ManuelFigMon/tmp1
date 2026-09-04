@@ -13,9 +13,14 @@
     either the PowerShell (engine=ps) or the Python (engine=py) twin.
 
     Every macro takes engine= so you can switch implementations without
-    changing any other argument:
-        %scanFileSystem(..., engine=ps);   /* runs src\ps\scanFileSystem.ps1 */
-        %scanFileSystem(..., engine=py);   /* runs src\py\scanFileSystem.py  */
+    changing any other argument. engine=ps runs the .ps1 in src\ps and
+    engine=py runs the .py in src\py:
+        %scanFileSystem(..., engine=ps);
+        %scanFileSystem(..., engine=py);
+
+    NOTE: never open a block comment inside this header. SAS comments do not
+    nest, so the header would end at that inner close marker and everything
+    below it would be parsed as live code.
 
     List parameters take SEMICOLON-DELIMITED strings wrapped in %str(),
     which the target language splits back into a list.
