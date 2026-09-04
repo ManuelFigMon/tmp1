@@ -403,3 +403,30 @@ def test_blank_values_are_dropped_unless_always():
     assert "-date_from" not in command
     assert '-include_subdirectories "1"' in command
     assert command.endswith("-flag")
+
+
+# --- the PowerShell twin checks the target too -------------------------------
+
+PS_SCANNER = (ROOT / "src" / "ps" / "scanFileSystem.ps1").read_text()
+PS_UTILS = (ROOT / "src" / "ps" / "cgsUtils.ps1").read_text()
+
+
+def test_powershell_probes_the_target_before_crawling():
+    assert "function Assert-CgsWritable" in PS_UTILS
+    assert "Assert-CgsWritable -Target $target" in PS_SCANNER
+    # It must run before the roots are walked.
+    assert PS_SCANNER.index("Assert-CgsWritable") < PS_SCANNER.index("foreach ($rawRoot in $roots)")
+
+
+def test_powershell_probe_cleans_up_and_explains():
+    block = re.search(r"function Assert-CgsWritable.*?\n}\n", PS_UTILS, re.DOTALL).group(0)
+    assert "open in Excel" in block
+    # OpenOrCreate creates the file when absent; it must be removed again.
+    assert "Remove-Item" in block and "$existed" in block
+    # FileShare None is what actually detects another process's lock.
+    assert "FileShare]::None" in block
+
+
+def test_powershell_csv_writer_explains_a_lock():
+    assert "cannot write '{0}'" in PS_UTILS
+    assert PS_UTILS.count("open in Excel") >= 2

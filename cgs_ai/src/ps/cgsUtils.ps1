@@ -133,6 +133,36 @@ function ConvertTo-CgsCsvField {
     return $text
 }
 
+function Assert-CgsWritable {
+    <# .SYNOPSIS Fail now, not after a long crawl, if the target cannot be written.
+       .PARAMETER Target  The output file path.
+       .OUTPUTS None. Throws with the likely cause when the file is locked.
+       .NOTES  The usual cause is the workbook being open in Excel, which
+               takes an exclusive lock. Without this probe the scan crawls
+               every root -- minutes on a big share -- and only then fails. #>
+    param([string] $Target)
+    $parent = Split-Path -Parent $Target
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Path $parent -Force)
+    }
+    $existed = Test-Path -LiteralPath $Target
+    try {
+        $probe = [System.IO.File]::Open(
+            $Target, [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $probe.Close()
+    }
+    catch {
+        throw ("cannot write '{0}': {1} If the file is open in Excel or " +
+               "another program, close it and run again, or pass a different " +
+               "-output_file_path." -f $Target, $_.Exception.Message)
+    }
+    # Do not leave a stray empty file behind when the probe created it.
+    if (-not $existed) {
+        Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Write-CgsCsv {
     <# .SYNOPSIS Write rows to UTF-8 CSV with no BOM (matches Python output).
        .PARAMETER Rows     Array of PSCustomObject / hashtable.
@@ -144,7 +174,13 @@ function Write-CgsCsv {
         [void](New-Item -ItemType Directory -Path $parent -Force)
     }
     $encoding = New-Object System.Text.UTF8Encoding($false)
-    $writer = New-Object System.IO.StreamWriter($Target, $false, $encoding)
+    try {
+        $writer = New-Object System.IO.StreamWriter($Target, $false, $encoding)
+    }
+    catch {
+        throw ("cannot write '{0}': {1} If the file is open in Excel or " +
+               "another program, close it and run again." -f $Target, $_.Exception.Message)
+    }
     try {
         $writer.NewLine = "`r`n"
         $writer.WriteLine((($Columns | ForEach-Object { ConvertTo-CgsCsvField $_ }) -join ','))

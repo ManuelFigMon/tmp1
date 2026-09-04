@@ -191,3 +191,63 @@ def test_lite_build_offers_the_same_format_types():
                                run_name="cgs_ai_lite_test")
     assert namespace["FORMAT_STYLES"] == FORMAT_STYLES
     assert namespace["STRIPED_FORMATS"] == STRIPED_FORMATS
+
+
+# --- output is proved writable BEFORE the crawl ------------------------------
+
+from src.py.scanFileSystem import assertWritable            # noqa: E402
+
+
+def test_assert_writable_rejects_an_unopenable_target(tmp_path):
+    directory = tmp_path / "report.csv"
+    directory.mkdir()
+    with pytest.raises(OSError) as excinfo:
+        assertWritable(str(directory))
+    # The message has to name the usual cause, not just the errno.
+    assert "open in Excel" in str(excinfo.value)
+
+
+def test_assert_writable_leaves_no_stray_file(tmp_path):
+    target = tmp_path / "fresh.csv"
+    assertWritable(str(target))
+    assert not target.exists(), "the probe must clean up the file it created"
+
+
+def test_assert_writable_does_not_truncate_an_existing_file(tmp_path):
+    target = tmp_path / "keep.csv"
+    target.write_text("do not lose me\n", encoding="utf-8")
+    assertWritable(str(target))
+    assert target.read_text(encoding="utf-8") == "do not lose me\n"
+
+
+def test_scan_checks_the_target_before_walking_the_roots(tmp_path, monkeypatch):
+    """A locked output must fail fast, not after minutes of crawling.
+
+    The lock itself cannot be reproduced here -- Linux has no mandatory
+    file locking, and the container runs as root -- so this asserts the
+    ORDERING, which is the part that makes the failure cheap. What
+    assertWritable detects is covered by the tests above.
+    """
+    root = tmp_path / "logs"
+    root.mkdir()
+    (root / "a.sas").write_text("libname db 'x.accdb';\n", encoding="utf-8")
+
+    import src.py.scanFileSystem as scanner
+    crawled = {"called": False}
+    realCrawl = scanner.iterCandidateFiles
+
+    def spyCrawl(*args, **kwargs):
+        crawled["called"] = True
+        return realCrawl(*args, **kwargs)
+
+    def lockedTarget(path):
+        raise OSError(f"cannot write {path}: simulated lock")
+
+    monkeypatch.setattr(scanner, "iterCandidateFiles", spyCrawl)
+    monkeypatch.setattr(scanner, "assertWritable", lockedTarget)
+    with pytest.raises(OSError, match="simulated lock"):
+        scanner.scanFileSystem(input_folder_root=[str(root)],
+                               extract_keyword=["accdb"],
+                               file_extensions=["sas"],
+                               output_file_path=str(tmp_path / "out.csv"))
+    assert not crawled["called"], "the crawl ran before the target was checked"

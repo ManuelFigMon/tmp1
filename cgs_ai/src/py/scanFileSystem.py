@@ -392,6 +392,34 @@ def defaultOutputName(directory: Optional[str] = None) -> str:
     return str(Path(directory) / name) if directory else name
 
 
+def assertWritable(path: str) -> None:
+    """Fail now, not after a long crawl, if the output cannot be written.
+
+    Parameters: path (str) - the resolved output file.
+    Returns: None.
+    Raises: OSError naming the likely cause. The usual one is the workbook
+            being open in Excel, which holds an exclusive lock on Windows.
+
+    Without this the scan crawls every root -- minutes on a big share --
+    and only then discovers it cannot write the answer.
+    """
+    target = Path(path)
+    existed = target.exists()
+    try:
+        with open(target, "ab"):
+            pass
+    except OSError as exc:
+        raise OSError(
+            f"cannot write {target}: {exc.strerror or exc}. If the file is "
+            f"open in Excel or another program, close it and run again, or "
+            f"pass a different output_file_path.") from exc
+    if not existed:
+        try:
+            target.unlink()
+        except OSError:
+            pass
+
+
 def resolveOutputPath(raw: str) -> str:
     """Resolve the output target; a directory auto-names a timestamped CSV.
 
@@ -539,6 +567,10 @@ def scanFileSystem(
                 f"is produced: {target}")
         logInfo(f"(requested {Path(original).suffix or 'no extension'}; the extra "
                 f"'{METRIC_SHEET}' sheet cannot be written to CSV)")
+
+    # Prove the target is writable BEFORE the crawl: on a big share the
+    # scan takes minutes, and losing it to a locked file is avoidable.
+    assertWritable(target)
 
     scannedAt = isoNow()
     candidates, reachable = iterCandidateFiles(roots, include_subdirectories)

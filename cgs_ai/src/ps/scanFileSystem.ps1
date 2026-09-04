@@ -334,6 +334,10 @@ function Invoke-Main {
         Write-CgsInfo "(requested $requested; the extra '$($script:MetricSheet)' sheet cannot be written to CSV)"
     }
 
+    # Prove the target is writable BEFORE the crawl: on a big share the
+    # scan takes minutes, and losing it to a locked file is avoidable.
+    Assert-CgsWritable -Target $target
+
     $scannedAt = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
     $matchRows  = New-Object System.Collections.Generic.List[object]
     $metricRows = New-Object System.Collections.Generic.List[object]
