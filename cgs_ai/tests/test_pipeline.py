@@ -423,10 +423,45 @@ def test_powershell_probe_cleans_up_and_explains():
     assert "open in Excel" in block
     # OpenOrCreate creates the file when absent; it must be removed again.
     assert "Remove-Item" in block and "$existed" in block
-    # FileShare None is what actually detects another process's lock.
-    assert "FileShare]::None" in block
+    # The share mode is asserted by
+    # test_writability_probe_matches_what_the_writer_opens.
 
 
 def test_powershell_csv_writer_explains_a_lock():
     assert "cannot write '{0}'" in PS_UTILS
     assert PS_UTILS.count("open in Excel") >= 2
+
+
+# --- PowerShell -f binds tighter than + --------------------------------------
+
+def _brokenFormatConcatenations(text):
+    """Find `"...{0}..." + "..." -f $x`, where -f formats only the LAST piece.
+
+    PowerShell's format operator binds tighter than string concatenation, so
+    "a{0}" + "b" -f $x evaluates as "a{0}" + ("b" -f $x). Any placeholder in
+    an earlier segment is emitted literally -- the user sees "{0}" instead of
+    the path.
+    """
+    return [text[:m.start()].count("\n") + 1
+            for m in re.finditer(r'\+\s*\r?\n\s*"[^"\n]*"\s+-f ', text)]
+
+
+@pytest.mark.parametrize(
+    "psPath",
+    sorted((ROOT / "src" / "ps").glob("*.ps1")),
+    ids=lambda p: p.name)
+def test_powershell_format_operator_is_not_applied_to_a_concatenation(psPath):
+    broken = _brokenFormatConcatenations(psPath.read_text())
+    assert not broken, (
+        f"{psPath.name}: line(s) {broken} apply -f to a concatenation, so "
+        f"only the last string is formatted and earlier {{0}} placeholders "
+        f"reach the user literally. Assign the message to a variable first.")
+
+
+def test_writability_probe_matches_what_the_writer_opens():
+    """A stricter probe would reject files the write would have accepted."""
+    block = re.search(r"function Assert-CgsWritable.*?\n}\n", PS_UTILS, re.DOTALL).group(0)
+    assert "FileShare]::Read" in block
+    # FileShare None also trips on a reader -- an antivirus scanner or the
+    # search indexer merely holding the file open.
+    assert "FileShare]::None" not in block

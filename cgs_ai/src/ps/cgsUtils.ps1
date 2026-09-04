@@ -139,7 +139,9 @@ function Assert-CgsWritable {
        .OUTPUTS None. Throws with the likely cause when the file is locked.
        .NOTES  The usual cause is the workbook being open in Excel, which
                takes an exclusive lock. Without this probe the scan crawls
-               every root -- minutes on a big share -- and only then fails. #>
+               every root -- minutes on a big share -- and only then fails.
+               FileShare Read matches what StreamWriter itself opens with, so
+               the probe never rejects a file the write would have accepted. #>
     param([string] $Target)
     $parent = Split-Path -Parent $Target
     if ($parent -and -not (Test-Path -LiteralPath $parent)) {
@@ -149,13 +151,16 @@ function Assert-CgsWritable {
     try {
         $probe = [System.IO.File]::Open(
             $Target, [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
         $probe.Close()
     }
     catch {
-        throw ("cannot write '{0}': {1} If the file is open in Excel or " +
-               "another program, close it and run again, or pass a different " +
-               "-output_file_path." -f $Target, $_.Exception.Message)
+        # NOTE: -f binds tighter than +, so "a{0}" + "b" -f $x formats only
+        # "b" and leaves {0} literal. Build the message, THEN format it.
+        $template = "cannot write '{0}': {1} If the file is open in Excel " +
+                    "or another program, close it and run again, or pass a " +
+                    "different -output_file_path."
+        throw ($template -f $Target, $_.Exception.Message)
     }
     # Do not leave a stray empty file behind when the probe created it.
     if (-not $existed) {
@@ -178,8 +183,9 @@ function Write-CgsCsv {
         $writer = New-Object System.IO.StreamWriter($Target, $false, $encoding)
     }
     catch {
-        throw ("cannot write '{0}': {1} If the file is open in Excel or " +
-               "another program, close it and run again." -f $Target, $_.Exception.Message)
+        $template = "cannot write '{0}': {1} If the file is open in Excel " +
+                    "or another program, close it and run again."
+        throw ($template -f $Target, $_.Exception.Message)
     }
     try {
         $writer.NewLine = "`r`n"
