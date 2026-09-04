@@ -166,3 +166,73 @@ def test_scanfilesystem_parameter_names_match_across_languages():
     block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
     sasParams = set(re.findall(r"(\w+)\s*=", block))
     assert expected <= sasParams, f"SAS is missing {expected - sasParams}"
+
+
+# --- formatCSV: the SAS ODS1 renderer and the PowerShell native writer -------
+
+SAS_FUNCTIONS = (ROOT / "src" / "sas" / "cgsFunctions.sas").read_text()
+PS_FORMATCSV = (ROOT / "src" / "ps" / "formatCSV.ps1").read_text()
+
+
+def test_sas_macro_and_mend_are_balanced():
+    """Every %macro needs its %mend, or everything after it is swallowed."""
+    opens = re.findall(r"^%macro\s+(\w+)", SAS_FUNCTIONS, re.MULTILINE)
+    closes = re.findall(r"^%mend\s+(\w+)", SAS_FUNCTIONS, re.MULTILINE)
+    assert opens == closes, f"unbalanced: {set(opens) ^ set(closes)}"
+
+
+def test_sas_formatcsv_routes_ods1_without_leaving_sas():
+    block = re.search(r"%macro formatCSV\b.*?%mend formatCSV;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    # ODS1 must be intercepted BEFORE %cgsRun, or it would be handed to
+    # PowerShell, which has no such FormatType.
+    assert "%upcase(&FormatType) = ODS1" in block
+    assert block.index("ODS1") < block.index("%cgsRun")
+    assert "%cgsFormatCsvOds" in block
+    # The parameter comment must list ODS1, or callers never learn it exists.
+    header = block[:block.index(");")]
+    assert "ODS1" in header, "the FormatType comment does not mention ODS1"
+
+
+def test_sas_ods1_renderer_is_self_contained():
+    block = re.search(r"%macro cgsFormatCsvOds\b.*?%mend cgsFormatCsvOds;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    for needed in ("proc import", "ods excel", "proc report", "ods excel close",
+                   "cx1F3864", "cx2E75B6", "cxDCE6F1", "frozen_headers",
+                   "autofilter"):
+        assert needed in block, f"ODS1 renderer is missing {needed!r}"
+    # It must not shell out; that is the whole point of ODS1.
+    assert "%cgsRun" not in block
+
+
+def test_sas_put_statements_have_no_embedded_semicolons():
+    """A ';' inside %put text ends the statement early -- ERROR 180-322."""
+    for line in SAS_FUNCTIONS.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("%put"):
+            body = stripped[len("%put"):].rstrip()
+            assert body.count(";") == 1 and body.endswith(";"), \
+                f"%put with an embedded semicolon: {stripped}"
+
+
+def test_powershell_formatcsv_no_longer_fails_without_importexcel():
+    """The missing module must be a fallback, not a fatal error."""
+    assert "formatCSV requires the ImportExcel module" not in PS_FORMATCSV
+    assert "function Write-XlsxNative" in PS_FORMATCSV
+    assert "writing the workbook natively" in PS_FORMATCSV
+
+
+def test_powershell_native_writer_emits_valid_ooxml_shape():
+    # autoFilter must precede mergeCells; Excel refuses the other order.
+    assert PS_FORMATCSV.index("'<autoFilter ref=") < PS_FORMATCSV.index("'<mergeCells count=")
+    # Fill 0 must be none and fill 1 gray125, or Excel rejects the workbook.
+    fills = re.search(r'<fills count="5">(.*?)</fills>', PS_FORMATCSV, re.DOTALL).group(1)
+    assert fills.index('patternType="none"') < fills.index('patternType="gray125"')
+    # A BOM inside a part makes the file unreadable.
+    assert "UTF8Encoding($false)" in PS_FORMATCSV
+    assert "<cellStyles count=" in PS_FORMATCSV
+
+
+def test_powershell_writer_switch_is_documented_and_validated():
+    assert "[string] $Writer" in PS_FORMATCSV
+    assert "'auto', 'native', 'module'" in PS_FORMATCSV

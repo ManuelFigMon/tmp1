@@ -127,7 +127,7 @@
     InputCsvPath    =,             /* REQUIRED                            */
     OutputExcelPath =,             /* REQUIRED                            */
     FormatType      = corporate,   /* corporate | corporatev2 | plain |   */
-                                   /* minimal                            */
+                                   /* minimal | ODS1                      */
     SheetName       = Report,
     Title           =,
     engine          = ps,
@@ -135,17 +135,135 @@
 );
 /* Render a CSV as a styled Excel workbook with a SAS ODS look and feel:
    navy banner, blue header row, zebra striping.
+
+   FormatType=ODS1 is the ODD ONE OUT. It produces the same look as
+   "corporate" but renders it with ODS EXCEL INSIDE SAS, so it needs no
+   PowerShell module and no Python. Use it on a server where the
+   ImportExcel module is unavailable. engine= is ignored for ODS1 because
+   nothing is launched outside SAS.
+
    Use in claims processing: turn a raw scan or claims extract into a report
    an analyst can open directly, with no hand-formatting each cycle.       */
-  %cgsResetArgs;
-  %cgsAddArg(name=-InputCsvPath,    value=%superq(InputCsvPath));
-  %cgsAddArg(name=-OutputExcelPath, value=%superq(OutputExcelPath));
-  %cgsAddArg(name=-FormatType,      value=&FormatType);
-  %cgsAddArg(name=-SheetName,       value=&SheetName);
-  %cgsAddArg(name=-Title,           value=%superq(Title));
-  %cgsRun(engine=&engine, script=formatCSV.%sysfunc(ifc(&engine=ps,ps1,py)),
-          taskname=cgsfmt, debug=&debug);
+
+  %if %upcase(&FormatType) = ODS1 %then %do;
+      %cgsFormatCsvOds(InputCsvPath=%superq(InputCsvPath),
+                       OutputExcelPath=%superq(OutputExcelPath),
+                       SheetName=&SheetName, Title=%superq(Title),
+                       debug=&debug);
+  %end;
+  %else %do;
+      %cgsResetArgs;
+      %cgsAddArg(name=-InputCsvPath,    value=%superq(InputCsvPath));
+      %cgsAddArg(name=-OutputExcelPath, value=%superq(OutputExcelPath));
+      %cgsAddArg(name=-FormatType,      value=&FormatType);
+      %cgsAddArg(name=-SheetName,       value=&SheetName);
+      %cgsAddArg(name=-Title,           value=%superq(Title));
+      %cgsRun(engine=&engine, script=formatCSV.%sysfunc(ifc(&engine=ps,ps1,py)),
+              taskname=cgsfmt, debug=&debug);
+  %end;
 %mend formatCSV;
+
+
+%macro cgsFormatCsvOds(
+    InputCsvPath    =,             /* REQUIRED                            */
+    OutputExcelPath =,             /* REQUIRED                            */
+    SheetName       = Report,
+    Title           =,
+    debug           = 0
+);
+/* The ODS1 renderer behind %formatCSV(FormatType=ODS1).
+
+   Reads the CSV with PROC IMPORT and writes the workbook with ODS EXCEL,
+   so the whole job stays inside SAS. Colours match FORMAT_STYLES
+   "corporate" in the Python twin: banner 1F3864, header 2E75B6, stripe
+   DCE6F1.
+
+   NOTE: the banded rows come from a NOPRINT counter column and a compute
+   block. PROC REPORT evaluates compute blocks in column order, so the
+   counter must be the FIRST item in the COLUMN statement for CALL DEFINE
+   to colour the row before it is written.                                */
+
+  %local _cgsVars _cgsBanner _cgsRc;
+  %let _cgsRc = 0;
+
+  %if %superq(InputCsvPath) = %str() %then %do;
+      %put ERROR: required parameter InputCsvPath is missing or empty.;
+      %return;
+  %end;
+  %if %superq(OutputExcelPath) = %str() %then %do;
+      %put ERROR: required parameter OutputExcelPath is missing or empty.;
+      %return;
+  %end;
+  %if %sysfunc(fileexist(%superq(InputCsvPath))) = 0 %then %do;
+      %put ERROR: input CSV not found: %superq(InputCsvPath);
+      %return;
+  %end;
+
+  /* Banner text defaults to the CSV file name, matching the other twins. */
+  %if %superq(Title) = %str() %then
+      %let _cgsBanner = %scan(%superq(InputCsvPath), -2, %str(\./));
+  %else %let _cgsBanner = %superq(Title);
+
+  proc import datafile="%superq(InputCsvPath)" out=work._cgsFmt
+              dbms=csv replace;
+      getnames=yes;
+      guessingrows=max;
+  run;
+
+  %if &syserr > 4 %then %do;
+      %put ERROR: could not read %superq(InputCsvPath);
+      %return;
+  %end;
+
+  /* A row counter drives the zebra striping. */
+  data work._cgsFmt;
+      set work._cgsFmt;
+      _cgsRow_ = _n_;
+  run;
+
+  /* Every column except the counter, in position order. */
+  proc sql noprint;
+      select name into :_cgsVars separated by ' '
+      from dictionary.columns
+      where libname = 'WORK' and memname = '_CGSFMT'
+        and upcase(name) ne '_CGSROW_'
+      order by varnum;
+  quit;
+
+  ods escapechar='^';
+  ods excel file="%superq(OutputExcelPath)"
+      options(sheet_name="&SheetName"
+              embedded_titles="yes"
+              frozen_headers="on"
+              autofilter="all"
+              flow="tables");
+
+  title j=left
+      "^S={background=cx1F3864 foreground=cxFFFFFF fontsize=14pt fontweight=bold}&_cgsBanner";
+
+  proc report data=work._cgsFmt nowd missing
+       style(report)=[rules=all frame=box cellspacing=0]
+       style(header)=[background=cx2E75B6 foreground=cxFFFFFF fontweight=bold
+                      vjust=center just=left];
+      column _cgsRow_ &_cgsVars;
+      define _cgsRow_ / display noprint;
+      compute _cgsRow_;
+          if mod(_cgsRow_, 2) = 1 then
+              call define(_row_, 'style', 'style=[background=cxDCE6F1]');
+      endcomp;
+  run;
+
+  title;
+  ods excel close;
+
+  %if &debug = 0 %then %do;
+      proc datasets library=work nolist nowarn;
+          delete _cgsFmt;
+      quit;
+  %end;
+
+  %put NOTE: formatCSV [ODS1] wrote %superq(OutputExcelPath);
+%mend cgsFormatCsvOds;
 
 
 %macro downloadBulkFiles(
