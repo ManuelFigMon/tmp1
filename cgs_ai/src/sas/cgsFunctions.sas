@@ -47,7 +47,7 @@
     date_from              =,      /* inclusive YYYY-MM-DD               */
     date_to                =,      /* inclusive YYYY-MM-DD               */
     date_field             =,      /* created | modified | accessed      */
-    metric_profile         =,      /* none | sas_log -> EXCEL output     */
+    metric_profile         =,      /* none|sas_log|access_db -> EXCEL    */
     engine                 = ps,   /* ps | py                            */
     debug                  = 0
 );

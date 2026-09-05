@@ -112,6 +112,158 @@ def test_fullstimer_cpu_time_is_captured(tmp_path):
         "FULLSTIMER 'user cpu time' must be captured, not silently dropped"
 
 
+# --- the access_db profile ---------------------------------------------------
+
+def accessDbRows(lines):
+    """Run the access_db extractor over a list of lines. Returns: list[dict]."""
+    from src.py.scanFileSystem import METRIC_PROFILES, parseMetricProfile
+    return parseMetricProfile(METRIC_PROFILES["access_db"], lines, "p.sas", "p")
+
+
+def buildProgram(placements, total=60):
+    """Lay text at 1-based line numbers so a test can assert exact numbers.
+
+    Parameters: placements (dict) - {lineNumber: text}; total (int) - length.
+    Returns: list[str] of `total` lines, unplaced ones being a filler comment.
+    """
+    lines = ["/* filler */"] * total
+    for number, text in placements.items():
+        lines[number - 1] = text
+    return lines
+
+
+def test_access_db_reports_every_line_the_libref_is_used_on():
+    rows = accessDbRows(buildProgram({
+        3: r'libname issuelog access path="\\srv\dbs\issuelog.mdb";',
+        12: "  set issuelog.claims;",
+        48: "  create table b as select * from issuelog.detail",
+        49: "  where x in (select y from issuelog.lookup);",
+    }))
+    assert len(rows) == 1
+    assert rows[0]["Libref"] == "issuelog"
+    assert rows[0]["Keyword"] == "mdb"
+    assert rows[0]["DefinitionLine"] == 3
+    assert rows[0]["UsageCount"] == 3
+    assert rows[0]["UsageLines"] == "12,48,49"
+
+
+def test_access_db_does_not_count_the_definition_line_itself():
+    """The .mdb file is usually named after the libref, so 'issuelog.mdb' on
+    the LIBNAME line matches the libref-dot pattern. It is not a use."""
+    rows = accessDbRows(buildProgram({
+        3: r'libname issuelog access path="\\srv\dbs\issuelog.mdb";',
+    }))
+    assert rows[0]["UsageCount"] == 0, \
+        "the libref appears in its own file name, which is not a usage"
+
+
+def test_access_db_finds_a_libname_wrapped_across_lines():
+    rows = accessDbRows(buildProgram({
+        7: "libname fmrrpt access",
+        8: r'    path="\\srv\dbs\fmrrpt RHHI.mdb";',
+        20: "  set fmrrpt.detail;",
+    }))
+    assert len(rows) == 1
+    assert rows[0]["DefinitionLine"] == 7, "the line the statement STARTS on"
+    assert rows[0]["DatabaseFile"].endswith("fmrrpt RHHI.mdb")
+    assert rows[0]["UsageLines"] == "20"
+
+
+def test_access_db_reports_na_when_defined_but_never_used():
+    rows = accessDbRows(buildProgram({
+        3: r'libname unused access path="c:\tmp\never.accdb";',
+    }))
+    assert rows[0]["UsageCount"] == 0
+    assert rows[0]["UsageLines"] == "NA"
+    assert rows[0]["Keyword"] == "accdb"
+
+
+def test_access_db_ignores_a_macro_variable_of_the_same_name():
+    """`&fmrrpt` and `%let fmrrpt` are not uses of the library."""
+    rows = accessDbRows(buildProgram({
+        3: r'libname fmrrpt access path="\\srv\dbs\fmrrpt.mdb";',
+        10: "%let fmrrpt = 1;",
+        11: "  if x = &fmrrpt then delete;",
+        12: "  set fmrrpt.detail;",
+    }))
+    assert rows[0]["UsageLines"] == "12", \
+        "only libref-DOT counts; a bare word collides with a macro variable"
+
+
+def test_access_db_does_not_count_a_libname_clear_statement():
+    rows = accessDbRows(buildProgram({
+        3: r'libname issuelog access path="\\srv\dbs\issuelog.mdb";',
+        12: "  set issuelog.claims;",
+        40: "libname issuelog clear;",
+    }))
+    assert rows[0]["UsageLines"] == "12"
+
+
+def test_access_db_reports_mdb_and_accdb_in_the_same_file():
+    rows = accessDbRows(buildProgram({
+        3: r'libname older access path="\\srv\dbs\legacy.mdb";',
+        4: r'libname newer access path="\\srv\dbs\current.accdb";',
+        20: "  set older.claims;",
+        21: "  set newer.claims;",
+    }))
+    assert [(r["Libref"], r["Keyword"], r["UsageLines"]) for r in rows] == [
+        ("older", "mdb", "20"), ("newer", "accdb", "21")]
+
+
+def test_access_db_skips_a_macro_built_path_instead_of_misreporting_it():
+    """'&mdbPath' contains the literal 'mdb'. A substring match would report
+    this as a genuine Access library; it must be counted as skipped."""
+    rows = accessDbRows(buildProgram({
+        3: 'libname db pcfiles path="&mdbPath";',
+        12: "  set db.claims;",
+    }))
+    assert rows == [], "a macro-built path has no visible .mdb/.accdb"
+
+
+def test_access_db_does_not_warn_about_an_ordinary_sas_library():
+    """A plain library with a macro in its path is not an Access candidate."""
+    from src.py import scanFileSystem as scanner
+    warnings = []
+    original = scanner.logWarn
+    scanner.logWarn = warnings.append
+    try:
+        accessDbRows(buildProgram({3: r'libname plain "&root\sasdata";'}))
+    finally:
+        scanner.logWarn = original
+    assert warnings == [], "no access/pcfiles engine, so nothing was skipped"
+
+
+def test_access_db_switches_output_to_excel_with_its_own_columns(tmp_path):
+    pytest.importorskip("openpyxl")
+    from src.py.scanFileSystem import ACCESS_DB_COLUMNS
+    (tmp_path / "job.sas").write_text(
+        'libname issuelog access path="\\\\srv\\dbs\\issuelog.mdb";\n'
+        "data a; set issuelog.claims; run;\n", encoding="utf-8")
+    result = cgs_ai.scanFileSystem(
+        input_folder_root=str(tmp_path), extract_keyword=["mdb"],
+        file_extensions=["sas"], output_file_path=str(tmp_path / "o.csv"),
+        metric_profile="access_db")
+    assert result["output"].endswith(".xlsx")
+    assert len(result["metrics"]) == 1
+    from openpyxl import load_workbook
+    book = load_workbook(result["output"])
+    assert book.sheetnames == ["Matches", "Metrics"]
+    assert [c.value for c in book["Metrics"][1]] == ACCESS_DB_COLUMNS
+
+
+def test_the_sas_log_profile_is_unchanged_by_the_registry_refactor():
+    from src.py.scanFileSystem import (METRIC_COLUMNS, METRIC_PROFILES,
+                                       SAS_LOG_COLUMNS, parseMetricProfile)
+    assert METRIC_COLUMNS == SAS_LOG_COLUMNS, "the old name must still work"
+    assert METRIC_PROFILES["sas_log"]["Columns"] == [
+        "FullPath", "ProgramName", "StepIndex", "StepLabel",
+        "RealTimeSec", "CpuTimeSec"]
+    rows = parseMetricProfile(METRIC_PROFILES["sas_log"],
+                              SAMPLE.splitlines(), "p", "job")
+    assert [(r["StepIndex"], r["StepLabel"], r["RealTimeSec"]) for r in rows] == [
+        (1, "DATA statement", 0.05), (2, "PROCEDURE MEANS", 1.20)]
+
+
 # --- cross-language parity ---------------------------------------------------
 
 PS_DIR = ROOT / "src" / "ps"
@@ -142,6 +294,36 @@ def test_sas_wrapper_exists_for_every_function(name):
     sasText = (ROOT / "src" / "sas" / "cgsFunctions.sas").read_text()
     assert re.search(rf"%macro\s+{name}\s*\(", sasText), \
         f"cgsFunctions.sas has no %{name} wrapper"
+
+
+def test_metric_profiles_match_across_languages():
+    """The two engines must offer the same profiles with the same columns.
+
+    PowerShell cannot be executed here, so this compares the DECLARATIONS --
+    profile names, column lists and the parsing patterns -- which is what
+    actually drifts when a profile is added to one engine only.
+    """
+    from src.py.scanFileSystem import (ACCESS_DB_COLUMNS, METRIC_PROFILES,
+                                       SAS_LOG_COLUMNS)
+    psText = (PS_DIR / "scanFileSystem.ps1").read_text()
+
+    registry = re.search(r"\$script:MetricProfiles = @\{(.*?)\n\}\n",
+                         psText, re.DOTALL).group(1)
+    psNames = set(re.findall(r"^\s*'(\w+)'\s*=\s*@\{", registry, re.MULTILINE))
+    assert psNames == set(METRIC_PROFILES), \
+        f"PowerShell profiles {psNames} != Python {set(METRIC_PROFILES)}"
+
+    for name, columns in (("SasLogColumns", SAS_LOG_COLUMNS),
+                          ("AccessDbColumns", ACCESS_DB_COLUMNS)):
+        block = re.search(rf"\$script:{name}\s*=\s*@\((.*?)\)\n",
+                          psText, re.DOTALL).group(1)
+        assert re.findall(r"'([^']+)'", block) == columns, \
+            f"$script:{name} does not match its Python twin"
+
+    # The patterns that decide what counts as a hit must be identical too.
+    for pattern in (r"\blibname\s+(?<libref>[A-Za-z_]\w*)",
+                    r"\b(?:access|pcfiles)\b"):
+        assert pattern in psText, f"PowerShell is missing the pattern {pattern}"
 
 
 def test_scanfilesystem_parameter_names_match_across_languages():

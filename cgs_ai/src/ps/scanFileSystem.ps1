@@ -40,14 +40,31 @@
     -numeric_token_after    (default 1)
     -date_from / -date_to   (optional YYYY-MM-DD, inclusive)
     -date_field             (default modified; created|modified|accessed)
-    -metric_profile         (default none; none|sas_log) -- when active,
-                              EXCEL output is produced and announced.
+    -metric_profile         (default none; none|sas_log|access_db) -- when
+                              active, EXCEL output is produced and announced,
+                              with a second sheet shaped by the profile:
+                                sas_log   - step timings from a SAS log.
+                                access_db - one row per LIBNAME pointing at a
+                                  Microsoft Access file (.accdb/.mdb), with
+                                  the line it is defined on and the line
+                                  numbers where the libref is used. Scan .sas
+                                  files for this: in a .log the numbers are
+                                  log lines, not program lines.
+                              KNOWN LIMITATION (access_db):
+                                libname db pcfiles path="&mdbPath";
+                              builds the path from a macro variable, so no
+                              'accdb'/'mdb' is visible in the statement and it
+                              cannot be reported. Those are counted and a
+                              WARNING names the count per file.
 
   Exit codes: 0 = success, 2 = config error, 3 = I/O error.
 
   Change Log:
     v1.0beta - Regrained to one row per match; configurable context window
                and token positions; metric_profile announces Excel output.
+             - Profiles generalized: each entry names an extractor and carries
+               its own columns, so a profile need not be a timing parser.
+               sas_log is unchanged. Added access_db.
 =====================================================================
 #>
 
@@ -88,14 +105,24 @@ $script:MatchColumns = @(
     'NumericTokenAfter','LastToken','FirstToken','FileTimestamp','extension',
     'file_size_bytes','created_time','modified_time','accessed_time','scanned_at'
 )
-$script:MetricColumns = @('FullPath','ProgramName','StepIndex','StepLabel',
-                          'RealTimeSec','CpuTimeSec')
+# Columns of the second sheet, per profile. Each profile carries its own set
+# because the profiles answer different questions -- timings, or usage.
+$script:SasLogColumns   = @('FullPath','ProgramName','StepIndex','StepLabel',
+                            'RealTimeSec','CpuTimeSec')
+$script:AccessDbColumns = @('FullPath','ProgramName','Libref','DatabaseFile',
+                            'Keyword','DefinitionLine','UsageCount','UsageLines')
+# Backward-compatible alias for anything still expecting the sas_log shape.
+$script:MetricColumns   = $script:SasLogColumns
 
-# Metric profile registry -- add an entry to support a new log format.
+# Profile registry. Each entry names an EXTRACTOR and carries its own Columns,
+# so a new profile is a registry entry plus one function -- the crawl, the
+# writer and the parameter list need no change.
 $script:MetricProfiles = @{
-    'none'    = @{ Active = $false }
+    'none'    = @{ Active = $false; Columns = @() }
     'sas_log' = @{
         Active      = $true
+        Extractor   = 'sas_log'
+        Columns     = $script:SasLogColumns
         StepPattern = '^NOTE:\s+(?<label>.+?)\s+used\s+\(Total process time\)'
         Metrics     = [ordered]@{
             RealTimeSec = '^\s*real time\s+(?<value>[0-9:.]+)'
@@ -104,7 +131,25 @@ $script:MetricProfiles = @{
         }
         Lookahead   = 10
     }
+    'access_db' = @{
+        Active            = $true
+        Extractor         = 'access_db'
+        Columns           = $script:AccessDbColumns
+        Keywords          = @('accdb','mdb')
+        # A LIBNAME may wrap; stop looking for the ';' after this many lines so
+        # a file with an unterminated statement cannot swallow the whole file.
+        MaxStatementLines = 20
+    }
 }
+
+# LIBNAME statement parsing, used by the access_db profile.
+$script:LibnameStart    = '\blibname\s+(?<libref>[A-Za-z_]\w*)'
+$script:QuotedPath      = '(?<quote>[''"])(?<path>.*?)\k<quote>'
+$script:MacroReference  = '[&%]\w+'
+# Engines that reach a Microsoft Access file. Used only to decide whether a
+# macro-built path is worth warning about, so an ordinary SAS library whose
+# path contains a macro variable does not raise a false alarm.
+$script:AccessEngine    = '\b(?:access|pcfiles)\b'
 
 function Get-DurationSeconds {
     <# .SYNOPSIS Parse "0.05", "1.20 seconds", "1:03.05" or "1:00:30.00".
@@ -204,12 +249,28 @@ function Read-TextLines {
 }
 
 function Get-MetricRows {
-    <# .SYNOPSIS Extract structured metric rows from a file's lines.
-       .OUTPUTS  Array of PSCustomObject shaped by $script:MetricColumns. #>
+    <# .SYNOPSIS Dispatch to the extractor named by a profile.
+       .OUTPUTS  Array of PSCustomObject shaped by the profile's own Columns;
+                 empty when the profile is inactive. #>
+    param([hashtable] $ProfileDef, [string[]] $Lines,
+          [string] $FullPath, [string] $ProgramName)
+    if (-not $ProfileDef.Active) { return , @() }
+    switch ($ProfileDef.Extractor) {
+        'sas_log'   { return , (Get-SasLogMetricRows -ProfileDef $ProfileDef -Lines $Lines -FullPath $FullPath -ProgramName $ProgramName) }
+        'access_db' { return , (Get-AccessDbRows     -ProfileDef $ProfileDef -Lines $Lines -FullPath $FullPath -ProgramName $ProgramName) }
+    }
+    Write-CgsWarn ("unknown extractor '{0}'; no rows produced" -f $ProfileDef.Extractor)
+    return , @()
+}
+
+function Get-SasLogMetricRows {
+    <# .SYNOPSIS Extract step timings from a SAS log.
+       .OUTPUTS  Array of PSCustomObject shaped by $script:SasLogColumns.
+       .NOTES    Finds each "NOTE: <step> used (Total process time):" header
+                 and reads the real/cpu times from the lines that follow. #>
     param([hashtable] $ProfileDef, [string[]] $Lines,
           [string] $FullPath, [string] $ProgramName)
     $rows = New-Object System.Collections.Generic.List[object]
-    if (-not $ProfileDef.Active) { return , $rows.ToArray() }
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $header = [regex]::Match($Lines[$i], $ProfileDef.StepPattern,
                   [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -236,17 +297,141 @@ function Get-MetricRows {
     return , $rows.ToArray()
 }
 
+function Join-LibnameStatement {
+    <# .SYNOPSIS Join a LIBNAME statement from its first line to its ';'.
+       .PARAMETER Lines     The file's lines.
+       .PARAMETER Start     Index of the line the LIBNAME keyword is on.
+       .PARAMETER Offset    Column the LIBNAME keyword starts at, so a ';'
+                            belonging to an earlier statement on the same line
+                            ("run; libname x ...") does not end this one.
+       .PARAMETER MaxLines  Give up after this many lines.
+       .OUTPUTS  [hashtable] Text (statement without the ';') and EndIndex. #>
+    param([string[]] $Lines, [int] $Start, [int] $Offset, [int] $MaxLines)
+    $pieces = New-Object System.Collections.Generic.List[string]
+    $last = [Math]::Min($Lines.Count - 1, $Start + $MaxLines - 1)
+    for ($i = $Start; $i -le $last; $i++) {
+        $text = if ($i -eq $Start) { $Lines[$i].Substring($Offset) } else { $Lines[$i] }
+        $cut = $text.IndexOf(';')
+        if ($cut -ge 0) {
+            $pieces.Add($text.Substring(0, $cut))
+            return @{ Text = ($pieces -join ' '); EndIndex = $i }
+        }
+        $pieces.Add($text)
+    }
+    return @{ Text = ($pieces -join ' '); EndIndex = $last }
+}
+
+function Get-AccessDbRows {
+    <# .SYNOPSIS Inventory LIBNAMEs pointing at Microsoft Access files.
+       .OUTPUTS  Array of PSCustomObject shaped by $script:AccessDbColumns,
+                 one per (file, libref), ordered by definition line.
+       .NOTES    A libref is USED where it appears followed by a dot --
+                 issuelog.claims -- which is how a dataset in that library is
+                 named. Matching the bare word would also count a macro
+                 variable or a column of the same name.
+
+                 The lines of the LIBNAME statements themselves are never
+                 counted as usage. That is not tidiness: in
+                 "libname issuelog access path='...\issuelog.mdb'" the file
+                 name matches the libref-dot pattern, so counting the
+                 definition line would report a use that is not one. #>
+    param([hashtable] $ProfileDef, [string[]] $Lines,
+          [string] $FullPath, [string] $ProgramName)
+    $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $keywords = @($ProfileDef.Keywords)
+    $maxLines = [int]$ProfileDef.MaxStatementLines
+
+    $definitions    = New-Object System.Collections.Specialized.OrderedDictionary
+    $statementLines = @{}
+    $skippedMacroPaths = 0
+
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $found = [regex]::Match($Lines[$i], $script:LibnameStart, $ic)
+        if (-not $found.Success) { continue }
+        $statement = Join-LibnameStatement -Lines $Lines -Start $i `
+                        -Offset $found.Index -MaxLines $maxLines
+        $libref = $found.Groups['libref'].Value
+        $key = $libref.ToLowerInvariant()
+        # Every line of every LIBNAME statement for this libref -- the
+        # definition, a redefinition, and "libname x clear;" -- is excluded
+        # from the usage count below.
+        if (-not $statementLines.ContainsKey($key)) { $statementLines[$key] = @{} }
+        for ($j = $i; $j -le $statement.EndIndex; $j++) { $statementLines[$key][$j] = $true }
+
+        # Match the keyword as a FILE EXTENSION on a macro-free statement. A
+        # plain substring search reports "path=&mdbPath" as a real hit -- the
+        # macro variable's own name contains "mdb" -- which is precisely the
+        # case that must be counted as skipped instead.
+        $visible = [regex]::Replace($statement.Text, $script:MacroReference, ' ')
+        $keyword = $null
+        foreach ($candidate in $keywords) {
+            if ([regex]::IsMatch($visible, '\.' + [regex]::Escape($candidate) + '\b', $ic)) {
+                $keyword = $candidate; break
+            }
+        }
+        if ($null -eq $keyword) {
+            if ([regex]::IsMatch($statement.Text, $script:MacroReference) -and
+                [regex]::IsMatch($statement.Text, $script:AccessEngine, $ic)) {
+                $skippedMacroPaths++
+            }
+            continue
+        }
+        if ($definitions.Contains($key)) { continue }   # first definition wins
+
+        $quoted = [regex]::Match($statement.Text, $script:QuotedPath)
+        $databaseFile = if ($quoted.Success) { $quoted.Groups['path'].Value.Trim() } else { 'NA' }
+        if (-not $databaseFile) { $databaseFile = 'NA' }
+        # The path's own extension is the better answer when both keywords
+        # appear somewhere in the statement (a comment, another path).
+        foreach ($candidate in $keywords) {
+            if ($databaseFile.ToLowerInvariant().EndsWith('.' + $candidate)) {
+                $keyword = $candidate; break
+            }
+        }
+
+        $definitions[$key] = [ordered]@{
+            FullPath       = $FullPath
+            ProgramName    = $ProgramName
+            Libref         = $libref
+            DatabaseFile   = $databaseFile
+            Keyword        = $keyword
+            DefinitionLine = $i + 1
+        }
+    }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    foreach ($key in $definitions.Keys) {
+        $row = $definitions[$key]
+        $usePattern = '\b' + [regex]::Escape($row.Libref) + '\.'
+        $ignore = $statementLines[$key]
+        $hits = New-Object System.Collections.Generic.List[int]
+        for ($i = 0; $i -lt $Lines.Count; $i++) {
+            if ($ignore.ContainsKey($i)) { continue }
+            if ([regex]::IsMatch($Lines[$i], $usePattern, $ic)) { $hits.Add($i + 1) }
+        }
+        $row.UsageCount = $hits.Count
+        $row.UsageLines = if ($hits.Count -gt 0) { $hits -join ',' } else { 'NA' }
+        $rows.Add([PSCustomObject]$row)
+    }
+
+    if ($skippedMacroPaths -gt 0) {
+        Write-CgsWarn ("access_db: {0} LIBNAME statement(s) in {1} build the path from a macro variable, so no 'accdb'/'mdb' is visible and they are not reported" -f $skippedMacroPaths, $FullPath)
+    }
+    return , $rows.ToArray()
+}
+
 function Write-MatchExcel {
     <# .SYNOPSIS Write matches (and metrics) to an .xlsx via ImportExcel.
        .OUTPUTS  [string] path written, or $null when ImportExcel is absent. #>
-    param([object[]] $MatchRows, [object[]] $MetricRows, [string] $Target)
+    param([object[]] $MatchRows, [object[]] $MetricRows, [string] $Target,
+          [string[]] $MetricColumns = $script:MetricColumns)
     if (-not (Get-Module -ListAvailable -Name ImportExcel)) { return $null }
     Import-Module ImportExcel -ErrorAction Stop
     if (Test-Path -LiteralPath $Target) { Remove-Item -LiteralPath $Target -Force }
     $MatchRows | Select-Object $script:MatchColumns |
         Export-Excel -Path $Target -WorksheetName $script:MatchSheet -AutoSize
     if ($MetricRows.Count -gt 0) {
-        $MetricRows | Select-Object $script:MetricColumns |
+        $MetricRows | Select-Object $MetricColumns |
             Export-Excel -Path $Target -WorksheetName $script:MetricSheet -AutoSize
     }
     return $Target
@@ -436,7 +621,8 @@ function Invoke-Main {
     }
 
     if ($target.ToLowerInvariant().EndsWith('.xlsx')) {
-        $written = Write-MatchExcel -MatchRows $matchRows.ToArray() -MetricRows $metricRows.ToArray() -Target $target
+        $metricColumns = if ($profileDef.Columns) { @($profileDef.Columns) } else { $script:MetricColumns }
+        $written = Write-MatchExcel -MatchRows $matchRows.ToArray() -MetricRows $metricRows.ToArray() -Target $target -MetricColumns $metricColumns
         if ($null -eq $written) {
             Write-CgsWarn 'no Excel engine (ImportExcel module) available; falling back to CSV'
             $target = [System.IO.Path]::ChangeExtension($target, '.csv')
@@ -445,7 +631,7 @@ function Invoke-Main {
             if ($metricRows.Count -gt 0) {
                 $companion = Join-Path ([System.IO.Path]::GetDirectoryName($target)) `
                     ("{0}_Metrics.csv" -f [System.IO.Path]::GetFileNameWithoutExtension($target))
-                [void](Write-CgsCsv -Rows $metricRows.ToArray() -Columns $script:MetricColumns -Target $companion)
+                [void](Write-CgsCsv -Rows $metricRows.ToArray() -Columns $metricColumns -Target $companion)
                 Write-CgsInfo ("wrote {0} metric row(s) to companion {1}" -f $metricRows.Count, $companion)
             }
         } else {

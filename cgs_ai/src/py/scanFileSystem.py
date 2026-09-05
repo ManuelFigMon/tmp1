@@ -49,10 +49,23 @@
     numeric_token_after    (int, default 1)  - which NUMERIC token after
     date_from / date_to    (str, default None) - inclusive YYYY-MM-DD bounds
     date_field             (str, default "modified") - created/modified/accessed
-    metric_profile         (str, default "none") - "none" | "sas_log".
-                             When set, an EXCEL file is produced (the user is
-                             told so in the log) with a second sheet of
-                             structured metrics.
+    metric_profile         (str, default "none") - "none" | "sas_log" |
+                             "access_db". When set, an EXCEL file is produced
+                             (the user is told so in the log) with a second
+                             sheet whose columns depend on the profile:
+                               sas_log   - step timings parsed from a SAS log.
+                               access_db - one row per LIBNAME pointing at a
+                                 Microsoft Access file (.accdb/.mdb), with the
+                                 line it is defined on and the line numbers
+                                 where the libref is used. Scan .sas files for
+                                 this: in a .log the numbers are log lines,
+                                 not program lines.
+                             KNOWN LIMITATION (access_db):
+                               libname db pcfiles path="&mdbPath";
+                             builds the path from a macro variable, so no
+                             'accdb'/'mdb' is visible in the statement and it
+                             cannot be reported. Those are counted and a
+                             WARNING names the count per file.
 
   Output (default columns, one row per match):
     SourceDir, FileName, Line, LinesAbove, LinesBelow, FullPath, LineNumber,
@@ -67,6 +80,9 @@
     v1.0beta - Output regrained to one row per keyword match with the column
                set above; configurable context window and token extraction;
                metric_profile now announces and produces Excel output.
+             - Profiles generalized: each entry names an extractor and carries
+               its own columns, so a profile need not be a timing parser.
+               sas_log is unchanged. Added access_db.
 =====================================================================
 """
 
@@ -132,18 +148,30 @@ MATCH_COLUMNS = [
     "modified_time", "accessed_time", "scanned_at",
 ]
 
-#: Columns of the extra metric sheet produced when metric_profile is active.
-METRIC_COLUMNS = [
+#: Columns of the second sheet, per profile. Each profile carries its own set
+#: because the profiles answer different questions -- timings, or usage.
+SAS_LOG_COLUMNS = [
     "FullPath", "ProgramName", "StepIndex", "StepLabel",
     "RealTimeSec", "CpuTimeSec",
 ]
+ACCESS_DB_COLUMNS = [
+    "FullPath", "ProgramName", "Libref", "DatabaseFile", "Keyword",
+    "DefinitionLine", "UsageCount", "UsageLines",
+]
 
-#: Metric profile registry. Add an entry to support a new log format; no
-#: change to the crawl or output code is required.
+#: Backward-compatible alias. Callers written before profiles carried their own
+#: columns still import this name and still mean the sas_log shape.
+METRIC_COLUMNS = SAS_LOG_COLUMNS
+
+#: Profile registry. Each entry names an EXTRACTOR and carries its own Columns,
+#: so a new profile is a registry entry plus one function -- the crawl, the
+#: writer and the CLI need no change.
 METRIC_PROFILES: Dict[str, Dict[str, Any]] = {
-    "none": {"Active": False},
+    "none": {"Active": False, "Columns": []},
     "sas_log": {
         "Active": True,
+        "Extractor": "sas_log",
+        "Columns": SAS_LOG_COLUMNS,
         "StepPattern": r"^NOTE:\s+(?P<label>.+?)\s+used\s+\(Total process time\)",
         "Metrics": {
             "RealTimeSec": r"^\s*real time\s+(?P<value>[0-9:.]+)",
@@ -152,7 +180,25 @@ METRIC_PROFILES: Dict[str, Dict[str, Any]] = {
         },
         "Lookahead": 10,
     },
+    "access_db": {
+        "Active": True,
+        "Extractor": "access_db",
+        "Columns": ACCESS_DB_COLUMNS,
+        "Keywords": ["accdb", "mdb"],
+        # A LIBNAME may wrap; stop looking for the ';' after this many lines so
+        # a file with an unterminated statement cannot swallow the whole file.
+        "MaxStatementLines": 20,
+    },
 }
+
+#: LIBNAME statement parsing, used by the access_db profile.
+LIBNAME_START = re.compile(r"\blibname\s+(?P<libref>[A-Za-z_]\w*)", re.IGNORECASE)
+QUOTED_PATH = re.compile(r"""(['"])(?P<path>.*?)\1""")
+MACRO_REFERENCE = re.compile(r"[&%]\w+")
+#: Engines that reach a Microsoft Access file. Used only to decide whether a
+#: macro-built path is worth warning about, so ordinary SAS libraries whose
+#: path contains a macro variable do not raise a false alarm.
+ACCESS_ENGINE = re.compile(r"\b(?:access|pcfiles)\b", re.IGNORECASE)
 
 _NUMERIC = re.compile(r"^[+-]?\$?\d[\d,]*\.?\d*%?$")
 
@@ -337,23 +383,37 @@ def _walkError(exc: OSError) -> None:
 
 
 # =====================================================================
-# Metric profile
+# Metric profiles
 # =====================================================================
 
 def parseMetricProfile(profile: Dict[str, Any], lines: Sequence[str],
                        fullPath: str, programName: str) -> List[Dict[str, Any]]:
-    """Extract structured metric rows from a file's lines.
+    """Dispatch to the extractor named by a profile.
 
     Parameters:
         profile (dict)     - a METRIC_PROFILES entry.
         lines (sequence)   - the file's lines.
-        fullPath (str)     - full path, carried onto every metric row.
-        programName (str)  - filename stem, carried onto every metric row.
+        fullPath (str)     - full path, carried onto every row.
+        programName (str)  - filename stem, carried onto every row.
     Returns:
-        list of dicts shaped by METRIC_COLUMNS; empty when inactive.
+        list of dicts shaped by the profile's own Columns; [] when inactive.
     """
     if not profile.get("Active"):
         return []
+    extractor = EXTRACTORS[profile["Extractor"]]
+    return extractor(profile, lines, fullPath, programName)
+
+
+def extractSasLogMetrics(profile: Dict[str, Any], lines: Sequence[str],
+                         fullPath: str, programName: str) -> List[Dict[str, Any]]:
+    """Extract step timings from a SAS log.
+
+    Parameters: as parseMetricProfile.
+    Returns: list of dicts shaped by SAS_LOG_COLUMNS.
+
+    Finds each "NOTE: <step> used (Total process time):" header and reads the
+    real/cpu times from the lines that follow it.
+    """
     stepPattern = re.compile(profile["StepPattern"], re.IGNORECASE)
     metricPatterns = {name: re.compile(pattern, re.IGNORECASE)
                       for name, pattern in profile["Metrics"].items()}
@@ -380,6 +440,128 @@ def parseMetricProfile(profile: Dict[str, Any], lines: Sequence[str],
                     break
         rows.append(row)
     return rows
+
+
+def joinLibnameStatement(lines: Sequence[str], start: int, offset: int,
+                         maxLines: int) -> Tuple[str, int]:
+    """Join a LIBNAME statement from its first line to its terminating ';'.
+
+    Parameters:
+        lines (sequence) - the file's lines.
+        start (int)      - index of the line the LIBNAME keyword is on.
+        offset (int)     - column the LIBNAME keyword starts at, so a ';'
+                           belonging to an earlier statement on the same line
+                           ("run; libname x ...") does not end this one.
+        maxLines (int)   - give up after this many lines.
+    Returns:
+        (statement text without the ';', index of the last line it spans).
+    """
+    pieces: List[str] = []
+    last = min(len(lines) - 1, start + maxLines - 1)
+    for index in range(start, last + 1):
+        text = lines[index][offset:] if index == start else lines[index]
+        cut = text.find(";")
+        if cut >= 0:
+            pieces.append(text[:cut])
+            return " ".join(pieces), index
+        pieces.append(text)
+    return " ".join(pieces), last
+
+
+def extractAccessDbUsage(profile: Dict[str, Any], lines: Sequence[str],
+                         fullPath: str, programName: str) -> List[Dict[str, Any]]:
+    """Inventory LIBNAMEs pointing at Microsoft Access files, and their use.
+
+    Parameters: as parseMetricProfile.
+    Returns: list of dicts shaped by ACCESS_DB_COLUMNS, one per (file, libref),
+             ordered by the line the libref is defined on.
+
+    A libref is USED where it appears followed by a dot -- issuelog.claims --
+    which is how a SAS dataset in that library is named. Matching the bare word
+    would also count a macro variable or a column of the same name.
+
+    The lines of the LIBNAME statements themselves are never counted as usage.
+    That is not tidiness: in "libname issuelog access path='...\\issuelog.mdb'"
+    the file name matches the libref-dot pattern, so counting the definition
+    line would report a use that is not one.
+    """
+    keywords = [str(k).lower() for k in profile.get("Keywords", ("accdb", "mdb"))]
+    maxLines = int(profile.get("MaxStatementLines", 20))
+
+    definitions: Dict[str, Dict[str, Any]] = {}
+    statementLines: Dict[str, set] = {}
+    skippedMacroPaths = 0
+
+    for index, line in enumerate(lines):
+        found = LIBNAME_START.search(line)
+        if not found:
+            continue
+        statement, endIndex = joinLibnameStatement(
+            lines, index, found.start(), maxLines)
+        libref = found.group("libref")
+        key = libref.lower()
+        # Every line of every LIBNAME statement for this libref -- the
+        # definition, a redefinition, and "libname x clear;" -- is excluded
+        # from the usage count below.
+        statementLines.setdefault(key, set()).update(range(index, endIndex + 1))
+
+        # Match the keyword as a FILE EXTENSION on a macro-free statement.
+        # A plain substring search reports "path=&mdbPath" as a real hit --
+        # the macro variable's own name contains "mdb" -- which is precisely
+        # the case that must be counted as skipped instead.
+        visible = MACRO_REFERENCE.sub(" ", statement)
+        keyword = next((k for k in keywords
+                        if re.search(r"\." + re.escape(k) + r"\b", visible,
+                                     re.IGNORECASE)), None)
+        if keyword is None:
+            if (MACRO_REFERENCE.search(statement)
+                    and ACCESS_ENGINE.search(statement)):
+                skippedMacroPaths += 1
+            continue
+        if key in definitions:      # first definition wins
+            continue
+
+        quoted = QUOTED_PATH.search(statement)
+        databaseFile = quoted.group("path").strip() if quoted else "NA"
+        # The path's own extension is the better answer when both keywords
+        # appear somewhere in the statement (a comment, another path).
+        for candidate in keywords:
+            if databaseFile.lower().endswith("." + candidate):
+                keyword = candidate
+                break
+
+        definitions[key] = {
+            "FullPath": fullPath,
+            "ProgramName": programName,
+            "Libref": libref,
+            "DatabaseFile": databaseFile or "NA",
+            "Keyword": keyword,
+            "DefinitionLine": index + 1,
+        }
+
+    rows: List[Dict[str, Any]] = []
+    for key, row in definitions.items():
+        usePattern = re.compile(r"\b" + re.escape(row["Libref"]) + r"\.",
+                                re.IGNORECASE)
+        ignore = statementLines.get(key, set())
+        hits = [i + 1 for i, line in enumerate(lines)
+                if i not in ignore and usePattern.search(line)]
+        row["UsageCount"] = len(hits)
+        row["UsageLines"] = ",".join(str(h) for h in hits) if hits else "NA"
+        rows.append(row)
+
+    if skippedMacroPaths:
+        logWarn(f"access_db: {skippedMacroPaths} LIBNAME statement(s) in "
+                f"{fullPath} build the path from a macro variable, so no "
+                f"'accdb'/'mdb' is visible and they are not reported")
+    return rows
+
+
+#: Profile name -> the function that turns a file's lines into rows.
+EXTRACTORS = {
+    "sas_log": extractSasLogMetrics,
+    "access_db": extractAccessDbUsage,
+}
 
 
 # =====================================================================
@@ -470,13 +652,16 @@ def resolveOutputPath(raw: str) -> str:
 
 
 def writeExcel(matchRows: List[Dict[str, Any]], metricRows: List[Dict[str, Any]],
-               outputPath: str) -> str:
+               outputPath: str,
+               metricColumns: Optional[Sequence[str]] = None) -> str:
     """Write matches (and metrics, when present) to an .xlsx workbook.
 
     Parameters:
         matchRows (list[dict])  - rows for the Matches sheet.
         metricRows (list[dict]) - rows for the Metrics sheet; omitted if empty.
         outputPath (str)        - .xlsx destination.
+        metricColumns (seq)     - the active profile's columns; defaults to the
+                                  sas_log shape for callers predating profiles.
     Returns: the path written.
     Raises: ImportError when openpyxl is unavailable (message says how to fix).
     """
@@ -497,10 +682,11 @@ def writeExcel(matchRows: List[Dict[str, Any]], metricRows: List[Dict[str, Any]]
     for row in matchRows:
         sheet.append([clean(row.get(column, "")) for column in MATCH_COLUMNS])
     if metricRows:
+        columns = list(metricColumns or METRIC_COLUMNS)
         metrics = workbook.create_sheet(METRIC_SHEET)
-        metrics.append(METRIC_COLUMNS)
+        metrics.append(columns)
         for row in metricRows:
-            metrics.append([clean(row.get(column, "")) for column in METRIC_COLUMNS])
+            metrics.append([clean(row.get(column, "")) for column in columns])
     ensureParent(outputPath)
     workbook.save(outputPath)
     return outputPath
@@ -545,8 +731,9 @@ def scanFileSystem(
         numeric_token_after    - which numeric token after the keyword.
         date_from / date_to    - inclusive YYYY-MM-DD bounds on date_field.
         date_field             - created | modified | accessed.
-        metric_profile         - none | sas_log. When active, EXCEL output is
-                                 produced with an extra Metrics sheet.
+        metric_profile         - none | sas_log | access_db. When active,
+                                 EXCEL output is produced with an extra
+                                 Metrics sheet shaped by the profile.
     Returns:
         dict with keys: matches (list[dict]), metrics (list[dict]),
         output (str path written), reachable (int roots reachable).
@@ -675,7 +862,8 @@ def scanFileSystem(
                 matchRows.append(row)
 
     if target.lower().endswith(".xlsx"):
-        written = writeExcel(matchRows, metricRows, target)
+        written = writeExcel(matchRows, metricRows, target,
+                             metricColumns=profile.get("Columns"))
         logInfo(f"wrote {len(matchRows)} match row(s) to sheet '{MATCH_SHEET}' in {written}")
         if metricRows:
             logInfo(f"wrote {len(metricRows)} metric row(s) to sheet '{METRIC_SHEET}'")
