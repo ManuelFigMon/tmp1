@@ -133,14 +133,11 @@ function ConvertTo-CgsCsvField {
     return $text
 }
 
-function Assert-CgsWritable {
-    <# .SYNOPSIS Fail now, not after a long crawl, if the target cannot be written.
-       .PARAMETER Target  The output file path.
-       .OUTPUTS None. Throws with the likely cause when the file is locked.
-       .NOTES  The usual cause is the workbook being open in Excel, which
-               takes an exclusive lock. Without this probe the scan crawls
-               every root -- minutes on a big share -- and only then fails.
-               FileShare Read matches what StreamWriter itself opens with, so
+function Test-CgsWritable {
+    <# .SYNOPSIS Probe whether a path can be opened for writing.
+       .PARAMETER Target  The candidate output file.
+       .OUTPUTS [string] the reason it cannot be written, or $null when it can.
+       .NOTES  FileShare Read matches what StreamWriter itself opens with, so
                the probe never rejects a file the write would have accepted. #>
     param([string] $Target)
     $parent = Split-Path -Parent $Target
@@ -155,17 +152,44 @@ function Assert-CgsWritable {
         $probe.Close()
     }
     catch {
-        # NOTE: -f binds tighter than +, so "a{0}" + "b" -f $x formats only
-        # "b" and leaves {0} literal. Build the message, THEN format it.
-        $template = "cannot write '{0}': {1} If the file is open in Excel " +
-                    "or another program, close it and run again, or pass a " +
-                    "different -output_file_path."
-        throw ($template -f $Target, $_.Exception.Message)
+        return $_.Exception.Message
     }
     # Do not leave a stray empty file behind when the probe created it.
     if (-not $existed) {
         Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
     }
+    return $null
+}
+
+function Resolve-CgsWritableTarget {
+    <# .SYNOPSIS Return a path the caller can actually write to.
+       .PARAMETER Target  The requested output file.
+       .OUTPUTS [string] the requested path, or a timestamped sibling when it
+                is locked. Throws only when the fallback fails too.
+       .NOTES  A crawl of a large share takes minutes. Throwing that away
+               because somebody left the workbook open in Excel is the wrong
+               trade, so a locked target is downgraded to a timestamped name
+               and announced loudly rather than ending the run. #>
+    param([string] $Target)
+    $reason = Test-CgsWritable -Target $Target
+    if ($null -eq $reason) { return $Target }
+
+    $folder = [System.IO.Path]::GetDirectoryName($Target)
+    $stem   = [System.IO.Path]::GetFileNameWithoutExtension($Target)
+    $ext    = [System.IO.Path]::GetExtension($Target)
+    $fallback = Join-Path $folder ("{0}_{1}{2}" -f $stem, (Get-CgsTimestampSuffix), $ext)
+
+    Write-CgsWarn ("cannot write '{0}': {1}" -f $Target, $reason)
+    Write-CgsWarn ("the file is most likely open in Excel; writing '{0}' instead" -f $fallback)
+
+    $second = Test-CgsWritable -Target $fallback
+    if ($null -ne $second) {
+        $template = "cannot write '{0}' ({1}) and the fallback '{2}' is not " +
+                    "writable either ({3}). Check the folder exists and you " +
+                    "have permission to write to it."
+        throw ($template -f $Target, $reason, $fallback, $second)
+    }
+    return $fallback
 }
 
 function Write-CgsCsv {

@@ -392,16 +392,14 @@ def defaultOutputName(directory: Optional[str] = None) -> str:
     return str(Path(directory) / name) if directory else name
 
 
-def assertWritable(path: str) -> None:
-    """Fail now, not after a long crawl, if the output cannot be written.
+def isWritable(path: str) -> Optional[str]:
+    """Probe whether `path` can be opened for writing.
 
-    Parameters: path (str) - the resolved output file.
-    Returns: None.
-    Raises: OSError naming the likely cause. The usual one is the workbook
-            being open in Excel, which holds an exclusive lock on Windows.
+    Parameters: path (str) - the candidate output file.
+    Returns: None when writable, otherwise the reason as a string.
 
-    Without this the scan crawls every root -- minutes on a big share --
-    and only then discovers it cannot write the answer.
+    Opens for APPEND so an existing file is never truncated by the probe,
+    and removes the file again when the probe is what created it.
     """
     target = Path(path)
     existed = target.exists()
@@ -409,15 +407,45 @@ def assertWritable(path: str) -> None:
         with open(target, "ab"):
             pass
     except OSError as exc:
-        raise OSError(
-            f"cannot write {target}: {exc.strerror or exc}. If the file is "
-            f"open in Excel or another program, close it and run again, or "
-            f"pass a different output_file_path.") from exc
+        return exc.strerror or str(exc)
     if not existed:
         try:
             target.unlink()
         except OSError:
             pass
+    return None
+
+
+def resolveWritableTarget(path: str) -> str:
+    """Return a path the scan can actually write to.
+
+    Parameters: path (str) - the requested output file.
+    Returns: the requested path, or a timestamped sibling when it is locked.
+    Raises: OSError only when the fallback is unwritable too, which means
+            the folder itself is the problem.
+
+    A crawl of a large share takes minutes. Throwing that away because
+    somebody left the workbook open in Excel is the wrong trade, so a locked
+    target is downgraded to a timestamped name and announced loudly rather
+    than ending the run.
+    """
+    reason = isWritable(path)
+    if reason is None:
+        return path
+
+    target = Path(path)
+    fallback = str(target.with_name(
+        f"{target.stem}_{timestampSuffix()}{target.suffix}"))
+    logWarn(f"cannot write {target}: {reason}")
+    logWarn(f"the file is most likely open in Excel; writing {fallback} instead")
+
+    second = isWritable(fallback)
+    if second is not None:
+        raise OSError(
+            f"cannot write {target} ({reason}) and the fallback {fallback} "
+            f"is not writable either ({second}). Check the folder exists and "
+            f"you have permission to write to it.")
+    return fallback
 
 
 def resolveOutputPath(raw: str) -> str:
@@ -568,9 +596,9 @@ def scanFileSystem(
         logInfo(f"(requested {Path(original).suffix or 'no extension'}; the extra "
                 f"'{METRIC_SHEET}' sheet cannot be written to CSV)")
 
-    # Prove the target is writable BEFORE the crawl: on a big share the
-    # scan takes minutes, and losing it to a locked file is avoidable.
-    assertWritable(target)
+    # Settle the target BEFORE the crawl: on a big share the scan takes
+    # minutes, and a locked file must not cost us that work.
+    target = resolveWritableTarget(target)
 
     scannedAt = isoNow()
     candidates, reachable = iterCandidateFiles(roots, include_subdirectories)

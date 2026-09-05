@@ -193,61 +193,102 @@ def test_lite_build_offers_the_same_format_types():
     assert namespace["STRIPED_FORMATS"] == STRIPED_FORMATS
 
 
-# --- output is proved writable BEFORE the crawl ------------------------------
+# --- a locked output must not cost the crawl ---------------------------------
 
-from src.py.scanFileSystem import assertWritable            # noqa: E402
+from src.py.scanFileSystem import isWritable, resolveWritableTarget  # noqa: E402
 
 
-def test_assert_writable_rejects_an_unopenable_target(tmp_path):
+def test_is_writable_reports_the_reason_for_an_unopenable_target(tmp_path):
     directory = tmp_path / "report.csv"
     directory.mkdir()
-    with pytest.raises(OSError) as excinfo:
-        assertWritable(str(directory))
-    # The message has to name the usual cause, not just the errno.
-    assert "open in Excel" in str(excinfo.value)
+    assert isWritable(str(directory)) is not None
 
 
-def test_assert_writable_leaves_no_stray_file(tmp_path):
+def test_is_writable_leaves_no_stray_file(tmp_path):
     target = tmp_path / "fresh.csv"
-    assertWritable(str(target))
+    assert isWritable(str(target)) is None
     assert not target.exists(), "the probe must clean up the file it created"
 
 
-def test_assert_writable_does_not_truncate_an_existing_file(tmp_path):
+def test_is_writable_does_not_truncate_an_existing_file(tmp_path):
     target = tmp_path / "keep.csv"
     target.write_text("do not lose me\n", encoding="utf-8")
-    assertWritable(str(target))
+    assert isWritable(str(target)) is None
     assert target.read_text(encoding="utf-8") == "do not lose me\n"
 
 
-def test_scan_checks_the_target_before_walking_the_roots(tmp_path, monkeypatch):
-    """A locked output must fail fast, not after minutes of crawling.
+def test_writable_target_is_returned_unchanged(tmp_path):
+    target = tmp_path / "out.csv"
+    assert resolveWritableTarget(str(target)) == str(target)
 
-    The lock itself cannot be reproduced here -- Linux has no mandatory
-    file locking, and the container runs as root -- so this asserts the
-    ORDERING, which is the part that makes the failure cheap. What
-    assertWritable detects is covered by the tests above.
-    """
+
+def test_locked_target_falls_back_to_a_timestamped_sibling(tmp_path, monkeypatch):
+    import src.py.scanFileSystem as scanner
+    requested = tmp_path / "issue_log.csv"
+
+    real = scanner.isWritable
+    monkeypatch.setattr(scanner, "isWritable", lambda p: (
+        "in use by another process" if p == str(requested) else real(p)))
+
+    resolved = scanner.resolveWritableTarget(str(requested))
+    assert resolved != str(requested)
+    assert Path(resolved).parent == tmp_path          # same folder
+    assert Path(resolved).suffix == ".csv"            # same extension
+    assert Path(resolved).stem.startswith("issue_log")
+
+
+def test_both_paths_locked_raises_naming_the_folder(tmp_path, monkeypatch):
+    import src.py.scanFileSystem as scanner
+    monkeypatch.setattr(scanner, "isWritable", lambda p: "denied")
+    with pytest.raises(OSError, match="fallback"):
+        scanner.resolveWritableTarget(str(tmp_path / "out.csv"))
+
+
+def test_scan_settles_the_target_before_walking_the_roots(tmp_path, monkeypatch):
+    """The check must happen before the crawl, or it saves nothing."""
     root = tmp_path / "logs"
     root.mkdir()
     (root / "a.sas").write_text("libname db 'x.accdb';\n", encoding="utf-8")
 
     import src.py.scanFileSystem as scanner
-    crawled = {"called": False}
+    order = []
     realCrawl = scanner.iterCandidateFiles
+    realResolve = scanner.resolveWritableTarget
 
     def spyCrawl(*args, **kwargs):
-        crawled["called"] = True
+        order.append("crawl")
         return realCrawl(*args, **kwargs)
 
-    def lockedTarget(path):
-        raise OSError(f"cannot write {path}: simulated lock")
+    def spyResolve(path):
+        order.append("resolve")
+        return realResolve(path)
 
     monkeypatch.setattr(scanner, "iterCandidateFiles", spyCrawl)
-    monkeypatch.setattr(scanner, "assertWritable", lockedTarget)
-    with pytest.raises(OSError, match="simulated lock"):
-        scanner.scanFileSystem(input_folder_root=[str(root)],
-                               extract_keyword=["accdb"],
-                               file_extensions=["sas"],
-                               output_file_path=str(tmp_path / "out.csv"))
-    assert not crawled["called"], "the crawl ran before the target was checked"
+    monkeypatch.setattr(scanner, "resolveWritableTarget", spyResolve)
+    scanner.scanFileSystem(input_folder_root=[str(root)],
+                           extract_keyword=["accdb"],
+                           file_extensions=["sas"],
+                           output_file_path=str(tmp_path / "out.csv"))
+    assert order == ["resolve", "crawl"]
+
+
+def test_locked_output_still_produces_the_scan(tmp_path, monkeypatch):
+    """The whole point: a locked file must not throw away the crawl."""
+    root = tmp_path / "logs"
+    root.mkdir()
+    (root / "a.sas").write_text("libname db 'x.accdb';\n", encoding="utf-8")
+    requested = tmp_path / "out.csv"
+
+    import src.py.scanFileSystem as scanner
+    real = scanner.isWritable
+    monkeypatch.setattr(scanner, "isWritable", lambda p: (
+        "in use by another process" if p == str(requested) else real(p)))
+
+    result = scanner.scanFileSystem(input_folder_root=[str(root)],
+                                    extract_keyword=["accdb"],
+                                    file_extensions=["sas"],
+                                    output_file_path=str(requested))
+    assert len(result["matches"]) == 1
+    assert result["output"] != str(requested)
+    assert Path(result["output"]).exists()
+    assert not requested.exists(), "the locked file must be left alone"

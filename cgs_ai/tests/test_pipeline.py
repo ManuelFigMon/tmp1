@@ -412,19 +412,30 @@ PS_UTILS = (ROOT / "src" / "ps" / "cgsUtils.ps1").read_text()
 
 
 def test_powershell_probes_the_target_before_crawling():
-    assert "function Assert-CgsWritable" in PS_UTILS
-    assert "Assert-CgsWritable -Target $target" in PS_SCANNER
+    assert "function Test-CgsWritable" in PS_UTILS
+    assert "function Resolve-CgsWritableTarget" in PS_UTILS
+    assert "$target = Resolve-CgsWritableTarget -Target $target" in PS_SCANNER
     # It must run before the roots are walked.
-    assert PS_SCANNER.index("Assert-CgsWritable") < PS_SCANNER.index("foreach ($rawRoot in $roots)")
+    assert PS_SCANNER.index("Resolve-CgsWritableTarget") < PS_SCANNER.index("foreach ($rawRoot in $roots)")
 
 
-def test_powershell_probe_cleans_up_and_explains():
-    block = re.search(r"function Assert-CgsWritable.*?\n}\n", PS_UTILS, re.DOTALL).group(0)
-    assert "open in Excel" in block
+def test_powershell_probe_cleans_up_and_matches_the_writer():
+    block = re.search(r"function Test-CgsWritable.*?\n}\n", PS_UTILS, re.DOTALL).group(0)
     # OpenOrCreate creates the file when absent; it must be removed again.
     assert "Remove-Item" in block and "$existed" in block
-    # The share mode is asserted by
-    # test_writability_probe_matches_what_the_writer_opens.
+    # A stricter share mode would reject files the write would have accepted.
+    assert "FileShare]::Read" in block
+    assert "FileShare]::None" not in block
+
+
+def test_powershell_falls_back_instead_of_losing_the_crawl():
+    block = re.search(r"function Resolve-CgsWritableTarget.*?\n}\n",
+                      PS_UTILS, re.DOTALL).group(0)
+    assert "Get-CgsTimestampSuffix" in block, "the fallback needs a unique name"
+    assert "open in Excel" in block
+    # It warns and continues; it only throws when the fallback fails too.
+    assert block.count("Write-CgsWarn") >= 2
+    assert block.count("throw") == 1
 
 
 def test_powershell_csv_writer_explains_a_lock():
@@ -456,12 +467,3 @@ def test_powershell_format_operator_is_not_applied_to_a_concatenation(psPath):
         f"{psPath.name}: line(s) {broken} apply -f to a concatenation, so "
         f"only the last string is formatted and earlier {{0}} placeholders "
         f"reach the user literally. Assign the message to a variable first.")
-
-
-def test_writability_probe_matches_what_the_writer_opens():
-    """A stricter probe would reject files the write would have accepted."""
-    block = re.search(r"function Assert-CgsWritable.*?\n}\n", PS_UTILS, re.DOTALL).group(0)
-    assert "FileShare]::Read" in block
-    # FileShare None also trips on a reader -- an antivirus scanner or the
-    # search indexer merely holding the file open.
-    assert "FileShare]::None" not in block
