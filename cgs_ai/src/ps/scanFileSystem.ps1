@@ -307,6 +307,9 @@ function Invoke-Main {
     $profileDef = $script:MetricProfiles[$metric_profile]
     Write-CgsInfo ("scanFileSystem {0} (PowerShell) starting; profile={1}; roots={2}; keywords={3}" -f `
                    $script:Version, $metric_profile, $roots.Count, $keywords.Count)
+    # Which cgsUtils.ps1 actually loaded. Copying the .ps1 files to a share one
+    # at a time is how versions drift, and this line is what makes it obvious.
+    Write-CgsInfo (Get-CgsUtilsBanner)
 
     # Resolve the output target BEFORE crawling so a bad path fails fast.
     $target = $output_file_path.Trim()

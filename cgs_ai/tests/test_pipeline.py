@@ -443,6 +443,60 @@ def test_powershell_csv_writer_explains_a_lock():
     assert PS_UTILS.count("open in Excel") >= 2
 
 
+# --- every *-Cgs* helper a script calls must exist in src/ps -----------------
+
+PS_FILES = sorted((ROOT / "src" / "ps").glob("*.ps1"))
+#: Verb-Noun names in the shared cgsUtils namespace, e.g. Write-CgsWarn.
+CGS_FUNCTION = re.compile(r"\b([A-Z][a-zA-Z]*-Cgs[A-Za-z]+)\b")
+
+
+def _definedCgsFunctions():
+    names = set()
+    for path in PS_FILES:
+        for match in re.finditer(r"^function\s+([A-Za-z]+-[A-Za-z]+)",
+                                 path.read_text(), re.MULTILINE):
+            names.add(match.group(1))
+    return names
+
+
+@pytest.mark.parametrize("psPath", PS_FILES, ids=lambda p: p.name)
+def test_every_cgs_function_referenced_is_defined_in_src_ps(psPath):
+    """Catch a rename that leaves a caller behind.
+
+    The .ps1 files are dot-sourced from one folder and get copied to the
+    share, so a helper renamed in cgsUtils.ps1 without its callers fails at
+    RUNTIME with "the term X is not recognized" -- after the crawl, on the
+    user's machine. This is that check, done at build time.
+    """
+    defined = _definedCgsFunctions()
+    missing = sorted(set(CGS_FUNCTION.findall(psPath.read_text())) - defined)
+    assert not missing, (
+        f"{psPath.name} references {missing}, which no file in src/ps "
+        f"defines. Rename the callers in the same commit as the function.")
+
+
+def test_the_renamed_writability_helper_keeps_a_shim():
+    """A stale caller on the share must get a message, not a parser error."""
+    assert "function Assert-CgsWritable" in PS_UTILS, (
+        "scanFileSystem.ps1 copies older than the rename call this. Keep the "
+        "shim so they report the lock instead of dying on an unknown term.")
+    block = re.search(r"function Assert-CgsWritable.*?\n}\n",
+                      PS_UTILS, re.DOTALL).group(0)
+    # Look at the code only; the help block above it names the replacements.
+    code = block.split("#>", 1)[1]
+    # Old behaviour: throws on failure, returns nothing on success. A stale
+    # caller ignores return values, so it must not be given a fallback path.
+    assert "Test-CgsWritable" in code
+    assert "Resolve-CgsWritableTarget" not in code
+    assert "throw" in code
+
+
+def test_the_scanner_logs_which_cgsutils_it_loaded():
+    assert "function Get-CgsUtilsBanner" in PS_UTILS
+    assert "$script:CgsUtilsApi" in PS_UTILS
+    assert "Write-CgsInfo (Get-CgsUtilsBanner)" in PS_SCANNER
+
+
 # --- PowerShell -f binds tighter than + --------------------------------------
 
 def _brokenFormatConcatenations(text):

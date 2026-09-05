@@ -20,6 +20,25 @@
 
 $script:CgsVersion = '1.0beta'
 
+# Bump this whenever a function is added, renamed or removed. The callers log
+# it at startup, so a share holding a stale copy of this file is visible in the
+# log instead of surfacing later as "the term X is not recognized".
+#   1  original helpers
+#   2  Assert-CgsWritable split into Test-CgsWritable + Resolve-CgsWritableTarget
+$script:CgsUtilsApi = 2
+
+function Get-CgsUtilsBanner {
+    <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
+       .OUTPUTS  [string] version, API level and the file's timestamp, so two
+                 machines running different copies can be told apart. #>
+    $path = Join-Path $PSScriptRoot 'cgsUtils.ps1'
+    $stamp = if (Test-Path -LiteralPath $path) {
+        (Get-Item -LiteralPath $path).LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+    } else { 'unknown' }
+    return ('cgsUtils {0} api={1} ({2}, modified {3})' -f
+            $script:CgsVersion, $script:CgsUtilsApi, $path, $stamp)
+}
+
 function Get-ProjectRoot {
     <# .SYNOPSIS Return the cgs_ai project root (folder holding __init__.py).
        .OUTPUTS  [string] full path. #>
@@ -190,6 +209,29 @@ function Resolve-CgsWritableTarget {
         throw ($template -f $Target, $reason, $fallback, $second)
     }
     return $fallback
+}
+
+function Assert-CgsWritable {
+    <# .SYNOPSIS Backward-compatible shim for callers written before the split.
+       .PARAMETER Target  The requested output file.
+       .DESCRIPTION This function was replaced by Test-CgsWritable and
+                    Resolve-CgsWritableTarget. It is kept because the .ps1
+                    files are copied to a share individually: a scanner copied
+                    before the rename would otherwise die with "the term
+                    'Assert-CgsWritable' is not recognized", which says nothing
+                    about the real problem. Old behaviour is preserved -- it
+                    returns nothing and throws when the target is locked --
+                    because a stale caller ignores return values, so it must
+                    not be handed a fallback path it would silently discard.
+       .NOTES  DEPRECATED. New code calls Resolve-CgsWritableTarget, which
+               falls back to a timestamped sibling instead of throwing. #>
+    param([string] $Target)
+    $reason = Test-CgsWritable -Target $Target
+    if ($null -eq $reason) { return }
+    $template = "cannot write '{0}': {1} The file is most likely open in " +
+                "Excel. Close it, or re-copy every file in src\ps to the " +
+                "share together -- this script predates {2}."
+    throw ($template -f $Target, $reason, (Get-CgsUtilsBanner))
 }
 
 function Write-CgsCsv {
