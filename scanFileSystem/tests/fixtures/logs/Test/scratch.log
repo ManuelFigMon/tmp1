@@ -1,0 +1,4 @@
+1    data t; run;
+NOTE: DATA statement used (Total process time):
+      real time           8.88 seconds
+      cpu time            8.88 seconds

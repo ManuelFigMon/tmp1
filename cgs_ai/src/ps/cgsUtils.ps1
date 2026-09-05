@@ -1,0 +1,275 @@
+<#
+=====================================================================
+  Program Name  : cgsUtils.ps1
+  Author        : Manuel Figallo
+  Purpose       : Shared helpers for every cgs_ai PowerShell function --
+                  .env loading, logging, list parsing and CSV writing.
+  Version       : 1.0beta
+  Created       : 2026-08-26
+  Last Modified : 2026-08-26
+
+  Dependencies:
+    None. Windows PowerShell 5.1 or PowerShell 7+.
+
+  Description:
+    Dot-source this from any cgs_ai .ps1:  . "$PSScriptRoot\cgsUtils.ps1"
+    Mirrors src/utils/{config,logger,helpers}.py so the two languages
+    behave identically.
+=====================================================================
+#>
+
+$script:CgsVersion = '1.0beta'
+
+# Bump this whenever a function is added, renamed or removed. The callers log
+# it at startup, so a share holding a stale copy of this file is visible in the
+# log instead of surfacing later as "the term X is not recognized".
+#   1  original helpers
+#   2  Assert-CgsWritable split into Test-CgsWritable + Resolve-CgsWritableTarget
+$script:CgsUtilsApi = 2
+
+function Get-CgsUtilsBanner {
+    <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
+       .OUTPUTS  [string] version, API level and the file's timestamp, so two
+                 machines running different copies can be told apart. #>
+    $path = Join-Path $PSScriptRoot 'cgsUtils.ps1'
+    $stamp = if (Test-Path -LiteralPath $path) {
+        (Get-Item -LiteralPath $path).LastWriteTime.ToString('yyyy-MM-dd HH:mm')
+    } else { 'unknown' }
+    return ('cgsUtils {0} api={1} ({2}, modified {3})' -f
+            $script:CgsVersion, $script:CgsUtilsApi, $path, $stamp)
+}
+
+function Get-ProjectRoot {
+    <# .SYNOPSIS Return the cgs_ai project root (folder holding __init__.py).
+       .OUTPUTS  [string] full path. #>
+    return (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+}
+
+function Import-DotEnv {
+    <# .SYNOPSIS Read the project .env into a hashtable.
+       .PARAMETER EnvPath  Optional path; defaults to <projectRoot>\.env.
+       .OUTPUTS  [hashtable] KEY -> VALUE. Real environment variables win. #>
+    param([string] $EnvPath = '')
+    if (-not $EnvPath) { $EnvPath = Join-Path (Get-ProjectRoot) '.env' }
+    $values = @{}
+    if (Test-Path -LiteralPath $EnvPath) {
+        foreach ($line in (Get-Content -LiteralPath $EnvPath)) {
+            $trimmed = $line.Trim()
+            if (-not $trimmed -or $trimmed.StartsWith('#') -or ($trimmed -notmatch '=')) { continue }
+            $key, $value = $trimmed -split '=', 2
+            $key = $key.Trim(); $value = $value.Trim().Trim('"').Trim("'")
+            if ($key) { $values[$key] = $value }
+        }
+    }
+    foreach ($key in @($values.Keys)) {
+        $fromEnv = [Environment]::GetEnvironmentVariable($key)
+        if ($fromEnv) { $values[$key] = $fromEnv }
+    }
+    return $values
+}
+
+function Get-CgsConfig {
+    <# .SYNOPSIS Fetch one configuration value from .env / environment.
+       .PARAMETER Key       Variable name, e.g. ROOT_DATA.
+       .PARAMETER Default   Returned when the key is absent.
+       .PARAMETER Required  Throw instead of returning the default.
+       .OUTPUTS  [string] #>
+    param([string] $Key, [string] $Default = '', [switch] $Required)
+    $config = Import-DotEnv
+    $value = if ($config.ContainsKey($Key)) { $config[$Key] } else {
+        [Environment]::GetEnvironmentVariable($Key) }
+    if (-not $value) { $value = $Default }
+    if ($Required -and -not $value) {
+        throw "Required configuration '$Key' is not set. Add it to .env (see .env.example)."
+    }
+    return $value
+}
+
+function Write-CgsLog {
+    <# .SYNOPSIS Write a timestamped line to stderr, matching the Python format.
+       .PARAMETER Level   INFO, WARNING or ERROR.
+       .PARAMETER Message Text to log. #>
+    param([string] $Level, [string] $Message)
+    $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+    [Console]::Error.WriteLine(('{0} {1,-7} {2}' -f $stamp, $Level, $Message))
+}
+function Write-CgsInfo  { param([string] $Message) Write-CgsLog 'INFO'    $Message }
+function Write-CgsWarn  { param([string] $Message) Write-CgsLog 'WARNING' $Message }
+function Write-CgsError { param([string] $Message) Write-CgsLog 'ERROR'   $Message }
+
+function ConvertTo-CgsList {
+    <# .SYNOPSIS Normalize a list parameter to a string array.
+       .PARAMETER Value  Null, a string ("a;b"), or an array.
+       .OUTPUTS  [string[]] -- semicolons split, because that is how the SAS
+                 wrappers pass lists on a command line. #>
+    param([object] $Value)
+    $out = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $Value) { return , $out.ToArray() }
+    foreach ($item in @($Value)) {
+        if ($null -eq $item) { continue }
+        foreach ($part in ([string]$item -split ';')) {
+            $trimmed = $part.Trim()
+            if ($trimmed) { $out.Add($trimmed) }
+        }
+    }
+    return , $out.ToArray()
+}
+
+function ConvertTo-CgsBool {
+    <# .SYNOPSIS Parse a boolean-ish string.
+       .DESCRIPTION In "powershell.exe -File" mode every argument arrives as a
+                    string, so a [bool] parameter CANNOT be set. Script
+                    parameters are [string] and pass through here.
+       .OUTPUTS  [bool] or $null when unrecognized. #>
+    param([string] $Value)
+    if ($null -eq $Value) { return $null }
+    switch ($Value.Trim().ToLowerInvariant()) {
+        { $_ -in @('true','1','yes','y','$true')  } { return $true }
+        { $_ -in @('false','0','no','n','$false') } { return $false }
+        default { return $null }
+    }
+}
+
+function Format-CgsCell {
+    <# .SYNOPSIS Render a value the way Python's csv writer does.
+       .DESCRIPTION Doubles keep a decimal place (2 -> "2.0") so CSVs produced
+                    by the two languages match byte for byte. #>
+    param([object] $Value)
+    if ($null -eq $Value) { return '' }
+    if ($Value -is [double] -or $Value -is [single] -or $Value -is [decimal]) {
+        return ([double]$Value).ToString('0.0###############',
+            [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [string]$Value
+}
+
+function ConvertTo-CgsCsvField {
+    <# .SYNOPSIS Minimal CSV quoting matching Python's csv module defaults. #>
+    param([object] $Value)
+    if ($null -eq $Value) { return '""' }
+    $text = Format-CgsCell $Value
+    if ($text -match '[",\r\n]') { return '"' + $text.Replace('"','""') + '"' }
+    return $text
+}
+
+function Test-CgsWritable {
+    <# .SYNOPSIS Probe whether a path can be opened for writing.
+       .PARAMETER Target  The candidate output file.
+       .OUTPUTS [string] the reason it cannot be written, or $null when it can.
+       .NOTES  FileShare Read matches what StreamWriter itself opens with, so
+               the probe never rejects a file the write would have accepted. #>
+    param([string] $Target)
+    $parent = Split-Path -Parent $Target
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Path $parent -Force)
+    }
+    $existed = Test-Path -LiteralPath $Target
+    try {
+        $probe = [System.IO.File]::Open(
+            $Target, [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+        $probe.Close()
+    }
+    catch {
+        return $_.Exception.Message
+    }
+    # Do not leave a stray empty file behind when the probe created it.
+    if (-not $existed) {
+        Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+    }
+    return $null
+}
+
+function Resolve-CgsWritableTarget {
+    <# .SYNOPSIS Return a path the caller can actually write to.
+       .PARAMETER Target  The requested output file.
+       .OUTPUTS [string] the requested path, or a timestamped sibling when it
+                is locked. Throws only when the fallback fails too.
+       .NOTES  A crawl of a large share takes minutes. Throwing that away
+               because somebody left the workbook open in Excel is the wrong
+               trade, so a locked target is downgraded to a timestamped name
+               and announced loudly rather than ending the run. #>
+    param([string] $Target)
+    $reason = Test-CgsWritable -Target $Target
+    if ($null -eq $reason) { return $Target }
+
+    $folder = [System.IO.Path]::GetDirectoryName($Target)
+    $stem   = [System.IO.Path]::GetFileNameWithoutExtension($Target)
+    $ext    = [System.IO.Path]::GetExtension($Target)
+    $fallback = Join-Path $folder ("{0}_{1}{2}" -f $stem, (Get-CgsTimestampSuffix), $ext)
+
+    Write-CgsWarn ("cannot write '{0}': {1}" -f $Target, $reason)
+    Write-CgsWarn ("the file is most likely open in Excel; writing '{0}' instead" -f $fallback)
+
+    $second = Test-CgsWritable -Target $fallback
+    if ($null -ne $second) {
+        $template = "cannot write '{0}' ({1}) and the fallback '{2}' is not " +
+                    "writable either ({3}). Check the folder exists and you " +
+                    "have permission to write to it."
+        throw ($template -f $Target, $reason, $fallback, $second)
+    }
+    return $fallback
+}
+
+function Assert-CgsWritable {
+    <# .SYNOPSIS Backward-compatible shim for callers written before the split.
+       .PARAMETER Target  The requested output file.
+       .DESCRIPTION This function was replaced by Test-CgsWritable and
+                    Resolve-CgsWritableTarget. It is kept because the .ps1
+                    files are copied to a share individually: a scanner copied
+                    before the rename would otherwise die with "the term
+                    'Assert-CgsWritable' is not recognized", which says nothing
+                    about the real problem. Old behaviour is preserved -- it
+                    returns nothing and throws when the target is locked --
+                    because a stale caller ignores return values, so it must
+                    not be handed a fallback path it would silently discard.
+       .NOTES  DEPRECATED. New code calls Resolve-CgsWritableTarget, which
+               falls back to a timestamped sibling instead of throwing. #>
+    param([string] $Target)
+    $reason = Test-CgsWritable -Target $Target
+    if ($null -eq $reason) { return }
+    $template = "cannot write '{0}': {1} The file is most likely open in " +
+                "Excel. Close it, or re-copy every file in src\ps to the " +
+                "share together -- this script predates {2}."
+    throw ($template -f $Target, $reason, (Get-CgsUtilsBanner))
+}
+
+function Write-CgsCsv {
+    <# .SYNOPSIS Write rows to UTF-8 CSV with no BOM (matches Python output).
+       .PARAMETER Rows     Array of PSCustomObject / hashtable.
+       .PARAMETER Columns  Column order.
+       .PARAMETER Target   Destination path. #>
+    param([object[]] $Rows, [string[]] $Columns, [string] $Target)
+    $parent = Split-Path -Parent $Target
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Path $parent -Force)
+    }
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    try {
+        $writer = New-Object System.IO.StreamWriter($Target, $false, $encoding)
+    }
+    catch {
+        $template = "cannot write '{0}': {1} If the file is open in Excel " +
+                    "or another program, close it and run again."
+        throw ($template -f $Target, $_.Exception.Message)
+    }
+    try {
+        $writer.NewLine = "`r`n"
+        $writer.WriteLine((($Columns | ForEach-Object { ConvertTo-CgsCsvField $_ }) -join ','))
+        foreach ($row in $Rows) {
+            $fields = foreach ($column in $Columns) {
+                $value = if ($row -is [hashtable]) { $row[$column] }
+                         elseif ($row.PSObject.Properties[$column]) { $row.$column }
+                         else { '' }
+                ConvertTo-CgsCsvField $value
+            }
+            $writer.WriteLine(($fields -join ','))
+        }
+    } finally { $writer.Dispose() }
+    return $Target
+}
+
+function Get-CgsTimestampSuffix {
+    <# .SYNOPSIS Current time as yyyyMMdd_HHmmss for generated filenames. #>
+    return (Get-Date).ToString('yyyyMMdd_HHmmss')
+}

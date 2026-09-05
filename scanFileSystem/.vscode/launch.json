@@ -1,0 +1,96 @@
+{
+  // Run/debug configurations for scanFileSystem.
+  // Open the `scanFileSystem` folder as your VS Code workspace, then press F5
+  // (or pick a config from the Run and Debug panel).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Safest first run: scans the bundled fixtures, writes into the project.
+      "name": "scan: fixtures -> xlsx (sas_log)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scanFileSystem.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--input-folder-root", "${workspaceFolder}/tests/fixtures/logs",
+        "--output-file-path", "${workspaceFolder}/out/scan.xlsx",
+        "--metric-profile", "sas_log",
+        "--extract-keyword", "real time", "cpu time"
+      ]
+    },
+    {
+      // No --output-file-path: auto-names scan_YYYYMMDD_HHMMSS.csv in cwd.
+      "name": "scan: fixtures -> auto-named CSV",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scanFileSystem.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}/out",
+      "args": [
+        "--input-folder-root", "${workspaceFolder}/tests/fixtures/logs",
+        "--metric-profile", "sas_log"
+      ]
+    },
+    {
+      // Pure keyword sweep -- no metric profile.
+      "name": "scan: .accdb/.mdb keyword sweep",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scanFileSystem.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--input-folder-root", "${workspaceFolder}/tests/fixtures/logs",
+        "--output-file-path", "${workspaceFolder}/out/accdb_scan.csv",
+        "--extract-keyword", ".accdb", ".mdb"
+      ]
+    },
+    {
+      // Asks for the root + output when you launch it -- use for real UNC roots.
+      // NOTE: the prompting is VS Code's, not the scanner's; the scanner itself
+      // never prompts (it must stay unattended-safe under Task Scheduler).
+      "name": "scan: prompt for root + output",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/scanFileSystem.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "args": [
+        "--input-folder-root", "${input:inputFolderRoot}",
+        "--output-file-path", "${input:outputFilePath}",
+        "--metric-profile", "${input:metricProfile}"
+      ]
+    },
+    {
+      // Debug whatever .py file is focused (handy for tests/make_fixtures.py).
+      "name": "Python: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "inputFolderRoot",
+      "type": "promptString",
+      "description": "Root folder to scan (UNC paths are fine)",
+      "default": "${workspaceFolder}/tests/fixtures/logs"
+    },
+    {
+      "id": "outputFilePath",
+      "type": "promptString",
+      "description": "Output file (.csv or .xlsx), or a folder to auto-name inside",
+      "default": "${workspaceFolder}/out/scan.csv"
+    },
+    {
+      "id": "metricProfile",
+      "type": "pickString",
+      "description": "Metric profile",
+      "options": ["none", "sas_log"],
+      "default": "none"
+    }
+  ]
+}
