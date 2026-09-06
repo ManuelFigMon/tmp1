@@ -35,12 +35,17 @@
         formatCSV, sendEmail = ns["formatCSV"], ns["sendEmail"]
 
   Function Index:
-    formatCSV  - CSV to a styled Excel workbook (SAS ODS look and feel);
-                 FormatType corporate | corporatev2 | plain | minimal
+    formatData - CSV to a styled Excel workbook (SAS ODS look and feel);
+                 FormatType corporate | corporatev2 | plain | minimal.
+                 The full package also reads .xlsx; this build does not --
+                 see the note in the docstring.
+    formatCSV  - deprecated alias for formatData
     sendEmail  - SMTP notification to one or many recipients
 
   Change Log:
-    v1.0beta-lite - First lite build. formatCSV and sendEmail only, with
+    v1.0beta-lite - Renamed formatCSV to formatData, keeping formatCSV as
+                    an alias.
+                  - First lite build. formatCSV and sendEmail only, with
                     every src.utils helper inlined so the file stands alone.
                     Adds the corporatev2 FormatType and saves the workbook
                     through BytesIO for Snowflake workspace compatibility.
@@ -59,7 +64,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 __version__ = "1.0beta-lite"
-__all__ = ["formatCSV", "sendEmail", "__version__"]
+__all__ = ["formatData", "formatCSV", "sendEmail", "__version__"]
 
 # --------------------------------------------------------------------- #
 # Inlined helpers. The full package imports these from src.utils; the lite
@@ -130,17 +135,18 @@ def readCsv(inputPath: str) -> List[Dict[str, str]]:
 
 
 # --------------------------------------------------------------------- #
-# formatCSV
+# formatData  (formatCSV is kept as an alias)
 # --------------------------------------------------------------------- #
 
-def formatCSV(InputCsvPath: str, OutputExcelPath: str,
-              FormatType: str = DEFAULT_FORMAT_TYPE,
-              SheetName: str = "Report",
-              Title: str = "") -> Dict[str, Any]:
+def formatData(InputPath: str = "", OutputExcelPath: str = "",
+               FormatType: str = DEFAULT_FORMAT_TYPE,
+               SheetName: str = "Report",
+               Title: str = "",
+               InputCsvPath: str = "") -> Dict[str, Any]:
     """Render a CSV as a styled Excel workbook.
 
     Parameters:
-        InputCsvPath (str)    - REQUIRED source CSV.
+        InputPath (str)       - REQUIRED source CSV.
         OutputExcelPath (str) - REQUIRED destination .xlsx.
         FormatType (str)      - corporate (default) | corporatev2 |
                                 plain | minimal. "corporate" and
@@ -149,20 +155,35 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
                                 with corporatev2 reserved as the versioned
                                 name for that look.
         SheetName (str)       - worksheet name; default "Report".
-        Title (str)           - banner text; defaults to the CSV filename.
+        Title (str)           - banner text; defaults to the input filename.
+        InputCsvPath (str)    - DEPRECATED alias for InputPath.
     Returns:
-        dict with OutputExcelPath, RowCount, ColumnCount and FormatType.
+        dict with OutputExcelPath, RowCount, ColumnCount, FormatType and
+        InputPath.
     Raises:
-        ValueError  - a required parameter is missing or FormatType unknown.
+        ValueError  - a required parameter is missing, FormatType is unknown,
+                      or an .xlsx was passed (see below).
         ImportError - openpyxl is not installed (message says how to fix).
         OSError     - the CSV cannot be read.
+
+    LITE BUILD LIMITATION. The full package's formatData also READS .xlsx.
+    This build deliberately does not: it is one self-contained teaching file,
+    and an .xlsx reader is a hundred lines of zip and XML parsing that would
+    bury the part a trainee is meant to read. Passing one raises a message
+    saying where to get the full version rather than failing obscurely.
 
     Use in claims processing:
         Turn a claims extract into a report an analyst or manager can open
         directly, without hand-formatting it in Excel every cycle.
     """
-    if not InputCsvPath or not str(InputCsvPath).strip():
-        raise ValueError("required parameter 'InputCsvPath' is missing or empty")
+    InputPath = str(InputPath or InputCsvPath or "").strip()
+    if not InputPath:
+        raise ValueError("required parameter 'InputPath' is missing or empty")
+    if Path(InputPath).suffix.lower() in (".xlsx", ".xlsm"):
+        raise ValueError(
+            f"the lite build of formatData reads CSV only, and {InputPath} is "
+            f"a workbook. Use the full package (src/py/formatData.py), which "
+            f"reads .xlsx, or export the sheet to CSV first.")
     if not OutputExcelPath or not str(OutputExcelPath).strip():
         raise ValueError("required parameter 'OutputExcelPath' is missing or empty")
     if FormatType not in FORMAT_STYLES:
@@ -174,13 +195,13 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
         from openpyxl.utils import get_column_letter
     except ImportError:
         raise ImportError(
-            "formatCSV requires openpyxl for Excel styling. Install it with "
+            "formatData requires openpyxl for Excel styling. Install it with "
             "'pip install openpyxl'.")
 
-    rows = readCsv(InputCsvPath)
+    rows = readCsv(InputPath)
     columns = list(rows[0].keys()) if rows else []
     style = FORMAT_STYLES[FormatType]
-    banner = Title or Path(InputCsvPath).stem
+    banner = Title or Path(InputPath).stem
 
     workbook = Workbook()
     sheet = workbook.active
@@ -234,7 +255,25 @@ def formatCSV(InputCsvPath: str, OutputExcelPath: str,
     logInfo(f"formatted {len(rows)} row(s) x {len(columns)} column(s) "
             f"[{FormatType}] -> {OutputExcelPath}")
     return {"OutputExcelPath": OutputExcelPath, "RowCount": len(rows),
-            "ColumnCount": len(columns), "FormatType": FormatType}
+            "ColumnCount": len(columns), "FormatType": FormatType,
+            "InputPath": InputPath}
+
+
+def formatCSV(InputCsvPath: str = "", OutputExcelPath: str = "",
+              FormatType: str = DEFAULT_FORMAT_TYPE,
+              SheetName: str = "Report", Title: str = "",
+              **kwargs: Any) -> Dict[str, Any]:
+    """DEPRECATED alias for formatData, kept so existing callers keep working.
+
+    Parameters: as formatData, with the original parameter name InputCsvPath.
+    Returns: whatever formatData returns.
+
+    Not removed and not warned about on every call: this name is in the
+    training pipelines and the handouts that go with them.
+    """
+    return formatData(InputPath=InputCsvPath, OutputExcelPath=OutputExcelPath,
+                      FormatType=FormatType, SheetName=SheetName, Title=Title,
+                      **kwargs)
 
 
 # --------------------------------------------------------------------- #
@@ -327,6 +366,8 @@ def _register(moduleName: str = "cgs_ai") -> None:
     module.__doc__ = f"cgs_ai lite build {__version__} (formatCSV, sendEmail)"
     module.__version__ = __version__
     module.__all__ = list(__all__)
+    module.formatData = formatData
+    module.formatData = formatData
     module.formatCSV = formatCSV
     module.sendEmail = sendEmail
     sys.modules[moduleName] = module

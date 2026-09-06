@@ -2,9 +2,9 @@
 =====================================================================
   Program Name  : xlsx.py
   Author        : Manuel Figallo
-  Purpose       : Write a multi-sheet .xlsx with the standard library
-                  alone, so a workbook can be produced on a server that
-                  has neither openpyxl nor the ImportExcel module.
+  Purpose       : Read and write .xlsx with the standard library alone, so
+                  a workbook can be produced -- and consumed -- on a server
+                  that has neither openpyxl nor the ImportExcel module.
   Version       : 1.0beta
   Created       : 2026-09-06
   Last Modified : 2026-09-06
@@ -253,3 +253,181 @@ def writeWorkbook(sheets: Sequence[Dict[str, Any]], outputPath: str) -> str:
             # UTF-8 with NO byte-order mark: Excel rejects a BOM inside parts.
             archive.writestr(name, content.encode("utf-8"))
     return str(destination)
+
+
+# =====================================================================
+# Reading
+# =====================================================================
+
+MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+PKG_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+CELL_REF = re.compile(r"^([A-Z]+)")
+
+
+def columnIndex(cellRef: str) -> int:
+    """Convert a cell reference to a 0-based column index (A1 -> 0, AA3 -> 26).
+
+    Parameters: cellRef (str) - e.g. "AA12".
+    Returns: int 0-based column index; 0 when the reference is unusable.
+    """
+    letters = CELL_REF.match(str(cellRef or "").upper())
+    if not letters:
+        return 0
+    index = 0
+    for character in letters.group(1):
+        index = index * 26 + (ord(character) - 64)
+    return index - 1
+
+
+def _sharedStrings(archive: zipfile.ZipFile) -> List[str]:
+    """Read xl/sharedStrings.xml. Returns: list[str], empty when absent.
+
+    A shared string can be split across several runs (<r><t>..</t></r>), so
+    every <t> under an <si> is concatenated -- taking only the first would
+    silently truncate any cell Excel happened to style mid-word.
+    """
+    import xml.etree.ElementTree as ET
+    try:
+        raw = archive.read("xl/sharedStrings.xml")
+    except KeyError:
+        return []
+    return ["".join(node.text or "" for node in item.iter(f"{MAIN_NS}t"))
+            for item in ET.fromstring(raw).findall(f"{MAIN_NS}si")]
+
+
+def _sheetPaths(archive: zipfile.ZipFile) -> List[Dict[str, str]]:
+    """Map worksheet names to their parts, in workbook order.
+
+    Parameters: archive (ZipFile) - the open .xlsx.
+    Returns: list of {"name", "path"}.
+    """
+    import xml.etree.ElementTree as ET
+    relations = {}
+    try:
+        relsXml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        for node in relsXml.findall(f"{PKG_REL_NS}Relationship"):
+            target = node.get("Target", "")
+            relations[node.get("Id", "")] = (
+                target[1:] if target.startswith("/") else f"xl/{target}")
+    except KeyError:
+        pass
+
+    found: List[Dict[str, str]] = []
+    workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+    for index, node in enumerate(workbook.iter(f"{MAIN_NS}sheet"), start=1):
+        path = relations.get(node.get(f"{REL_NS}id", ""))
+        if path is None or path not in archive.namelist():
+            path = f"xl/worksheets/sheet{index}.xml"
+        found.append({"name": node.get("name", f"Sheet{index}"), "path": path})
+    return found
+
+
+def readSheetRows(path: str, sheet: Any = None) -> List[List[str]]:
+    """Read one worksheet as a grid of strings, with the standard library.
+
+    Parameters:
+        path (str)      - the .xlsx to read.
+        sheet (str|int) - worksheet name, or 0-based index; default the first.
+    Returns:
+        list of rows, each a list of cell values as strings. Short rows are
+        padded so every row has the same length.
+    Raises:
+        OSError / KeyError - the file is not a readable .xlsx.
+
+    Values come back as STRINGS on purpose: a claim number stored as text
+    keeps its leading zeros, and this reader feeds a formatter, not a
+    calculation.
+    """
+    import xml.etree.ElementTree as ET
+    with zipfile.ZipFile(path) as archive:
+        strings = _sharedStrings(archive)
+        sheets = _sheetPaths(archive)
+        if not sheets:
+            return []
+        if sheet is None or sheet == "":
+            chosen = sheets[0]
+        elif isinstance(sheet, int):
+            chosen = sheets[sheet]
+        else:
+            matches = [s for s in sheets if s["name"] == sheet]
+            if not matches:
+                raise KeyError(
+                    f"worksheet {sheet!r} not found; this workbook has: "
+                    f"{', '.join(s['name'] for s in sheets)}")
+            chosen = matches[0]
+        tree = ET.fromstring(archive.read(chosen["path"]))
+
+    grid: List[List[str]] = []
+    for rowNode in tree.iter(f"{MAIN_NS}row"):
+        cells: List[str] = []
+        for cellNode in rowNode.findall(f"{MAIN_NS}c"):
+            index = columnIndex(cellNode.get("r", ""))
+            while len(cells) < index:      # sparse rows omit empty cells
+                cells.append("")
+            kind = cellNode.get("t", "n")
+            if kind == "s":
+                value = cellNode.find(f"{MAIN_NS}v")
+                position = int(value.text) if value is not None and value.text else -1
+                text = strings[position] if 0 <= position < len(strings) else ""
+            elif kind == "inlineStr":
+                node = cellNode.find(f"{MAIN_NS}is")
+                text = "".join(t.text or "" for t in node.iter(f"{MAIN_NS}t")) \
+                    if node is not None else ""
+            else:
+                value = cellNode.find(f"{MAIN_NS}v")
+                text = value.text if value is not None and value.text else ""
+            cells.append(text)
+        grid.append(cells)
+
+    width = max((len(row) for row in grid), default=0)
+    for row in grid:
+        row.extend([""] * (width - len(row)))
+    return grid
+
+
+def detectHeaderRow(grid: Sequence[Sequence[str]]) -> int:
+    """Work out which row holds the column headers.
+
+    Parameters: grid (sequence) - rows from readSheetRows.
+    Returns: int the 1-based header row number.
+
+    A workbook this package produced has a merged TITLE BANNER on row 1 and
+    the headers on row 2. That shows up as a first row with a single filled
+    cell above a much wider second row, which is what is detected here, so a
+    formatted workbook can be fed straight back in without a parameter.
+    """
+    if len(grid) < 2:
+        return 1
+    filledFirst = sum(1 for cell in grid[0] if str(cell).strip())
+    filledSecond = sum(1 for cell in grid[1] if str(cell).strip())
+    return 2 if filledFirst <= 1 < filledSecond else 1
+
+
+def readSheet(path: str, sheet: Any = None,
+              headerRow: int = 0) -> List[Dict[str, str]]:
+    """Read one worksheet as a list of dicts keyed by column header.
+
+    Parameters:
+        path (str)      - the .xlsx to read.
+        sheet (str|int) - worksheet name or 0-based index; default the first.
+        headerRow (int) - 1-based header row; 0 (default) detects it.
+    Returns:
+        list[dict] in sheet order, shaped like readCsv's output so either
+        input can feed the same formatter.
+
+    Use in claims processing:
+        Re-format a workbook a colleague sent, or re-style one this package
+        produced last cycle, without converting it back to CSV first.
+    """
+    grid = readSheetRows(path, sheet)
+    if not grid:
+        return []
+    header = headerRow if headerRow > 0 else detectHeaderRow(grid)
+    header = max(1, min(header, len(grid)))
+    columns = [str(cell).strip() for cell in grid[header - 1]]
+    # Unnamed trailing columns would collide on the empty-string key.
+    columns = [name or f"Column{index}"
+               for index, name in enumerate(columns, start=1)]
+    return [dict(zip(columns, row)) for row in grid[header:]]

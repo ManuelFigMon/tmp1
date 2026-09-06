@@ -5,7 +5,7 @@
 # so a missing package produces a clear message from that function instead of
 # breaking the import of cgs_ai.
 
-# --- Excel output: formatCSV, copyExcelSheet2CSV, scanFileSystem(metric_profile)
+# --- Excel output: formatData, copyExcelSheet2CSV, scanFileSystem(metric_profile)
 openpyxl>=3.1
 
 # --- SAS conversion: convertSAS2Pandas ---------------------------------------

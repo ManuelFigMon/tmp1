@@ -33,7 +33,8 @@ def test_version_is_declared():
 
 
 @pytest.mark.parametrize("name", [
-    "scanFileSystem", "runSQLServerQuery", "formatCSV", "downloadBulkFiles",
+    "scanFileSystem", "runSQLServerQuery", "formatData", "formatCSV",
+    "downloadBulkFiles",
     "sendEmail", "convertSAS2Pandas", "copyExcelSheet2CSV",
     "collectSystemMetrics", "zipFolder", "runFilescanPipeline",
     "basic_hello", "personalized_hello", "detailed_hello"])
@@ -366,6 +367,111 @@ def test_corporate_body_escapes_html_in_a_path():
     assert "&lt;script&gt;" in body
 
 
+# --- formatData: reads a CSV or a workbook -----------------------------------
+
+def _twoRowCsv(tmp_path):
+    target = tmp_path / "in.csv"
+    with open(target, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, ["Claim", "Amount"])
+        writer.writeheader()
+        writer.writerow({"Claim": "007", "Amount": "1.50"})
+        writer.writerow({"Claim": "008", "Amount": "2.00"})
+    return str(target)
+
+
+def test_formatdata_reads_a_csv(tmp_path):
+    pytest.importorskip("openpyxl")
+    result = cgs_ai.formatData(InputPath=_twoRowCsv(tmp_path),
+                               OutputExcelPath=str(tmp_path / "o.xlsx"))
+    assert result["RowCount"] == 2 and result["ColumnCount"] == 2
+
+
+def test_formatdata_reads_its_own_output_back(tmp_path):
+    """The banner on row 1 must not be mistaken for the header row."""
+    pytest.importorskip("openpyxl")
+    first = cgs_ai.formatData(InputPath=_twoRowCsv(tmp_path),
+                              OutputExcelPath=str(tmp_path / "one.xlsx"),
+                              Title="Issue Log of DB Tables")
+    second = cgs_ai.formatData(InputPath=first["OutputExcelPath"],
+                               OutputExcelPath=str(tmp_path / "two.xlsx"),
+                               FormatType="corporatev2")
+    assert second["RowCount"] == 2, "the banner row is not a data row"
+    assert second["ColumnCount"] == 2
+    from openpyxl import load_workbook
+    sheet = load_workbook(second["OutputExcelPath"])["Report"]
+    assert [sheet["A2"].value, sheet["B2"].value] == ["Claim", "Amount"]
+    assert sheet["A3"].value == "007", "text cells keep their leading zeros"
+
+
+def test_formatdata_can_be_pointed_at_a_named_worksheet(tmp_path):
+    pytest.importorskip("openpyxl")
+    from openpyxl import Workbook
+    book = Workbook()
+    book.active.title = "Empty"
+    book.active.append(["ignored"])
+    wanted = book.create_sheet("Wanted")
+    wanted.append(["Libref", "UsageLines"])
+    wanted.append(["issuelog", "8,15"])
+    book.save(tmp_path / "multi.xlsx")
+    result = cgs_ai.formatData(InputPath=str(tmp_path / "multi.xlsx"),
+                               OutputExcelPath=str(tmp_path / "o.xlsx"),
+                               InputSheet="Wanted")
+    assert result["RowCount"] == 1 and result["ColumnCount"] == 2
+
+
+def test_formatdata_says_which_sheets_exist_when_the_name_is_wrong(tmp_path):
+    pytest.importorskip("openpyxl")
+    from openpyxl import Workbook
+    book = Workbook()
+    book.active.title = "Report"
+    book.save(tmp_path / "one.xlsx")
+    with pytest.raises(KeyError) as caught:
+        cgs_ai.formatData(InputPath=str(tmp_path / "one.xlsx"),
+                          OutputExcelPath=str(tmp_path / "o.xlsx"),
+                          InputSheet="Nope")
+    assert "Report" in str(caught.value), "the message must list what IS there"
+
+
+def test_formatcsv_is_still_callable_under_its_old_name(tmp_path):
+    """Running pipelines, the SAS wrapper and the handouts all say formatCSV."""
+    pytest.importorskip("openpyxl")
+    result = cgs_ai.formatCSV(InputCsvPath=_twoRowCsv(tmp_path),
+                              OutputExcelPath=str(tmp_path / "o.xlsx"))
+    assert result["RowCount"] == 2
+    from src.py.formatCSV import formatCSV as fromOldModulePath
+    assert fromOldModulePath is cgs_ai.formatCSV, \
+        "the old import path must reach the same function"
+
+
+def test_the_sas_wrapper_keeps_both_macro_names():
+    assert re.search(r"%macro\s+formatData\s*\(", SAS_FUNCTIONS)
+    assert re.search(r"%macro\s+formatCSV\s*\(", SAS_FUNCTIONS)
+    block = re.search(r"%macro formatCSV\b.*?%mend formatCSV;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    assert "%formatData(" in block, "the old macro must forward to the new one"
+
+
+def test_ods1_refuses_a_workbook_rather_than_failing_obscurely():
+    """ODS1 loads the input with a DATA step, so it reads CSV only."""
+    block = re.search(r"%macro formatData\b.*?%mend formatData;",
+                      SAS_FUNCTIONS, re.DOTALL).group(0)
+    assert "ODS1 reads CSV only" in block
+    assert "xlsm" in block and "%return" in block
+
+
+def test_the_lite_build_names_the_full_package_for_xlsx(tmp_path):
+    """The lite build is one teaching file; it says so instead of crashing."""
+    import runpy
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    assert "formatData" in lite and "formatCSV" in lite
+    with pytest.raises(ValueError) as caught:
+        lite["formatData"](InputPath=str(tmp_path / "x.xlsx"),
+                           OutputExcelPath=str(tmp_path / "o.xlsx"))
+    assert "full package" in str(caught.value)
+
+
 # --- the standard-library .xlsx writer ---------------------------------------
 
 def test_stdlib_writer_produces_a_readable_multi_sheet_workbook(tmp_path):
@@ -462,7 +568,7 @@ def test_the_two_xlsx_writers_agree_on_the_parts_they_emit():
 
 PS_DIR = ROOT / "src" / "ps"
 PY_DIR = ROOT / "src" / "py"
-FUNCTIONS = ["scanFileSystem", "runSQLServerQuery", "formatCSV",
+FUNCTIONS = ["scanFileSystem", "runSQLServerQuery", "formatData",
              "downloadBulkFiles", "sendEmail", "convertSAS2Pandas",
              "copyExcelSheet2CSV", "collectSystemMetrics", "zipFolder"]
 
@@ -547,7 +653,8 @@ def test_scanfilesystem_parameter_names_match_across_languages():
 # --- formatCSV: the SAS ODS1 renderer and the PowerShell native writer -------
 
 SAS_FUNCTIONS = (ROOT / "src" / "sas" / "cgsFunctions.sas").read_text()
-PS_FORMATCSV = (ROOT / "src" / "ps" / "formatCSV.ps1").read_text()
+PS_FORMATCSV = (ROOT / "src" / "ps" / "formatData.ps1").read_text()
+PS_FORMATCSV_SHIM = (ROOT / "src" / "ps" / "formatCSV.ps1").read_text()
 
 
 def test_sas_macro_and_mend_are_balanced():
@@ -558,7 +665,7 @@ def test_sas_macro_and_mend_are_balanced():
 
 
 def test_sas_formatcsv_routes_ods1_without_leaving_sas():
-    block = re.search(r"%macro formatCSV\b.*?%mend formatCSV;",
+    block = re.search(r"%macro formatData\b.*?%mend formatData;",
                       SAS_FUNCTIONS, re.DOTALL).group(0)
     # ODS1 must be intercepted BEFORE %cgsRun, or it would be handed to
     # PowerShell, which has no such FormatType.
@@ -655,7 +762,7 @@ def test_sas_put_statements_are_not_continued_onto_the_next_line():
 
 def test_powershell_formatcsv_no_longer_fails_without_importexcel():
     """The missing module must be a fallback, not a fatal error."""
-    assert "formatCSV requires the ImportExcel module" not in PS_FORMATCSV
+    assert "formatData requires the ImportExcel module" not in PS_FORMATCSV
     assert "function Write-XlsxNative" in PS_FORMATCSV
     assert "writing the workbook natively" in PS_FORMATCSV
 

@@ -35,7 +35,8 @@ cgs_ai.scanFileSystem(input_folder_root=[r"\\srv\logs"],
 |---|---|
 | `scanFileSystem` | Keyword scan of directory roots; **one row per match** with context lines and extracted tokens |
 | `runSQLServerQuery` | SQL Server query via Windows Integrated Security (no password) |
-| `formatCSV` | CSV to styled Excel with a SAS ODS look and feel |
+| `formatData` | CSV **or Excel** to styled Excel with a SAS ODS look and feel |
+| `formatCSV` | deprecated alias for `formatData` |
 | `downloadBulkFiles` | Bulk HTTP download from a CSV link column |
 | `sendEmail` | SMTP alert to one or many recipients |
 | `convertSAS2Pandas` | sas7bdat to pandas DataFrame |

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from src.py.copyExcelSheet2CSV import SheetNotCsvReadyError, copyExcelSheet2CSV  # noqa: E402
 from src.py.downloadBulkFiles import downloadBulkFiles  # noqa: E402
-from src.py.formatCSV import formatCSV                  # noqa: E402
+from src.py.formatData import formatCSV, formatData     # noqa: E402
 from src.py.scanFileSystem import scanFileSystem        # noqa: E402
 from src.py.sendEmail import sendEmail                  # noqa: E402
 from src.py.zipFolder import zipFolder                  # noqa: E402
@@ -25,7 +25,7 @@ openpyxl = pytest.importorskip("openpyxl", reason="Excel tests need openpyxl")
     (lambda: zipFolder(FolderToZip="", OutputZipPath="x.zip"), "FolderToZip"),
     (lambda: zipFolder(FolderToZip=".", OutputZipPath=""), "OutputZipPath"),
     (lambda: downloadBulkFiles(InputCsvPath="", OutputFolder="o"), "InputCsvPath"),
-    (lambda: formatCSV(InputCsvPath="", OutputExcelPath="o.xlsx"), "InputCsvPath"),
+    (lambda: formatData(InputPath="", OutputExcelPath="o.xlsx"), "InputPath"),
 ])
 def test_required_parameters_are_enforced(call, missing):
     with pytest.raises(ValueError) as excinfo:
@@ -129,7 +129,7 @@ def test_env_parsing_rules(tmp_path):
 # --- formatCSV: the corporatev2 style ----------------------------------------
 
 import runpy                                             # noqa: E402
-from src.py.formatCSV import FORMAT_STYLES, STRIPED_FORMATS  # noqa: E402
+from src.py.formatData import FORMAT_STYLES, STRIPED_FORMATS  # noqa: E402
 
 
 def _sampleCsv(tmp_path):

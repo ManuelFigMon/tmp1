@@ -53,7 +53,7 @@ def buildBody() -> str:
           "First consolidated release. Data-engineering folder structure "
           "adopted; .env/.gitignore configuration added; scanFileSystem "
           "regrained to one row per keyword match; eight new functions "
-          "(runSQLServerQuery, formatCSV, downloadBulkFiles, sendEmail, "
+          "(runSQLServerQuery, formatData, downloadBulkFiles, sendEmail, "
           "convertSAS2Pandas, copyExcelSheet2CSV, collectSystemMetrics, "
           "zipFolder); filescan pipeline; Python/PowerShell/SAS parity."],
          ["0.9", "2026-08-25", "Manuel Figallo",
@@ -105,7 +105,7 @@ def buildBody() -> str:
         "change control."))
     x.append(table(
         ["Package", "Needed by", "If missing"],
-        [["openpyxl", "formatCSV, copyExcelSheet2CSV, scanFileSystem "
+        [["openpyxl", "formatData, copyExcelSheet2CSV, scanFileSystem "
                       "(metric_profile)", "Scan falls back to CSV with a warning"],
          ["pandas", "convertSAS2Pandas", "Clear ImportError naming the pip command"],
          ["pyodbc", "runSQLServerQuery (Python only)",
@@ -253,7 +253,7 @@ def buildBody() -> str:
     x.append(para("Worked example: the filescan pipeline", style="Heading2"))
     x.append(para(
         "🗄️ SAS job logs on a UNC share  →  🔀 filescan_pipeline  →  "
-        "scanFileSystem (keyword matches + metrics)  →  formatCSV (styled "
+        "scanFileSystem (keyword matches + metrics)  →  formatData (styled "
         "workbook)  →  sendEmail (operations mailbox)", spaceAfter=160))
     x.append(pageBreak())
 
@@ -344,7 +344,7 @@ def buildBody() -> str:
          "pass-through uses. The PowerShell twin needs no module at all, which "
          "matters on servers where installs require change control."),
 
-        ("formatCSV",
+        ("formatData",
          "Render a CSV as a styled Excel workbook with a SAS ODS look and feel: "
          "navy title banner, blue header row, zebra striping, frozen and "
          "auto-filtered header.",
@@ -402,7 +402,7 @@ def buildBody() -> str:
           ("SheetName", "REQUIRED. Worksheet to export."),
           ("OutputCsvPath", "REQUIRED. Destination CSV."),
           ("HeaderRow", "1-based header row. Default 1; use 2 for a workbook with "
-                        "a title banner, which is what formatCSV produces.")],
+                        "a title banner, which is what formatData produces.")],
          "Convert a hand-maintained Excel reference workbook -- fee schedules, "
          "denial-code mappings, provider lists -- into the CSV a pipeline can "
          "consume, catching formatting mistakes at the source instead of letting "
@@ -430,7 +430,7 @@ def buildBody() -> str:
          "to another team."),
 
         ("runFilescanPipeline",
-         "End-to-end orchestration: scanFileSystem, then formatCSV, then sendEmail. "
+         "End-to-end orchestration: scanFileSystem, then formatData, then sendEmail. "
          "Orchestration only -- all work lives in the three functions it calls. "
          "Email failure is reported but does not fail the pipeline, because the "
          "scan output is already on disk and is the deliverable.",
@@ -518,7 +518,7 @@ def buildBody() -> str:
         ("Step 9 - Produce a formatted report",
          "Turn that CSV into a styled workbook from a Python terminal:",
          ">>> import cgs_ai\n"
-         ">>> cgs_ai.formatCSV(InputCsvPath='data/first_scan.csv',\n"
+         ">>> cgs_ai.formatData(InputPath='data/first_scan.csv',\n"
          "...                  OutputExcelPath='data/first_scan.xlsx')"),
         ("Step 10 - Debug interactively",
          "Set a breakpoint by clicking the gutter beside any line in "

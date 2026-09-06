@@ -32,7 +32,8 @@
     scanFileSystem           - keyword scan of directory roots; one row/match
     get_comments             - retrieve public comments from Regulations.gov
     runSQLServerQuery        - SQL Server query via Integrated Security
-    formatCSV                - CSV to styled Excel (SAS ODS look and feel)
+    formatData               - CSV or Excel to styled Excel (SAS ODS look)
+    formatCSV                - deprecated alias for formatData
     downloadBulkFiles        - bulk HTTP download from a CSV link column
     sendEmail                - SMTP alert to one or many recipients
     convertSAS2Pandas        - sas7bdat to pandas DataFrame
@@ -94,7 +95,7 @@ from src.py.collectSystemMetrics import collectSystemMetrics    # noqa: E402
 from src.py.convertSAS2Pandas import convertSAS2Pandas          # noqa: E402
 from src.py.copyExcelSheet2CSV import copyExcelSheet2CSV        # noqa: E402
 from src.py.downloadBulkFiles import downloadBulkFiles          # noqa: E402
-from src.py.formatCSV import formatCSV                          # noqa: E402
+from src.py.formatData import formatCSV, formatData             # noqa: E402
 from src.py.runSQLServerQuery import runSQLServerQuery          # noqa: E402
 from src.py.scanFileSystem import scanFileSystem                # noqa: E402
 from src.py.sendEmail import sendEmail                          # noqa: E402
@@ -114,7 +115,8 @@ __all__ = [
     # greetings
     "basic_hello", "personalized_hello", "detailed_hello",
     # toolkit
-    "scanFileSystem", "runSQLServerQuery", "formatCSV", "downloadBulkFiles",
+    "scanFileSystem", "runSQLServerQuery", "formatData", "formatCSV",
+    "downloadBulkFiles",
     "sendEmail", "convertSAS2Pandas", "copyExcelSheet2CSV",
     "collectSystemMetrics", "zipFolder", "runFilescanPipeline",
     # regulations.gov

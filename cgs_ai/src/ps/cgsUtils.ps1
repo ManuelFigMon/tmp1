@@ -26,7 +26,8 @@ $script:CgsVersion = '1.0beta'
 #   1  original helpers
 #   2  Assert-CgsWritable split into Test-CgsWritable + Resolve-CgsWritableTarget
 #   3  Write-CgsXlsx added -- native multi-sheet .xlsx, no ImportExcel needed
-$script:CgsUtilsApi = 3
+#   4  Read-CgsXlsxSheet added -- native .xlsx reading, for formatData
+$script:CgsUtilsApi = 4
 
 function Get-CgsUtilsBanner {
     <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
@@ -477,6 +478,184 @@ function Write-CgsXlsx {
         } finally { $archive.Dispose() }
     } finally { $stream.Dispose() }
     return $Path
+}
+
+$script:XlsxMainNs = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+$script:XlsxRelNs  = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+$script:XlsxPkgNs  = 'http://schemas.openxmlformats.org/package/2006/relationships'
+
+function Get-CgsColumnIndex {
+    <# .SYNOPSIS Convert a cell reference to a 0-based column index (AA3 -> 26).
+       .OUTPUTS [int] 0-based index; 0 when the reference is unusable. #>
+    param([string] $CellRef)
+    $letters = [regex]::Match([string]$CellRef.ToUpperInvariant(), '^([A-Z]+)')
+    if (-not $letters.Success) { return 0 }
+    $index = 0
+    foreach ($character in $letters.Groups[1].Value.ToCharArray()) {
+        $index = $index * 26 + ([int][char]$character - 64)
+    }
+    return $index - 1
+}
+
+function Read-CgsXlsxGrid {
+    <# .SYNOPSIS Read one worksheet as a grid of strings, with no add-in.
+       .PARAMETER Path   The .xlsx to read.
+       .PARAMETER Sheet  Worksheet name; default the first sheet.
+       .OUTPUTS [object[]] array of string arrays, all the same length.
+       .NOTES  Values come back as STRINGS on purpose: a claim number stored
+               as text keeps its leading zeros, and this feeds a formatter,
+               not a calculation. Mirrors readSheetRows in src/utils/xlsx.py. #>
+    param([string] $Path, [string] $Sheet = '')
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    try {
+        function Read-Entry([string] $name) {
+            $entry = $archive.GetEntry($name)
+            if ($null -eq $entry) { return $null }
+            $reader = New-Object System.IO.StreamReader($entry.Open())
+            try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+        }
+
+        # Shared strings. A string can be split across several runs, so every
+        # <t> under an <si> is joined -- taking the first would truncate any
+        # cell Excel happened to style mid-word.
+        $strings = New-Object System.Collections.Generic.List[string]
+        $sharedXml = Read-Entry 'xl/sharedStrings.xml'
+        if ($sharedXml) {
+            $shared = New-Object System.Xml.XmlDocument
+            $shared.LoadXml($sharedXml)
+            foreach ($si in $shared.GetElementsByTagName('si', $script:XlsxMainNs)) {
+                $text = ''
+                foreach ($t in $si.GetElementsByTagName('t', $script:XlsxMainNs)) { $text += $t.InnerText }
+                $strings.Add($text)
+            }
+        }
+
+        # Worksheet name -> part, in workbook order.
+        $relations = @{}
+        $relsXml = Read-Entry 'xl/_rels/workbook.xml.rels'
+        if ($relsXml) {
+            $rels = New-Object System.Xml.XmlDocument
+            $rels.LoadXml($relsXml)
+            foreach ($node in $rels.GetElementsByTagName('Relationship', $script:XlsxPkgNs)) {
+                $target = $node.GetAttribute('Target')
+                if ($target.StartsWith('/')) { $relations[$node.GetAttribute('Id')] = $target.Substring(1) }
+                else { $relations[$node.GetAttribute('Id')] = "xl/$target" }
+            }
+        }
+        $workbook = New-Object System.Xml.XmlDocument
+        $workbook.LoadXml((Read-Entry 'xl/workbook.xml'))
+        $sheets = New-Object System.Collections.Generic.List[object]
+        $ordinal = 1
+        foreach ($node in $workbook.GetElementsByTagName('sheet', $script:XlsxMainNs)) {
+            $id = $node.GetAttribute('id', $script:XlsxRelNs)
+            $part = if ($relations.ContainsKey($id)) { $relations[$id] } else { "xl/worksheets/sheet$ordinal.xml" }
+            $sheets.Add(@{ Name = $node.GetAttribute('name'); Path = $part })
+            $ordinal++
+        }
+        if ($sheets.Count -eq 0) { return , @() }
+
+        if (-not $Sheet) { $chosen = $sheets[0] }
+        else {
+            $chosen = $sheets | Where-Object { $_.Name -eq $Sheet } | Select-Object -First 1
+            if ($null -eq $chosen) {
+                throw ("worksheet '{0}' not found; this workbook has: {1}" -f
+                       $Sheet, (($sheets | ForEach-Object { $_.Name }) -join ', '))
+            }
+        }
+        $sheetDoc = New-Object System.Xml.XmlDocument
+        $sheetDoc.LoadXml((Read-Entry $chosen.Path))
+    } finally { $archive.Dispose() }
+
+    $grid = New-Object System.Collections.Generic.List[object]
+    foreach ($rowNode in $sheetDoc.GetElementsByTagName('row', $script:XlsxMainNs)) {
+        $cells = New-Object System.Collections.Generic.List[string]
+        foreach ($cellNode in $rowNode.GetElementsByTagName('c', $script:XlsxMainNs)) {
+            $index = Get-CgsColumnIndex -CellRef $cellNode.GetAttribute('r')
+            while ($cells.Count -lt $index) { $cells.Add('') }   # sparse rows
+            $kind = $cellNode.GetAttribute('t')
+            $text = ''
+            if ($kind -eq 's') {
+                $valueNode = $cellNode.GetElementsByTagName('v', $script:XlsxMainNs)
+                if ($valueNode.Count -gt 0) {
+                    $position = [int] $valueNode[0].InnerText
+                    if ($position -ge 0 -and $position -lt $strings.Count) { $text = $strings[$position] }
+                }
+            }
+            elseif ($kind -eq 'inlineStr') {
+                foreach ($t in $cellNode.GetElementsByTagName('t', $script:XlsxMainNs)) { $text += $t.InnerText }
+            }
+            else {
+                $valueNode = $cellNode.GetElementsByTagName('v', $script:XlsxMainNs)
+                if ($valueNode.Count -gt 0) { $text = $valueNode[0].InnerText }
+            }
+            $cells.Add($text)
+        }
+        $grid.Add($cells.ToArray())
+    }
+
+    $width = 0
+    foreach ($row in $grid) { if ($row.Count -gt $width) { $width = $row.Count } }
+    $padded = New-Object System.Collections.Generic.List[object]
+    foreach ($row in $grid) {
+        $list = New-Object System.Collections.Generic.List[string]
+        $list.AddRange([string[]]$row)
+        while ($list.Count -lt $width) { $list.Add('') }
+        $padded.Add($list.ToArray())
+    }
+    return , $padded.ToArray()
+}
+
+function Get-CgsHeaderRow {
+    <# .SYNOPSIS Work out which row of a grid holds the column headers.
+       .OUTPUTS [int] 1-based header row.
+       .NOTES  A workbook formatData produced has a merged TITLE BANNER on
+               row 1 and the headers on row 2 -- a first row with a single
+               filled cell above a much wider second row. Detecting that lets
+               a formatted workbook be fed straight back in. #>
+    param([object[]] $Grid)
+    if ($Grid.Count -lt 2) { return 1 }
+    $filledFirst  = @($Grid[0] | Where-Object { "$_".Trim() }).Count
+    $filledSecond = @($Grid[1] | Where-Object { "$_".Trim() }).Count
+    if ($filledFirst -le 1 -and $filledSecond -gt 1) { return 2 }
+    return 1
+}
+
+function Read-CgsXlsxSheet {
+    <# .SYNOPSIS Read one worksheet as objects keyed by column header.
+       .PARAMETER Path       The .xlsx to read.
+       .PARAMETER Sheet      Worksheet name; default the first.
+       .PARAMETER HeaderRow  1-based header row; 0 (default) detects it.
+       .OUTPUTS [object[]] PSCustomObjects, shaped like Import-Csv output so
+                either input can feed the same formatter. #>
+    param([string] $Path, [string] $Sheet = '', [int] $HeaderRow = 0)
+    $grid = @(Read-CgsXlsxGrid -Path $Path -Sheet $Sheet)
+    if ($grid.Count -eq 0) { return , @() }
+    $header = if ($HeaderRow -gt 0) { $HeaderRow } else { Get-CgsHeaderRow -Grid $grid }
+    if ($header -lt 1) { $header = 1 }
+    if ($header -gt $grid.Count) { $header = $grid.Count }
+
+    $columns = New-Object System.Collections.Generic.List[string]
+    $position = 1
+    foreach ($name in $grid[$header - 1]) {
+        $clean = "$name".Trim()
+        # An unnamed trailing column would collide on the empty-string key.
+        if (-not $clean) { $clean = "Column$position" }
+        $columns.Add($clean)
+        $position++
+    }
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    for ($i = $header; $i -lt $grid.Count; $i++) {
+        $record = [ordered] @{}
+        for ($c = 0; $c -lt $columns.Count; $c++) {
+            $record[$columns[$c]] = if ($c -lt $grid[$i].Count) { $grid[$i][$c] } else { '' }
+        }
+        $rows.Add([PSCustomObject] $record)
+    }
+    return , $rows.ToArray()
 }
 
 function Get-CgsTimestampSuffix {

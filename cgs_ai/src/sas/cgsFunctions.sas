@@ -128,44 +128,89 @@
 %mend runSQLServerQuery;
 
 
-%macro formatCSV(
-    InputCsvPath    =,             /* REQUIRED                            */
+%macro formatData(
+    InputPath       =,             /* REQUIRED; .csv or .xlsx             */
     OutputExcelPath =,             /* REQUIRED                            */
     FormatType      = corporate,   /* corporate | corporatev2 | plain |   */
                                    /* minimal | ODS1                      */
-    SheetName       = Report,
+    SheetName       = Report,      /* the OUTPUT worksheet                */
     Title           =,
+    InputSheet      =,             /* worksheet to READ from an .xlsx     */
+    HeaderRow       =,             /* 1-based header row; blank = detect  */
+    InputCsvPath    =,             /* DEPRECATED alias for InputPath      */
     engine          = ps,
     debug           = 0
 );
-/* Render a CSV as a styled Excel workbook with a SAS ODS look and feel:
-   navy banner, blue header row, zebra striping.
+/* Render a CSV *or an Excel workbook* as a styled Excel workbook with a SAS
+   ODS look and feel: navy banner, blue header row, zebra striping.
+
+   Renamed from formatCSV, which now reads .xlsx as well as .csv -- "CSV" had
+   stopped describing what it does. %formatCSV still works and forwards here.
+
+   FEEDING BACK ITS OWN OUTPUT. A workbook this macro produced has the title
+   banner on row 1 and the headers on row 2. Reading one back detects that,
+   so one call's output can be the next call's input. HeaderRow= overrides.
 
    FormatType=ODS1 is the ODD ONE OUT. It produces the same look as
    "corporate" but renders it with ODS EXCEL INSIDE SAS, so it needs no
    PowerShell module and no Python. Use it on a server where the
    ImportExcel module is unavailable. engine= is ignored for ODS1 because
-   nothing is launched outside SAS.
+   nothing is launched outside SAS -- and ODS1 reads CSV ONLY, because it
+   loads the input with a DATA step.
 
    Use in claims processing: turn a raw scan or claims extract into a report
    an analyst can open directly, with no hand-formatting each cycle.       */
+  %local _src _ext;
+  %let _src = %superq(InputPath);
+  %if %length(%superq(_src)) = 0 %then %let _src = %superq(InputCsvPath);
+  %let _ext = %lowcase(%scan(%superq(_src), -1, %str(.)));
 
   %if %upcase(&FormatType) = ODS1 %then %do;
-      %cgsFormatCsvOds(InputCsvPath=%superq(InputCsvPath),
+      %if &_ext = xlsx or &_ext = xlsm %then %do;
+          %put ERROR: FormatType=ODS1 reads CSV only because it loads the input with a DATA step.;
+          %put ERROR- Use FormatType=corporate for an .xlsx input, or convert it first with %nrstr(%copyExcelSheet2CSV).;
+          %return;
+      %end;
+      %cgsFormatCsvOds(InputCsvPath=%superq(_src),
                        OutputExcelPath=%superq(OutputExcelPath),
                        SheetName=&SheetName, Title=%superq(Title),
                        debug=&debug);
   %end;
   %else %do;
       %cgsResetArgs;
-      %cgsAddArg(name=-InputCsvPath,    value=%superq(InputCsvPath));
+      %cgsAddArg(name=-InputPath,       value=%superq(_src));
       %cgsAddArg(name=-OutputExcelPath, value=%superq(OutputExcelPath));
       %cgsAddArg(name=-FormatType,      value=&FormatType);
       %cgsAddArg(name=-SheetName,       value=&SheetName);
       %cgsAddArg(name=-Title,           value=%superq(Title));
-      %cgsRun(engine=&engine, script=formatCSV.%sysfunc(ifc(&engine=ps,ps1,py)),
+      %cgsAddArg(name=-InputSheet,      value=%superq(InputSheet));
+      %cgsAddArg(name=-HeaderRow,       value=%superq(HeaderRow));
+      %cgsRun(engine=&engine, script=formatData.%sysfunc(ifc(&engine=ps,ps1,py)),
               taskname=cgsfmt, debug=&debug);
   %end;
+%mend formatData;
+
+
+%macro formatCSV(
+    InputCsvPath    =,             /* REQUIRED; .csv or .xlsx             */
+    OutputExcelPath =,             /* REQUIRED                            */
+    FormatType      = corporate,
+    SheetName       = Report,
+    Title           =,
+    InputSheet      =,
+    HeaderRow       =,
+    InputPath       =,
+    engine          = ps,
+    debug           = 0
+);
+/* DEPRECATED alias for %formatData, kept because this name is in running
+   jobs and in the training handouts. It reads .xlsx too -- it is the same
+   macro underneath.                                                       */
+  %formatData(InputPath=%superq(InputPath), InputCsvPath=%superq(InputCsvPath),
+              OutputExcelPath=%superq(OutputExcelPath),
+              FormatType=&FormatType, SheetName=&SheetName,
+              Title=%superq(Title), InputSheet=%superq(InputSheet),
+              HeaderRow=%superq(HeaderRow), engine=&engine, debug=&debug);
 %mend formatCSV;
 
 
