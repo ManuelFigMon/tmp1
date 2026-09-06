@@ -624,21 +624,18 @@ function Invoke-Main {
         $metricColumns = if ($profileDef.Columns) { @($profileDef.Columns) } else { $script:MetricColumns }
         $written = Write-MatchExcel -MatchRows $matchRows.ToArray() -MetricRows $metricRows.ToArray() -Target $target -MetricColumns $metricColumns
         if ($null -eq $written) {
-            Write-CgsWarn 'no Excel engine (ImportExcel module) available; falling back to CSV'
-            $target = [System.IO.Path]::ChangeExtension($target, '.csv')
-            [void](Write-CgsCsv -Rows $matchRows.ToArray() -Columns $script:MatchColumns -Target $target)
-            Write-CgsInfo ("wrote {0} match row(s) to {1}" -f $matchRows.Count, $target)
+            # No ImportExcel module. An .xlsx was ASKED FOR, so write one --
+            # falling back to a pair of CSVs silently changes the deliverable.
+            Write-CgsInfo 'ImportExcel module not available; writing the workbook with the built-in writer'
+            $sheets = @(@{ Name = $script:MatchSheet; Columns = $script:MatchColumns; Rows = $matchRows.ToArray() })
             if ($metricRows.Count -gt 0) {
-                $companion = Join-Path ([System.IO.Path]::GetDirectoryName($target)) `
-                    ("{0}_Metrics.csv" -f [System.IO.Path]::GetFileNameWithoutExtension($target))
-                [void](Write-CgsCsv -Rows $metricRows.ToArray() -Columns $metricColumns -Target $companion)
-                Write-CgsInfo ("wrote {0} metric row(s) to companion {1}" -f $metricRows.Count, $companion)
+                $sheets += @{ Name = $script:MetricSheet; Columns = $metricColumns; Rows = $metricRows.ToArray() }
             }
-        } else {
-            Write-CgsInfo ("wrote {0} match row(s) to sheet '{1}' in {2}" -f $matchRows.Count, $script:MatchSheet, $written)
-            if ($metricRows.Count -gt 0) {
-                Write-CgsInfo ("wrote {0} metric row(s) to sheet '{1}'" -f $metricRows.Count, $script:MetricSheet)
-            }
+            $written = Write-CgsXlsx -Sheets $sheets -Path $target
+        }
+        Write-CgsInfo ("wrote {0} match row(s) to sheet '{1}' in {2}" -f $matchRows.Count, $script:MatchSheet, $written)
+        if ($metricRows.Count -gt 0) {
+            Write-CgsInfo ("wrote {0} metric row(s) to sheet '{1}'" -f $metricRows.Count, $script:MetricSheet)
         }
     } else {
         [void](Write-CgsCsv -Rows $matchRows.ToArray() -Columns $script:MatchColumns -Target $target)

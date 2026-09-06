@@ -25,7 +25,8 @@ $script:CgsVersion = '1.0beta'
 # log instead of surfacing later as "the term X is not recognized".
 #   1  original helpers
 #   2  Assert-CgsWritable split into Test-CgsWritable + Resolve-CgsWritableTarget
-$script:CgsUtilsApi = 2
+#   3  Write-CgsXlsx added -- native multi-sheet .xlsx, no ImportExcel needed
+$script:CgsUtilsApi = 3
 
 function Get-CgsUtilsBanner {
     <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
@@ -267,6 +268,215 @@ function Write-CgsCsv {
         }
     } finally { $writer.Dispose() }
     return $Target
+}
+
+function ConvertTo-CgsXmlText {
+    <# .SYNOPSIS Escape a value for XML text content.
+       .OUTPUTS [string] with & < > escaped and control characters dropped.
+       .NOTES  Control characters are illegal in XML 1.0 and Excel rejects the
+               whole workbook rather than the one bad cell. #>
+    param($Value)
+    if ($null -eq $Value) { return '' }
+    $text = [regex]::Replace([string]$Value, '[\x00-\x08\x0B\x0C\x0E-\x1F]', '')
+    return $text.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;')
+}
+
+function Get-CgsColumnRef {
+    <# .SYNOPSIS Convert a 1-based column number to letters (1 -> A, 27 -> AA).
+       .OUTPUTS [string] the column reference. #>
+    param([int] $Index)
+    $ref = ''
+    while ($Index -gt 0) {
+        $remainder = ($Index - 1) % 26
+        $ref = [char](65 + $remainder) + $ref
+        $Index = [int](($Index - $remainder - 1) / 26)
+    }
+    return $ref
+}
+
+function Get-CgsSafeSheetName {
+    <# .SYNOPSIS Make a worksheet name Excel accepts, unique in the workbook.
+       .PARAMETER Name  The requested name.
+       .PARAMETER Used  Names already taken.
+       .OUTPUTS [string] at most 31 characters, none of []:*?/\, never empty. #>
+    param([string] $Name, [string[]] $Used = @())
+    $cleaned = [regex]::Replace([string]$Name, '[\[\]:*?/\\]', '_').Trim("'")
+    if ($cleaned.Length -gt 31) { $cleaned = $cleaned.Substring(0, 31) }
+    if (-not $cleaned) { $cleaned = 'Sheet' }
+    $candidate = $cleaned; $suffix = 2
+    while ($Used -contains $candidate) {
+        $tail = "_$suffix"
+        $head = if ($cleaned.Length -gt (31 - $tail.Length)) {
+            $cleaned.Substring(0, 31 - $tail.Length) } else { $cleaned }
+        $candidate = $head + $tail
+        $suffix++
+    }
+    return $candidate
+}
+
+function New-CgsXlsxSheetXml {
+    <# .SYNOPSIS Build one xl/worksheets/sheetN.xml.
+       .PARAMETER Columns  Column order; also the header row.
+       .PARAMETER Rows     Objects or hashtables keyed by column name.
+       .OUTPUTS [string] the worksheet part.
+       .NOTES  The child order is fixed by the schema -- dimension, sheetViews,
+               sheetFormatPr, cols, sheetData, autoFilter. Excel refuses the
+               file when they are out of order, with no useful message. #>
+    param([string[]] $Columns, [object[]] $Rows)
+    if (-not $Columns -or $Columns.Count -eq 0) { $Columns = @('(no columns)') }
+    $lastCol = Get-CgsColumnRef -Index $Columns.Count
+    $lastRow = $Rows.Count + 1
+
+    $sb = New-Object System.Text.StringBuilder
+    [void] $sb.Append('<row r="1">')
+    for ($i = 1; $i -le $Columns.Count; $i++) {
+        [void] $sb.Append('<c r="' + (Get-CgsColumnRef -Index $i) + '1" s="1" t="inlineStr"><is><t xml:space="preserve">' + (ConvertTo-CgsXmlText $Columns[$i - 1]) + '</t></is></c>')
+    }
+    [void] $sb.Append('</row>')
+
+    $rowNumber = 2
+    foreach ($row in $Rows) {
+        [void] $sb.Append('<row r="' + $rowNumber + '">')
+        for ($i = 1; $i -le $Columns.Count; $i++) {
+            $value = ConvertTo-CgsXmlText $row.($Columns[$i - 1])
+            [void] $sb.Append('<c r="' + (Get-CgsColumnRef -Index $i) + $rowNumber + '" s="0" t="inlineStr"><is><t xml:space="preserve">' + $value + '</t></is></c>')
+        }
+        [void] $sb.Append('</row>')
+        $rowNumber++
+    }
+
+    # Column widths, sampled from the first 200 rows for speed.
+    $sample = if ($Rows.Count -gt 200) { $Rows[0..199] } else { $Rows }
+    $cols = New-Object System.Text.StringBuilder
+    for ($i = 1; $i -le $Columns.Count; $i++) {
+        $name = $Columns[$i - 1]
+        $widest = $name.Length
+        foreach ($row in $sample) {
+            $length = ([string] $row.$name).Length
+            if ($length -gt $widest) { $widest = $length }
+        }
+        $width = [Math]::Min(60, [Math]::Max(10, $widest + 2))
+        [void] $cols.Append('<col min="' + $i + '" max="' + $i + '" width="' + $width + '" customWidth="1"/>')
+    }
+
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<dimension ref="A1:' + $lastCol + $lastRow + '"/>' +
+      '<sheetViews><sheetView workbookViewId="0">' +
+      '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>' +
+      '</sheetView></sheetViews><sheetFormatPr defaultRowHeight="15"/>' +
+      '<cols>' + $cols.ToString() + '</cols>' +
+      '<sheetData>' + $sb.ToString() + '</sheetData>' +
+      '<autoFilter ref="A1:' + $lastCol + $lastRow + '"/>' +
+      '</worksheet>'
+}
+
+function Write-CgsXlsx {
+    <# .SYNOPSIS Write a multi-sheet .xlsx with no third-party module.
+       .DESCRIPTION An .xlsx is a zip of XML parts, written here directly with
+                    System.IO.Compression so nothing beyond .NET is needed.
+                    Values are inline strings, so a claim number keeps its
+                    leading zeros instead of being turned into a number.
+       .PARAMETER Sheets  Array of hashtables: Name, Columns, Rows.
+       .PARAMETER Path    Destination .xlsx.
+       .OUTPUTS [string] the path written. Throws on I/O failure.
+       .NOTES  Mirrors writeWorkbook in src/utils/xlsx.py; the two produce the
+               same XML, and a test compares their structure. #>
+    param([object[]] $Sheets, [string] $Path)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    # Excel rejects a workbook with no sheets, so always write at least one.
+    if (-not $Sheets -or $Sheets.Count -eq 0) {
+        $Sheets = @(@{ Name = 'Sheet1'; Columns = @(); Rows = @() })
+    }
+    $prepared = New-Object System.Collections.Generic.List[object]
+    foreach ($sheet in $Sheets) {
+        $used = @($prepared | ForEach-Object { $_.Name })
+        $prepared.Add(@{
+            Name    = (Get-CgsSafeSheetName -Name $sheet.Name -Used $used)
+            Columns = @($sheet.Columns)
+            Rows    = @($sheet.Rows)
+        })
+    }
+
+    $sheetTags = ''; $relTags = ''; $overrides = ''
+    for ($i = 1; $i -le $prepared.Count; $i++) {
+        $sheetTags += '<sheet name="' + (ConvertTo-CgsXmlText $prepared[$i-1].Name) + '" sheetId="' + $i + '" r:id="rId' + $i + '"/>'
+        $relTags   += '<Relationship Id="rId' + $i + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + $i + '.xml"/>'
+        $overrides += '<Override PartName="/xl/worksheets/sheet' + $i + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+    }
+    $stylesId = $prepared.Count + 1
+
+    $stylesXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+      '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>' +
+      '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+      # Fill 0 MUST be none and fill 1 MUST be gray125 -- Excel rejects the
+      # workbook otherwise, however unused those two entries are.
+      '<fills count="3"><fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor rgb="FFD9E1F2"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+      '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="2">' +
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+      '</cellXfs>' +
+      '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+      '</styleSheet>'
+
+    $parts = [ordered] @{
+        '[Content_Types].xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+            '<Default Extension="xml" ContentType="application/xml"/>' +
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+            $overrides +
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'
+        '_rels/.rels' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+        'xl/workbook.xml' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+            '<sheets>' + $sheetTags + '</sheets></workbook>'
+        'xl/_rels/workbook.xml.rels' = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            $relTags +
+            '<Relationship Id="rId' + $stylesId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'
+        'xl/styles.xml' = $stylesXml
+    }
+    for ($i = 1; $i -le $prepared.Count; $i++) {
+        $parts['xl/worksheets/sheet' + $i + '.xml'] = New-CgsXlsxSheetXml `
+            -Columns $prepared[$i-1].Columns -Rows $prepared[$i-1].Rows
+    }
+
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Path $parent -Force)
+    }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew)
+    try {
+        $archive = New-Object System.IO.Compression.ZipArchive(
+            $stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            # UTF-8 with NO byte-order mark: Excel rejects a BOM inside parts.
+            $encoding = New-Object System.Text.UTF8Encoding($false)
+            foreach ($name in $parts.Keys) {
+                $entry = $archive.CreateEntry($name,
+                    [System.IO.Compression.CompressionLevel]::Optimal)
+                $entryStream = $entry.Open()
+                try {
+                    $bytes = $encoding.GetBytes($parts[$name])
+                    $entryStream.Write($bytes, 0, $bytes.Length)
+                } finally { $entryStream.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
+    return $Path
 }
 
 function Get-CgsTimestampSuffix {

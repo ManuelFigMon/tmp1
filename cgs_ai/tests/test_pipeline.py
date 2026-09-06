@@ -264,6 +264,98 @@ def test_the_sas_log_profile_is_unchanged_by_the_registry_refactor():
         (1, "DATA statement", 0.05), (2, "PROCEDURE MEANS", 1.20)]
 
 
+# --- the standard-library .xlsx writer ---------------------------------------
+
+def test_stdlib_writer_produces_a_readable_multi_sheet_workbook(tmp_path):
+    pytest.importorskip("openpyxl")
+    from openpyxl import load_workbook
+    from src.utils.xlsx import writeWorkbook
+    target = writeWorkbook([
+        {"name": "Matches", "columns": ["Claim", "Note"],
+         "rows": [{"Claim": "007", "Note": "a & b <c>"}]},
+        {"name": "Metrics", "columns": ["Libref"], "rows": [{"Libref": "db"}]},
+    ], str(tmp_path / "w.xlsx"))
+    book = load_workbook(target)
+    assert book.sheetnames == ["Matches", "Metrics"]
+    assert [c.value for c in book["Matches"][1]] == ["Claim", "Note"]
+    assert book["Matches"]["A2"].value == "007", \
+        "inline strings keep leading zeros; a numeric cell would show 7"
+    assert book["Matches"]["B2"].value == "a & b <c>"
+
+
+def test_stdlib_writer_makes_sheet_names_legal_and_unique(tmp_path):
+    pytest.importorskip("openpyxl")
+    from openpyxl import load_workbook
+    from src.utils.xlsx import writeWorkbook
+    target = writeWorkbook([
+        {"name": "a/b:c", "columns": ["x"], "rows": []},
+        {"name": "a/b:c", "columns": ["x"], "rows": []},
+        {"name": "n" * 40, "columns": ["x"], "rows": []},
+    ], str(tmp_path / "n.xlsx"))
+    names = load_workbook(target).sheetnames
+    assert names == ["a_b_c", "a_b_c_2", "n" * 31]
+
+
+def test_stdlib_writer_still_writes_a_sheet_when_there_are_no_rows(tmp_path):
+    """Excel rejects a workbook with no sheets, so an empty scan needs one."""
+    pytest.importorskip("openpyxl")
+    from openpyxl import load_workbook
+    from src.utils.xlsx import writeWorkbook
+    target = writeWorkbook([], str(tmp_path / "e.xlsx"))
+    assert len(load_workbook(target).sheetnames) == 1
+
+
+def test_scan_writes_xlsx_even_without_openpyxl(tmp_path, monkeypatch):
+    """The reported bug: an .xlsx path produced CSVs instead of a workbook.
+
+    Simulates the user's server, where neither Excel engine is installed.
+    """
+    import builtins
+    from src.py import scanFileSystem as scanner
+    realImport = builtins.__import__
+
+    def noOpenpyxl(name, *args, **kwargs):
+        if name == "openpyxl":
+            raise ImportError("simulated: openpyxl is not installed")
+        return realImport(name, *args, **kwargs)
+
+    (tmp_path / "job.sas").write_text(
+        'libname issuelog access path="x\\issuelog.mdb";\n'
+        "data a; set issuelog.claims; run;\n", encoding="utf-8")
+    monkeypatch.setattr(builtins, "__import__", noOpenpyxl)
+    result = scanner.scanFileSystem(
+        input_folder_root=str(tmp_path), extract_keyword=["mdb"],
+        file_extensions=["sas"], output_file_path=str(tmp_path / "o.xlsx"),
+        metric_profile="access_db")
+    monkeypatch.undo()
+
+    assert result["output"].endswith(".xlsx"), "an .xlsx was requested"
+    assert not list(tmp_path.glob("*_Metrics.csv")), \
+        "the old code wrote a pair of CSVs instead of the workbook"
+    from openpyxl import load_workbook
+    assert load_workbook(result["output"]).sheetnames == ["Matches", "Metrics"]
+
+
+def test_the_two_xlsx_writers_agree_on_the_parts_they_emit():
+    """PowerShell cannot run here, so compare the two writers' XML parts.
+
+    A workbook that opens in Excel from one engine and not the other is the
+    failure this guards against; the part names and the fixed child order are
+    where that goes wrong.
+    """
+    psText = (PS_DIR / "cgsUtils.ps1").read_text()
+    pyText = (ROOT / "src" / "utils" / "xlsx.py").read_text()
+    for part in ("[Content_Types].xml", "_rels/.rels", "xl/workbook.xml",
+                 "xl/_rels/workbook.xml.rels", "xl/styles.xml"):
+        assert part in psText and part in pyText, f"{part} missing from one writer"
+    # The two constraints that make Excel reject the file outright.
+    for marker in ('patternType="none"', 'patternType="gray125"',
+                   '<cellStyles count="1">', 't="inlineStr"'):
+        assert marker in psText and marker in pyText, \
+            f"{marker} missing from one writer"
+    assert "Write-CgsXlsx" in psText and "def writeWorkbook" in pyText
+
+
 # --- cross-language parity ---------------------------------------------------
 
 PS_DIR = ROOT / "src" / "ps"

@@ -663,15 +663,25 @@ def writeExcel(matchRows: List[Dict[str, Any]], metricRows: List[Dict[str, Any]]
         metricColumns (seq)     - the active profile's columns; defaults to the
                                   sas_log shape for callers predating profiles.
     Returns: the path written.
-    Raises: ImportError when openpyxl is unavailable (message says how to fix).
+
+    openpyxl is used when it is installed; otherwise the standard-library
+    writer in src/utils/xlsx.py produces the same workbook. A locked-down
+    server with no add-ins still gets an .xlsx, which is what was asked for.
     """
+    columns = list(metricColumns or METRIC_COLUMNS)
     try:
         from openpyxl import Workbook
     except ImportError:
-        raise ImportError(
-            "Excel output requires openpyxl. Install it with "
-            "'pip install openpyxl', or choose a .csv output path instead."
-        )
+        from src.utils.xlsx import writeWorkbook
+        sheets = [{"name": MATCH_SHEET, "columns": MATCH_COLUMNS,
+                   "rows": matchRows}]
+        if metricRows:
+            sheets.append({"name": METRIC_SHEET, "columns": columns,
+                           "rows": metricRows})
+        logInfo("openpyxl is not installed; writing the workbook with the "
+                "built-in writer")
+        ensureParent(outputPath)
+        return writeWorkbook(sheets, outputPath)
     illegal = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
     clean = lambda v: illegal.sub("", v) if isinstance(v, str) else v
 
@@ -682,7 +692,6 @@ def writeExcel(matchRows: List[Dict[str, Any]], metricRows: List[Dict[str, Any]]
     for row in matchRows:
         sheet.append([clean(row.get(column, "")) for column in MATCH_COLUMNS])
     if metricRows:
-        columns = list(metricColumns or METRIC_COLUMNS)
         metrics = workbook.create_sheet(METRIC_SHEET)
         metrics.append(columns)
         for row in metricRows:
