@@ -62,6 +62,31 @@ print("cgs_ai version:", cgs_ai.__version__)
 #                  Subject="Scan complete", Body="The nightly scan finished.")
 
 
+# --- Example 6b: sendEmail, corporate look, Body declared first --------------
+# Give both addresses a real name, so the recipient sees "Manuel Figallo" in
+# their inbox rather than a bare mailbox. corporateBody() reads the display
+# name out of `To` and opens with "Dear Al", and centers the three-line
+# confidentiality notice -- which is why this one has to go out as HTML.
+#
+# from src.py.sendEmail import corporateBody
+#
+# TO = "Al Cordoba <al.cordoba@cgsadmin.com>"
+# Body = corporateBody(
+#     To=TO,
+#     Message="The Issue Log of DB Tables is done. "
+#             "The nightly scan finished successfully.",
+#     ReportPath=r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G"
+#                r"\GSIT_Prod\MANUAL\cgs_ai\data")
+#
+# cgs_ai.sendEmail(
+#     To=TO,
+#     From="Manuel Figallo <manuel.figallo@cgsadmin.com>",
+#     Subject="Issue Log of DB Tables - Scan complete",
+#     Body=Body,
+#     Html=True,      # required: a plain text mail cannot center anything
+#     Urgent=False)   # True adds the red flag and high importance
+
+
 # --- Example 7: runSQLServerQuery -------------------------------------------
 # out = cgs_ai.runSQLServerQuery(SQL_Statement="select top 100 * from dbo.Claims",
 #                                LOB_Catalog="DataMartKYA")

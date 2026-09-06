@@ -350,10 +350,31 @@
     Body       =,                  /* REQUIRED                            */
     SmtpServer =,                  /* default smtp.example.com            */
     Port       =,                  /* default 25                          */
+    Html       =,                  /* true sends Body as HTML             */
+    Urgent     =,                  /* true = red flag, high importance    */
+    UrgentFlag =,                  /* flag text; default 'Follow up'      */
     engine     = ps,
     debug      = 0
 );
 /* Send an email alert over SMTP. Multiple recipients allowed in To.
+
+   HOW TO FORMAT AN EMAIL
+     ADDRESSES  Give every address a real name so the recipient sees it in
+                their inbox:  To=%str(Al Cordoba <al.cordoba@cgsadmin.com>)
+                The form is  Display Name <address>. Separate recipients
+                with a SEMICOLON, never a comma -- a comma is legal inside
+                a display name, so splitting on it breaks the address.
+     HTML       Html=true is required for anything centered, bold or
+                coloured. A plain text mail has no alignment at all.
+     QUOTING    The body reaches PowerShell inside a double-quoted command
+                line argument, so write HTML attributes with SINGLE quotes:
+                <div style='text-align:center'>. Double quotes would end
+                the argument early.
+     URGENCY    Urgent=true sets high importance AND the Outlook message
+                flag, so the mail arrives with a red flag. Reserve it for
+                something that needs action tonight.
+     SUBJECT    Say the outcome, not the mechanism.
+
    Use in claims processing: notify the operations mailbox when an overnight
    scan or bulk download finishes, including row counts and output paths.  */
   %cgsResetArgs;
@@ -363,6 +384,9 @@
   %cgsAddArg(name=-Body,       value=%superq(Body));
   %cgsAddArg(name=-SmtpServer, value=%superq(SmtpServer));
   %cgsAddArg(name=-Port,       value=%superq(Port));
+  %cgsAddArg(name=-Html,       value=%superq(Html));
+  %cgsAddArg(name=-Urgent,     value=%superq(Urgent));
+  %cgsAddArg(name=-UrgentFlag, value=%superq(UrgentFlag));
   %cgsRun(engine=&engine, script=sendEmail.%sysfunc(ifc(&engine=ps,ps1,py)),
           taskname=cgsmail, debug=&debug);
 %mend sendEmail;

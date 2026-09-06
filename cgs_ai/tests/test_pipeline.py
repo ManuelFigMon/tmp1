@@ -264,6 +264,108 @@ def test_the_sas_log_profile_is_unchanged_by_the_registry_refactor():
         (1, "DATA statement", 0.05), (2, "PROCEDURE MEANS", 1.20)]
 
 
+# --- sendEmail: display names, urgency, corporate body -----------------------
+
+@pytest.fixture
+def capturedMail(monkeypatch):
+    """Capture the EmailMessage sendEmail hands to SMTP, without a server."""
+    import smtplib
+    from src.py import sendEmail as mailer
+    captured = {}
+
+    class FakeSmtp:
+        def __init__(self, *args, **kwargs):
+            captured["server"] = args[0] if args else None
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def send_message(self, message):
+            captured["message"] = message
+
+    monkeypatch.setattr(smtplib, "SMTP", FakeSmtp)
+    return captured, mailer
+
+
+def test_display_names_survive_into_the_headers(capturedMail):
+    captured, mailer = capturedMail
+    result = mailer.sendEmail(
+        To="Al Cordoba <al.cordoba@cgsadmin.com>",
+        From="Manuel Figallo <manuel.figallo@cgsadmin.com>",
+        Subject="s", Body="b")
+    message = captured["message"]
+    assert message["To"] == "Al Cordoba <al.cordoba@cgsadmin.com>"
+    assert message["From"] == "Manuel Figallo <manuel.figallo@cgsadmin.com>"
+    assert result["To"] == ["al.cordoba@cgsadmin.com"], \
+        "the result reports the bare address actually delivered to"
+
+
+def test_a_comma_in_a_display_name_is_not_a_second_recipient(capturedMail):
+    captured, mailer = capturedMail
+    mailer.sendEmail(To='"Cordoba, Al" <al.cordoba@cgsadmin.com>',
+                     From="a@b.com", Subject="s", Body="b")
+    from email.utils import getaddresses
+    assert len(getaddresses([captured["message"]["To"]])) == 1, \
+        "recipients split on ';' precisely so a comma can stay in a name"
+
+
+def test_urgent_sets_both_the_priority_and_the_flag(capturedMail):
+    """Outlook draws these differently: importance is the red '!', and
+    X-Message-Flag is what actually puts the red FLAG on the message."""
+    captured, mailer = capturedMail
+    mailer.sendEmail(To="a@b.com", From="c@d.com", Subject="s", Body="b",
+                     Urgent=True)
+    message = captured["message"]
+    assert message["Importance"] == "High"
+    assert message["X-Priority"] == "1 (Highest)"
+    assert message["X-MSMail-Priority"] == "High"
+    assert message["X-Message-Flag"] == "Follow up"
+
+
+def test_not_urgent_is_the_default_and_adds_no_headers(capturedMail):
+    captured, mailer = capturedMail
+    result = mailer.sendEmail(To="a@b.com", From="c@d.com", Subject="s",
+                              Body="b")
+    message = captured["message"]
+    assert result["Urgent"] is False
+    for header in ("Importance", "X-Priority", "X-Message-Flag"):
+        assert message[header] is None
+
+
+@pytest.mark.parametrize("recipient,expected", [
+    ("Al Cordoba <al.cordoba@cgsadmin.com>", "Al"),
+    ('"Cordoba, Al" <al.cordoba@cgsadmin.com>', "Al"),
+    ("al.cordoba@cgsadmin.com", "Al"),
+    ("", "colleague"),
+])
+def test_the_greeting_name_comes_from_the_recipient(recipient, expected):
+    from src.py.sendEmail import recipientFirstName
+    assert recipientFirstName(recipient) == expected
+
+
+def test_corporate_body_greets_by_name_and_centers_the_notice():
+    from src.py.sendEmail import DEFAULT_CONFIDENTIALITY, corporateBody
+    body = corporateBody(
+        To="Al Cordoba <al.cordoba@cgsadmin.com>",
+        Message="The Issue Log of DB Tables is done.",
+        ReportPath=r"\\a70admed.com\R1\CGS\...\data")
+    assert "<p>Dear Al,</p>" in body
+    assert r"\\a70admed.com\R1\CGS\...\data" in body
+    assert "Manuel A. Figallo | Statistical Programmer IV and Analyst | CGS" in body
+    centered = body.split('text-align:center')[1]
+    for line in DEFAULT_CONFIDENTIALITY:
+        assert line.replace("©", "©") in centered, \
+            "all three notice lines must be inside the centered block"
+
+
+def test_corporate_body_escapes_html_in_a_path():
+    """A path or a name must never be able to inject markup."""
+    from src.py.sendEmail import corporateBody
+    body = corporateBody(To="a@b.com", Message="<script>alert(1)</script>")
+    assert "<script>" not in body
+    assert "&lt;script&gt;" in body
+
+
 # --- the standard-library .xlsx writer ---------------------------------------
 
 def test_stdlib_writer_produces_a_readable_multi_sheet_workbook(tmp_path):

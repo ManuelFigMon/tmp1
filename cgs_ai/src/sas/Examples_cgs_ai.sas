@@ -91,6 +91,48 @@
 );
 *;
 
+/* --- G2. sendEmail, corporate look, body declared first ----------------- */
+/* Build the body into a macro variable BEFORE the call, so the layout is
+   readable and can be reviewed on its own.
+
+   %nrstr protects the & and % that HTML entities use -- &copy; would
+   otherwise be read as a macro variable reference. It masks the semicolons
+   and the embedded commas too, so neither ends the %let early nor splits
+   the %sendEmail argument list. Nothing inside it resolves, so write the
+   values literally rather than referring to other macro variables.
+
+   HTML attributes are written with SINGLE quotes: the body travels inside a
+   double-quoted command line argument, and a double quote would end it.     */
+%*
+%let CGS_BODY = %nrstr(<div style='font-family:Calibri,Segoe UI,Arial,sans-serif;font-size:11pt;color:#1F2937'>
+<p>Dear Al,</p>
+<p>The Issue Log of DB Tables is done. The nightly scan finished successfully.</p>
+<p>You can review the detailed report here:</p>
+<p style='font-family:Consolas,monospace;font-size:10pt'>
+\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\data</p>
+<p>Regards,</p>
+<p style='margin-bottom:18px'>
+Manuel A. Figallo | Statistical Programmer IV and Analyst | CGS<br>
+26 Century Blvd., Ste NT600<br>
+Nashville, TN 37214-3685<br>
+email: manuel.figallo@cgsadmin.com</p>
+<hr style='border:none;border-top:1px solid #D1D5DB'>
+<div style='text-align:center;font-size:8pt;color:#6B7280'>
+Confidential, unpublished property of CGS Administrators, LLC. Do not duplicate or distribute.<br>
+Use and distribution limited solely to authorized personnel.<br>
+&copy; 2026 Copyright, CGS Administrators, LLC.</div>
+</div>);
+
+%sendEmail(
+  To=%str(Al Cordoba <al.cordoba@cgsadmin.com>),
+  From=%str(Manuel Figallo <manuel.figallo@cgsadmin.com>),
+  Subject=%str(Issue Log of DB Tables - Scan complete),
+  Body=%superq(CGS_BODY),
+  Html=true,
+  Urgent=false
+);
+*;
+
 /* --- H. convertSAS2Pandas ---------------------------------------------- */
 %*
 %convertSAS2Pandas(
