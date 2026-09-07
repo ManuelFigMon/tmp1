@@ -631,8 +631,11 @@ function Read-CgsXlsxSheet {
        .OUTPUTS [object[]] PSCustomObjects, shaped like Import-Csv output so
                 either input can feed the same formatter. #>
     param([string] $Path, [string] $Sheet = '', [int] $HeaderRow = 0)
-    $grid = @(Read-CgsXlsxGrid -Path $Path -Sheet $Sheet)
-    if ($grid.Count -eq 0) { return , @() }
+    # NO @() HERE. Read-CgsXlsxGrid returns ",$array" so the array survives the
+    # pipeline as ONE object; @() would collect that one object and re-wrap it,
+    # leaving a 1-element array holding the whole grid. Assign it directly.
+    $grid = Read-CgsXlsxGrid -Path $Path -Sheet $Sheet
+    if ($null -eq $grid -or $grid.Count -eq 0) { return , @() }
     $header = if ($HeaderRow -gt 0) { $HeaderRow } else { Get-CgsHeaderRow -Grid $grid }
     if ($header -lt 1) { $header = 1 }
     if ($header -gt $grid.Count) { $header = $grid.Count }

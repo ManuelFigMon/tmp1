@@ -349,7 +349,11 @@ function Invoke-Main {
     $suffix = [System.IO.Path]::GetExtension($source).ToLowerInvariant()
     if ($suffix -in @('.xlsx', '.xlsm')) {
         Write-CgsInfo "reading worksheet from $source"
-        $rows = @(Read-CgsXlsxSheet -Path $source -Sheet $InputSheet -HeaderRow $HeaderRow)
+        # NO @() HERE -- Read-CgsXlsxSheet returns ",$array", which reaches the
+        # caller as one object; @() would re-wrap it into a 1-element array and
+        # every data row would vanish behind it.
+        $rows = Read-CgsXlsxSheet -Path $source -Sheet $InputSheet -HeaderRow $HeaderRow
+        if ($null -eq $rows) { $rows = @() }
     } else {
         $rows = @(Import-Csv -LiteralPath $source)
     }

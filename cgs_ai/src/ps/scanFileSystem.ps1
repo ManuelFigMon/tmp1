@@ -297,6 +297,68 @@ function Get-SasLogMetricRows {
     return , $rows.ToArray()
 }
 
+function Clear-SasComments {
+    <# .SYNOPSIS Blank SAS comment text, keeping every line and column.
+       .PARAMETER Lines  The file's lines.
+       .OUTPUTS [string[]] same count and same lengths, comment contents
+                replaced by spaces.
+       .NOTES  Prose about code is not code. "The LIBNAME statement below
+               points at issuelog.mdb" in a header comment otherwise reports
+               a library called "statement", because the word after LIBNAME
+               is where the libref lives. Blanking rather than deleting keeps
+               line numbers and column offsets exactly right, which the
+               caller reports to the user.
+
+               Handles /* block */, "* statement ;" and "%* macro ;"
+               comments, and leaves quoted strings alone so a path holding
+               '/*' is not mistaken for the start of one. #>
+    param([string[]] $Lines)
+    $output = New-Object System.Collections.Generic.List[string]
+    $state = 'code'          # code | dquote | squote | block | star
+    $atStatementStart = $true
+    foreach ($line in $Lines) {
+        $characters = $line.ToCharArray()
+        $index = 0
+        while ($index -lt $characters.Count) {
+            $character = $characters[$index]
+            $pair = if ($index + 1 -lt $line.Length) { $line.Substring($index, 2) } else { $character }
+            if ($state -eq 'code') {
+                if ($pair -eq '/*') {
+                    $characters[$index] = ' '; $characters[$index + 1] = ' '
+                    $state = 'block'; $index += 2; continue
+                }
+                if ($character -eq '"') { $state = 'dquote'; $atStatementStart = $false }
+                elseif ($character -eq "'") { $state = 'squote'; $atStatementStart = $false }
+                elseif ($atStatementStart -and ($character -eq '*' -or $pair -eq '%*')) {
+                    $last = [Math]::Min($index + 1, $characters.Count - 1)
+                    for ($position = $index; $position -le $last; $position++) {
+                        if ($line[$position] -eq '%' -or $line[$position] -eq '*') { $characters[$position] = ' ' }
+                    }
+                    $state = 'star'; $atStatementStart = $false
+                }
+                elseif ($character -eq ';') { $atStatementStart = $true }
+                elseif (-not [char]::IsWhiteSpace($character)) { $atStatementStart = $false }
+            }
+            elseif ($state -eq 'block') {
+                if ($pair -eq '*/') {
+                    $characters[$index] = ' '; $characters[$index + 1] = ' '
+                    $state = 'code'; $index += 2; continue
+                }
+                $characters[$index] = ' '
+            }
+            elseif ($state -eq 'star') {
+                if ($character -eq ';') { $state = 'code'; $atStatementStart = $true }
+                else { $characters[$index] = ' ' }
+            }
+            elseif ($state -eq 'dquote' -and $character -eq '"') { $state = 'code' }
+            elseif ($state -eq 'squote' -and $character -eq "'") { $state = 'code' }
+            $index++
+        }
+        $output.Add(-join $characters)
+    }
+    return , $output.ToArray()
+}
+
 function Join-LibnameStatement {
     <# .SYNOPSIS Join a LIBNAME statement from its first line to its ';'.
        .PARAMETER Lines     The file's lines.
@@ -340,6 +402,13 @@ function Get-AccessDbRows {
     $ic = [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
     $keywords = @($ProfileDef.Keywords)
     $maxLines = [int]$ProfileDef.MaxStatementLines
+
+    # Everything below reads the comment-blanked copy, so neither a LIBNAME
+    # nor a usage is ever picked up out of prose. Line numbers still line up
+    # with the original, because blanking preserves the shape of the file.
+    # No @() -- Clear-SasComments returns ",$array", which arrives as one
+    # object that @() would re-wrap into a 1-element array.
+    $Lines = Clear-SasComments -Lines $Lines
 
     $definitions    = New-Object System.Collections.Specialized.OrderedDictionary
     $statementLines = @{}

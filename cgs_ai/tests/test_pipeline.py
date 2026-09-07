@@ -1,6 +1,6 @@
 """Tests for the filescan pipeline, package exports and cross-language parity."""
 from __future__ import annotations
-import csv, re, subprocess, sys
+import csv, re, shutil, subprocess, sys
 from pathlib import Path
 import pytest
 
@@ -562,6 +562,149 @@ def test_the_two_xlsx_writers_agree_on_the_parts_they_emit():
         assert marker in psText and marker in pyText, \
             f"{marker} missing from one writer"
     assert "Write-CgsXlsx" in psText and "def writeWorkbook" in pyText
+
+
+# --- comments are prose, not code --------------------------------------------
+
+COMMENTED_SAS = [
+    "/* The LIBNAME statement below points at",
+    r"   \\srv\dbs\issuelog.mdb -- do not change it. */",
+    r'libname issuelog access path="\\srv\dbs\issuelog.mdb";',
+    "* libname statement for the archive copy of fmrrpt.mdb ;",
+    "%* libname statement in a macro comment for never.accdb ;",
+    "data work.a;",
+    "  x = a * b;",
+    "  set issuelog.claims;",
+    "run;",
+    "* issuelog.archive is only mentioned here ;",
+]
+
+
+def test_a_libname_named_in_a_comment_is_not_a_library():
+    """'The LIBNAME statement below...' reported a library called 'statement'.
+
+    The word after LIBNAME is where the libref lives, so prose about a
+    LIBNAME reads exactly like one. 12 of 38 rows in a real scan were this.
+    """
+    rows = accessDbRows(COMMENTED_SAS)
+    assert [r["Libref"] for r in rows] == ["issuelog"]
+    assert rows[0]["DefinitionLine"] == 3, "blanking must not shift line numbers"
+
+
+def test_a_usage_mentioned_only_in_a_comment_is_not_a_usage():
+    rows = accessDbRows(COMMENTED_SAS)
+    assert rows[0]["UsageLines"] == "8", "line 10 mentions it in a comment"
+
+
+def test_multiplication_is_not_mistaken_for_a_comment():
+    """`x = a * b;` -- a '*' only starts a comment at a statement boundary."""
+    from src.py.scanFileSystem import blankSasComments
+    blanked = blankSasComments(["  x = a * b;", "* but this one is a comment;"])
+    assert blanked[0] == "  x = a * b;"
+    assert blanked[1].strip() == ";"
+
+
+def test_blanking_preserves_the_shape_of_the_file():
+    """Line numbers and column offsets are reported to the user."""
+    from src.py.scanFileSystem import blankSasComments
+    blanked = blankSasComments(COMMENTED_SAS)
+    assert len(blanked) == len(COMMENTED_SAS)
+    for original, cleaned in zip(COMMENTED_SAS, blanked):
+        assert len(original) == len(cleaned)
+
+
+def test_a_quoted_path_cannot_open_a_comment():
+    from src.py.scanFileSystem import blankSasComments
+    line = r'libname x access path="c:\a/*b\c.mdb";'
+    assert blankSasComments([line])[0] == line
+
+
+# --- the PowerShell twin, actually executed ----------------------------------
+
+PWSH = shutil.which("pwsh") or shutil.which("powershell")
+needsPwsh = pytest.mark.skipif(PWSH is None, reason="PowerShell is not installed")
+
+
+def runPwsh(script, *args):
+    """Run a src/ps script. Returns: CompletedProcess."""
+    return subprocess.run([PWSH, "-NoProfile", "-File", str(PS_DIR / script),
+                           *[str(a) for a in args]],
+                          capture_output=True, text=True, timeout=180)
+
+
+@needsPwsh
+def test_powershell_scanner_matches_python_row_for_row(tmp_path):
+    """The parity claim, executed rather than asserted from the source text."""
+    pytest.importorskip("openpyxl")
+    from src.utils.xlsx import readSheet
+    (tmp_path / "job.sas").write_text("\n".join(COMMENTED_SAS) + "\n",
+                                      encoding="utf-8")
+    psOut = tmp_path / "ps.xlsx"
+    result = runPwsh("scanFileSystem.ps1",
+                     "-input_folder_root", tmp_path, "-extract_keyword", "accdb;mdb",
+                     "-file_extensions", "sas", "-metric_profile", "access_db",
+                     "-output_file_path", psOut)
+    assert result.returncode == 0, result.stderr
+    assert psOut.is_file(), "an .xlsx was requested; a pair of CSVs is a bug"
+
+    columns = ["Libref", "Keyword", "DefinitionLine", "UsageCount", "UsageLines"]
+    fromPs = [tuple(r[c] for c in columns)
+              for r in readSheet(str(psOut), sheet="Metrics")]
+    fromPy = [tuple(str(r[c]) for c in columns)
+              for r in accessDbRows(COMMENTED_SAS)]
+    assert fromPs == fromPy, "the two engines disagree"
+
+
+@needsPwsh
+def test_powershell_formatdata_keeps_every_row_of_a_worksheet(tmp_path):
+    """The reported bug: 38 rows in, 1 row out.
+
+    Read-CgsXlsxGrid returns ',$array' so the array survives the pipeline as
+    ONE object; the caller wrapped that in @(), which collected the single
+    object and re-wrapped it. The grid became a 1-element array holding
+    itself, and every data row disappeared behind it.
+    """
+    pytest.importorskip("openpyxl")
+    from src.utils.xlsx import readSheet, writeWorkbook
+    source = tmp_path / "src.xlsx"
+    writeWorkbook([
+        {"name": "Matches", "columns": ["x"], "rows": [{"x": "1"}]},
+        {"name": "Metrics", "columns": ["Libref", "UsageLines"],
+         "rows": [{"Libref": f"lib{n}", "UsageLines": f"{n}"} for n in range(38)]},
+    ], str(source))
+
+    out = tmp_path / "out.xlsx"
+    result = runPwsh("formatData.ps1", "-InputPath", source,
+                     "-InputSheet", "Metrics", "-OutputExcelPath", out,
+                     "-FormatType", "corporate")
+    assert result.returncode == 0, result.stderr
+    assert "formatted 38 row(s) x 2 column(s)" in result.stderr, result.stderr
+    # Row 1 is the banner, row 2 the headers, so 38 data rows means 40 rows.
+    written = readSheet(str(out), headerRow=2)
+    assert len(written) == 38
+    assert written[0]["Libref"] == "lib0"
+    assert "Count" not in written[0], \
+        "the array's own properties leaked in as column names"
+
+
+@needsPwsh
+def test_powershell_formatcsv_shim_still_forwards(tmp_path):
+    csvPath = tmp_path / "in.csv"
+    csvPath.write_text("Claim,Amount\n007,1.50\n", encoding="utf-8")
+    out = tmp_path / "o.xlsx"
+    result = runPwsh("formatCSV.ps1", "-InputCsvPath", csvPath,
+                     "-OutputExcelPath", out)
+    assert result.returncode == 0, result.stderr
+    assert out.is_file()
+
+
+@needsPwsh
+def test_powershell_sendemail_validates_before_it_connects():
+    """No SMTP server here, so check the config errors, which come first."""
+    result = runPwsh("sendEmail.ps1", "-From", "a@b.com", "-Subject", "s",
+                     "-Body", "b")
+    assert result.returncode == 2, result.stderr
+    assert "'To' is missing" in result.stderr
 
 
 # --- cross-language parity ---------------------------------------------------

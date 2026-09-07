@@ -442,6 +442,70 @@ def extractSasLogMetrics(profile: Dict[str, Any], lines: Sequence[str],
     return rows
 
 
+def blankSasComments(lines: Sequence[str]) -> List[str]:
+    """Blank out SAS comment text, keeping every line and column in place.
+
+    Parameters: lines (sequence) - the file's lines.
+    Returns: list[str], same count and same lengths, with the contents of
+             comments replaced by spaces.
+
+    Prose about code is not code. "The LIBNAME statement below points at
+    issuelog.mdb" in a header comment otherwise reports a library called
+    "statement", because the word after LIBNAME is where the libref lives.
+    Blanking rather than deleting keeps line numbers and column offsets
+    exactly right, which the caller reports to the user.
+
+    Handles /* block */, "* statement ;" and "%* macro ;" comments, and
+    leaves quoted strings alone so a path containing '/*' is not mistaken
+    for the start of one.
+    """
+    output: List[str] = []
+    state = "code"          # code | dquote | squote | block | star
+    atStatementStart = True
+    for line in lines:
+        characters = list(line)
+        index = 0
+        while index < len(characters):
+            character = characters[index]
+            pair = line[index:index + 2]
+            if state == "code":
+                if pair == "/*":
+                    characters[index] = characters[index + 1] = " "
+                    state, index = "block", index + 2
+                    continue
+                if character == '"':
+                    state, atStatementStart = "dquote", False
+                elif character == "'":
+                    state, atStatementStart = "squote", False
+                elif atStatementStart and (character == "*" or pair == "%*"):
+                    for position in range(index, min(index + 2, len(characters))):
+                        if line[position] in "%*":
+                            characters[position] = " "
+                    state, atStatementStart = "star", False
+                elif character == ";":
+                    atStatementStart = True
+                elif not character.isspace():
+                    atStatementStart = False
+            elif state == "block":
+                if pair == "*/":
+                    characters[index] = characters[index + 1] = " "
+                    state, index = "code", index + 2
+                    continue
+                characters[index] = " "
+            elif state == "star":
+                if character == ";":
+                    state, atStatementStart = "code", True
+                else:
+                    characters[index] = " "
+            elif state == "dquote" and character == '"':
+                state = "code"
+            elif state == "squote" and character == "'":
+                state = "code"
+            index += 1
+        output.append("".join(characters))
+    return output
+
+
 def joinLibnameStatement(lines: Sequence[str], start: int, offset: int,
                          maxLines: int) -> Tuple[str, int]:
     """Join a LIBNAME statement from its first line to its terminating ';'.
@@ -487,6 +551,11 @@ def extractAccessDbUsage(profile: Dict[str, Any], lines: Sequence[str],
     """
     keywords = [str(k).lower() for k in profile.get("Keywords", ("accdb", "mdb"))]
     maxLines = int(profile.get("MaxStatementLines", 20))
+
+    # Everything below reads the comment-blanked copy, so neither a LIBNAME
+    # nor a usage is ever picked up out of prose. Line numbers still line up
+    # with the original, because blanking preserves the shape of the file.
+    lines = blankSasComments(lines)
 
     definitions: Dict[str, Dict[str, Any]] = {}
     statementLines: Dict[str, set] = {}
