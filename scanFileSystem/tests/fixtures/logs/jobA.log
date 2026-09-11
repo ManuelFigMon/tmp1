@@ -1,0 +1,16 @@
+1    data work.a; set sashelp.class; run;
+NOTE: DATA statement used (Total process time):
+      real time           0.05 seconds
+      cpu time            0.03 seconds
+WARNING: Variable height is uninitialized.
+2    proc means data=work.a; run;
+NOTE: PROCEDURE MEANS used (Total process time):
+      real time           1.20 seconds
+      cpu time            0.90 seconds
+ERROR: File WORK.MISSING.DATA does not exist.
+WARNING: The data set WORK.B may be incomplete.
+3    proc sort data=work.a; by name; run;
+NOTE: PROCEDURE SORT used (Total process time):
+      real time           2.00 seconds
+      cpu time            1.50 seconds
+NOTE: The SAS System used the .accdb bridge for lookup.

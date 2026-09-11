@@ -1,0 +1,37 @@
+# =====================================================================
+#  cgs_ai -- optional local service stack.
+#
+#  Not required to run cgs_ai: every function works against the file
+#  system, SMTP or SQL Server directly. This file exists so a developer can
+#  stand up look-alike services locally instead of pointing at production.
+#
+#  Usage:  docker compose up -d      /  docker compose down
+# =====================================================================
+services:
+
+  # Local SMTP sink for sendEmail: captures mail, never delivers it.
+  # Set SMTP_SERVER=localhost and SMTP_PORT=1025 in .env, then open :8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: cgs_ai_mailpit
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+    restart: unless-stopped
+
+  # Local SQL Server for runSQLServerQuery development.
+  # NOTE: uses SQL auth; production uses Integrated Security and no password.
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: cgs_ai_sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-ChangeMe_Local1}"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    restart: unless-stopped
+
+volumes:
+  sqlserver_data:
