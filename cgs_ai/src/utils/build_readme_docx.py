@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -44,13 +45,15 @@ def esc(text: str) -> str:
 
 def para(text: str = "", style: str = "Normal", bold: bool = False,
          size: Optional[int] = None, color: Optional[str] = None,
-         align: str = "", spaceAfter: int = 120, mono: bool = False) -> str:
+         align: str = "", spaceAfter: int = 120, mono: bool = False,
+         keepNext: bool = False) -> str:
     """Build one <w:p> paragraph.
 
     Parameters:
         text (str)      - paragraph text ('\n' splits into line breaks).
         style (str)     - style id: Normal, Title, Heading1..3, Code.
         bold, size, color, align, spaceAfter, mono - direct formatting.
+        keepNext (bool) - keep on the same page as the next paragraph.
     Returns: the paragraph XML.
     """
     runProps = []
@@ -65,7 +68,8 @@ def para(text: str = "", style: str = "Normal", bold: bool = False,
     rPr = f"<w:rPr>{''.join(runProps)}</w:rPr>" if runProps else ""
 
     jc = f'<w:jc w:val="{align}"/>' if align else ""
-    pPr = (f'<w:pPr><w:pStyle w:val="{style}"/>'
+    keep = "<w:keepNext/>" if keepNext else ""
+    pPr = (f'<w:pPr><w:pStyle w:val="{style}"/>{keep}'
            f'<w:spacing w:after="{spaceAfter}"/>{jc}</w:pPr>')
 
     lines = str(text).split("\n")
@@ -144,6 +148,79 @@ def pageBreak() -> str:
     return '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
 
 
+#: EMU per inch. Word measures drawings in English Metric Units.
+EMU_PER_INCH = 914400
+
+
+def pngSize(path: str) -> Tuple[int, int]:
+    """Read a PNG's pixel dimensions from its IHDR chunk.
+
+    Parameters: path (str) - the .png to measure.
+    Returns: (width, height) in pixels.
+    Raises: ValueError - the file is not a PNG.
+
+    Stdlib only: the IHDR chunk is always first, and its width and height
+    are two big-endian 4-byte integers at a fixed offset.
+    """
+    with open(path, "rb") as handle:
+        header = handle.read(24)
+    if header[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"{path} is not a PNG")
+    width, height = struct.unpack(">II", header[16:24])
+    return width, height
+
+
+def image(relationshipId: str, path: str, maxWidthInches: float = 6.0,
+          index: int = 1, border: bool = True, keepNext: bool = False) -> str:
+    """Return a centred paragraph holding one inline picture.
+
+    Parameters:
+        relationshipId (str)   - the r:embed id, matching writeDocx's images.
+        path (str)             - the .png, read only to get its aspect ratio.
+        maxWidthInches (float) - scale down to this width; never scale up, so
+                                 a small screenshot is not blown up and blurred.
+        index (int)            - unique drawing id within the document.
+        border (bool)          - draw a hairline frame, which stops a
+                                 screenshot with a pale edge from bleeding
+                                 into the page.
+        keepNext (bool)        - keep the picture on the same page as the
+                                 paragraph that follows it, so a screenshot
+                                 is never separated from its caption.
+    Returns: the <w:p> XML.
+    """
+    pixelWidth, pixelHeight = pngSize(path)
+    # Screenshots are captured at 96 DPI, so pixels map straight to inches.
+    widthInches = min(maxWidthInches, pixelWidth / 96)
+    width = int(widthInches * EMU_PER_INCH)
+    height = int(width * pixelHeight / pixelWidth)
+    frame = ('<a:ln w="9525"><a:solidFill><a:srgbClr val="C9D3E4"/>'
+             "</a:solidFill></a:ln>") if border else ""
+    return (
+        '<w:p><w:pPr>' + ("<w:keepNext/>" if keepNext else "") +
+        '<w:jc w:val="center"/><w:spacing w:before="60" w:after="60"/></w:pPr>'
+        "<w:r><w:drawing>"
+        '<wp:inline distT="0" distB="0" distL="0" distR="0">'
+        f'<wp:extent cx="{width}" cy="{height}"/>'
+        '<wp:effectExtent l="0" t="0" r="0" b="0"/>'
+        f'<wp:docPr id="{index}" name="Screenshot {index}"/>'
+        "<wp:cNvGraphicFramePr>"
+        '<a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>'
+        "</wp:cNvGraphicFramePr>"
+        '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:nvPicPr><pic:cNvPr id="{index}" name="screenshot{index}.png"/>'
+        "<pic:cNvPicPr/></pic:nvPicPr>"
+        f'<pic:blipFill><a:blip r:embed="{relationshipId}"/>'
+        "<a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
+        '<pic:spPr><a:xfrm><a:off x="0" y="0"/>'
+        f'<a:ext cx="{width}" cy="{height}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>'
+        f"{frame}</pic:spPr>"
+        "</pic:pic></a:graphicData></a:graphic></wp:inline>"
+        "</w:drawing></w:r></w:p>")
+
+
 STYLES_XML = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:docDefaults><w:rPrDefault><w:rPr>
@@ -175,6 +252,7 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Default Extension="xml" ContentType="application/xml"/>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+<Default Extension="png" ContentType="image/png"/>
 </Types>"""
 
 RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -188,7 +266,8 @@ DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 </Relationships>"""
 
 
-def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080) -> str:
+def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080,
+              images: Optional[dict] = None) -> str:
     """Zip the OOXML parts into a .docx.
 
     Parameters:
@@ -197,11 +276,18 @@ def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080) -> str:
         margin (int)     - page margin in twips on all four sides; the
                            default 1080 is 0.75in. Pass 720 (0.5in) to fit
                            more on a single page.
+        images (dict)    - {relationshipId: local .png path} for every picture
+                           the body refers to. Each is copied into the package
+                           and given a relationship; a missing entry shows in
+                           Word as a broken-image placeholder.
     Returns: the path written.
     """
+    images = dict(images or {})
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
         f"<w:body>{bodyXml}"
         '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
         f'<w:pgMar w:top="{margin}" w:right="{margin}" '
@@ -209,10 +295,20 @@ def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080) -> str:
         "</w:sectPr></w:body></w:document>")
     target = Path(outputPath)
     target.parent.mkdir(parents=True, exist_ok=True)
+    relationships = [DOC_RELS.rsplit("</Relationships>", 1)[0]]
+    for relationshipId, source in images.items():
+        relationships.append(
+            f'<Relationship Id="{relationshipId}" Type="http://schemas.'
+            f'openxmlformats.org/officeDocument/2006/relationships/image" '
+            f'Target="media/{Path(source).name}"/>')
+    relationships.append("</Relationships>")
+
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", CONTENT_TYPES)
         archive.writestr("_rels/.rels", RELS)
-        archive.writestr("word/_rels/document.xml.rels", DOC_RELS)
+        archive.writestr("word/_rels/document.xml.rels", "".join(relationships))
         archive.writestr("word/styles.xml", STYLES_XML)
         archive.writestr("word/document.xml", document)
+        for source in images.values():
+            archive.write(source, f"word/media/{Path(source).name}")
     return str(target)
