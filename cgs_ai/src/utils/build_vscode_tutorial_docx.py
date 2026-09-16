@@ -5,9 +5,9 @@
   Purpose       : Generate "VS Studio for Python in the Azure Cloud in
                   3 Steps" -- the beginner tutorial that comes before the
                   cgs_ai training.
-  Version       : 1.0beta
+  Version       : 2.0beta
   Created       : 2026-09-11
-  Last Modified : 2026-09-11
+  Last Modified : 2026-09-16
 
   Dependencies:
     STANDARD LIBRARY ONLY. OOXML helpers come from build_readme_docx.py.
@@ -24,6 +24,12 @@
     bottom, numbered actions in between, and a caption under every picture
     saying what the reader should be looking at.
 
+    v2 adds the front matter a controlled document needs -- cover, version
+    history, contents -- plus a terminology page (IDE), a Next Steps section
+    on the import statement and cgs_ai, and a conclusion arguing the
+    business case. The cgs_ai example is executed as part of the test suite,
+    so the tutorial cannot promise output the package does not produce.
+
   Usage:
     python src/utils/build_vscode_tutorial_docx.py [output_path]
 =====================================================================
@@ -36,10 +42,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from build_readme_docx import (BLUE, NAVY, bullet, esc, image,  # noqa: E402
-                               pageBreak, para, writeDocx)
+from build_readme_docx import (BLUE, NAVY, bullet, esc,  # noqa: E402
+                               image, pageBreak, para, table,
+                               writeDocx)
 
-__version__ = "1.0beta"
+__version__ = "2.0beta"
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 MEDIA = ROOT / "docs" / "media"
@@ -52,6 +59,62 @@ GOLD = "8A6D1F"
 
 #: The folder every step refers to. <your-id> replaces one person's login.
 FOLDER = r"C:\Users\<your-id>\OneDrive - bcbsscgov\code\python\tests"
+
+VERSION = "2.0"
+LAST_UPDATED = "16 September 2026"
+CONTACT = "Manuel A. Figallo"
+CONTACT_TITLE = "Statistical Programmer IV and Analyst  ·  CGS"
+SUBTITLE = "A beginner's tutorial  ·  CGS  ·  no experience needed."
+
+#: The share holding cgs_ai, quoted verbatim in Next Steps.
+SHARE = r"\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai"
+
+#: Newest first. Date, version, who, what changed.
+VERSION_HISTORY = [
+    ["16 Sep 2026", "2.0", "Manuel A. Figallo",
+     "Added cover page, document control, contents, terminology (IDE), a "
+     "Next Steps section on import statements and cgs_ai, and a conclusion."],
+    ["11 Sep 2026", "1.0", "Manuel A. Figallo",
+     "First issued. Introduction, Steps 1-3 with screenshots, "
+     "troubleshooting."],
+]
+
+#: (label, page, indented) -- page numbers are MEASURED from the rendered
+#: PDF, not guessed. Re-measure after any edit that changes the length; the
+#: footer page numbers are always right regardless.
+CONTENTS = [
+    ("Document control", 2, False),
+    ("Contents", 3, False),
+    ("Introduction", 4, False),
+    ("Terminology — the five words used throughout", 5, True),
+    ("Step 1 — Prepare your folder", 6, False),
+    ("Step 2 — Learn two definitions and three rules", 7, False),
+    ("Step 3 — Write and run your first program", 8, False),
+    ("If something goes wrong", 12, True),
+    ("Next Steps — import, and the cgs_ai package", 13, False),
+    ("Conclusion", 15, False),
+]
+
+#: The five words a beginner needs before Step 1 makes sense.
+TERMS = [
+    ("IDE, or \"coding environment\"",
+     "One program that gives you everything you need to write code in a "
+     "single window: somewhere to type it, somewhere to run it, and help "
+     "spotting mistakes. VS Code is an IDE. Word is where you write "
+     "documents; an IDE is where you write programs."),
+    ("Python",
+     "The language you write in. A file of Python is just text, which is "
+     "why any editor can open it — but an IDE understands it."),
+    ("Script, or program",
+     "One file of Python instructions, ending in .py. Yours will be "
+     "hello_world.py."),
+    ("Terminal",
+     "The panel at the bottom of VS Code where you type commands and where "
+     "your program's output appears. It is how you RUN what you wrote."),
+    ("Package, or library",
+     "Somebody else's code, bundled up so you can use it without writing it "
+     "again. cgs_ai is ours."),
+]
 
 
 def box(title: str, lines, fill: str = PANEL, accent: str = NAVY,
@@ -101,8 +164,13 @@ def box(title: str, lines, fill: str = PANEL, accent: str = NAVY,
         + (para("", spaceAfter=trailing) if trailing else ""))
 
 
-def stepBanner(number: int, title: str) -> str:
-    """Build the full-width navy banner that opens each step."""
+def stepBanner(number, title: str) -> str:
+    """Build the full-width navy banner that opens each step.
+
+    Parameters: number (int|str) - 1, 2, 3, or a ready-made label such as
+                "NEXT STEPS"; title (str).
+    """
+    label = f"STEP {number}" if isinstance(number, int) else str(number)
     return (
         '<w:tbl><w:tblPr><w:tblW w:w="10080" w:type="dxa"/>'
         '<w:tblLayout w:type="fixed"/></w:tblPr>'
@@ -113,7 +181,7 @@ def stepBanner(number: int, title: str) -> str:
         '<w:bottom w:w="140" w:type="dxa"/></w:tcMar></w:tcPr>'
         '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
         '<w:r><w:rPr><w:b/><w:sz w:val="34"/><w:color w:val="FFFFFF"/></w:rPr>'
-        f'<w:t xml:space="preserve">STEP {number}   {esc(title)}</w:t>'
+        f'<w:t xml:space="preserve">{label}   {esc(title)}</w:t>'
         '</w:r></w:p></w:tc></w:tr></w:tbl>' + para("", spaceAfter=140))
 
 
@@ -151,6 +219,43 @@ def leadPara(lead: str, rest: str, spaceAfter: int = 110) -> str:
             f'<w:t xml:space="preserve">{esc(rest)}</w:t></w:r></w:p>')
 
 
+def rule() -> str:
+    """A thin horizontal rule, used to divide the cover page."""
+    return ('<w:p><w:pPr><w:pBdr>'
+            f'<w:bottom w:val="single" w:sz="8" w:space="4" w:color="{BLUE}"/>'
+            '</w:pBdr><w:spacing w:after="0"/></w:pPr></w:p>')
+
+
+def tocLine(label: str, page: int, indent: bool = False) -> str:
+    """One contents line: the section on the left, its page on the right.
+
+    Parameters:
+        label (str)    - the section name.
+        page (int)     - the printed page it starts on.
+        indent (bool)  - set for a sub-section.
+    Returns: the paragraph XML.
+
+    A right-aligned TAB STOP puts the page number hard against the margin,
+    with a dot leader running to it -- the same thing Word's own contents
+    field produces, minus the "update this field" prompt a reader would
+    otherwise have to answer.
+    """
+    left = 360 if indent else 0
+    weight = "" if indent else "<w:b/>"
+    colour = "404040" if indent else NAVY
+    return (
+        f'<w:p><w:pPr><w:tabs>'
+        f'<w:tab w:val="right" w:leader="dot" w:pos="10080"/></w:tabs>'
+        f'<w:spacing w:after="{90 if indent else 130}"/>'
+        f'<w:ind w:left="{left}"/></w:pPr>'
+        f'<w:r><w:rPr>{weight}<w:sz w:val="{(BODY - (1 if indent else 0)) * 2}"/>'
+        f'<w:color w:val="{colour}"/></w:rPr>'
+        f'<w:t xml:space="preserve">{esc(label)}</w:t></w:r>'
+        f'<w:r><w:rPr><w:sz w:val="{(BODY - 1) * 2}"/>'
+        f'<w:color w:val="{colour}"/></w:rPr><w:tab/>'
+        f'<w:t>{page}</w:t></w:r></w:p>')
+
+
 def note(text: str) -> str:
     """Build the small grey explanation that follows a command or a click.
 
@@ -167,9 +272,14 @@ def caption(text: str) -> str:
                 spaceAfter=200)
 
 
-def code(text: str) -> str:
-    """Build a monospace block for something the reader types verbatim."""
-    return para(text, style="Code", size=11, mono=True, spaceAfter=140,
+def code(text: str, size: int = 11) -> str:
+    """Build a monospace block for something the reader types verbatim.
+
+    Parameters: text (str); size (int) - points. Drop it for a block holding
+    a long UNC path: at 11pt the share path wraps mid-path, and a beginner
+    may copy that wrap as a real line break.
+    """
+    return para(text, style="Code", size=size, mono=True, spaceAfter=140,
                 keepNext=True)
 
 
@@ -221,13 +331,53 @@ def buildBody() -> str:
     """Assemble the tutorial body XML. Returns: <w:body> content."""
     parts = []
 
-    # ===================== COVER / INTRODUCTION ===================== #
-    parts.append(para("VS Studio for Python", style="Title", size=30,
-                      spaceAfter=0))
+    # ========================== COVER ========================== #
+    parts.append(para("", spaceAfter=1400))
+    parts.append(para("VS Studio for Python", style="Title", size=29,
+                      align="center", spaceAfter=0))
     parts.append(para("in the Azure Cloud — in 3 Steps", style="Title",
-                      size=30, spaceAfter=60))
-    parts.append(para("A beginner's tutorial  ·  CGS  ·  no experience needed",
-                      style="Subtitle", size=14, spaceAfter=200))
+                      size=29, align="center", spaceAfter=160))
+    parts.append(para(SUBTITLE, style="Subtitle", size=15, align="center",
+                      spaceAfter=120))
+    parts.append(rule())
+    parts.append(para("", spaceAfter=900))
+    parts.append(para(CONTACT, size=15, bold=True, color=NAVY, align="center",
+                      spaceAfter=50))
+    parts.append(para(CONTACT_TITLE, size=BODY - 1, color="6B7280",
+                      align="center", spaceAfter=260))
+    parts.append(para(f"Version {VERSION}", size=BODY, bold=True, color=BLUE,
+                      align="center", spaceAfter=40))
+    parts.append(para(f"Last updated {LAST_UPDATED}", size=BODY,
+                      color="6B7280", align="center", spaceAfter=0))
+    parts.append(pageBreak())
+
+    # ===================== DOCUMENT CONTROL ===================== #
+    parts.append(para("Document control", style="Heading1", spaceAfter=120))
+    parts.append(para(
+        "Every change to this tutorial is recorded below. Check the version "
+        "on the cover against the newest row here before you follow it — the "
+        "screens in VS Code change, and so does this document.",
+        size=BODY, spaceAfter=180))
+    parts.append(table(
+        ["Date", "Version", "Changed by", "Description of the change"],
+        VERSION_HISTORY, [1600, 1150, 1900, 5430]))
+    parts.append(para(
+        "To propose a change, contact " + CONTACT + ". Please quote the "
+        "version number on the cover.", size=BODY, spaceAfter=0))
+    parts.append(pageBreak())
+
+    # ======================== CONTENTS ======================== #
+    parts.append(para("Contents", style="Heading1", spaceAfter=180))
+    for label, page, indent in CONTENTS:
+        parts.append(tocLine(label, page, indent))
+    parts.append(para("", spaceAfter=200))
+    parts.append(box(
+        "HOW TO USE THIS TUTORIAL",
+        ["Work through Steps 1, 2 and 3 in order, at a computer.",
+         "Every action is numbered and has a picture of what you should see.",
+         "Next Steps is optional on the first pass — come back to it once "
+         "the three steps feel easy."]))
+    parts.append(pageBreak())
 
     parts.append(para("Introduction", style="Heading1", spaceAfter=120))
     parts.append(para(
@@ -277,6 +427,25 @@ def buildBody() -> str:
          "Your OneDrive account signed in — the cloud icon in the taskbar.",
          "That is all. Python itself is already on the machine."],
         fill="F2F7F2", accent=GREEN, trailing=0))
+
+    parts.append(pageBreak())
+
+    # ======================= TERMINOLOGY ======================= #
+    parts.append(para("Terminology — the five words used throughout",
+                      style="Heading1", spaceAfter=120))
+    parts.append(para(
+        "Five words come up again and again. None of them are complicated, "
+        "and knowing them makes the rest of this tutorial read easily.",
+        size=BODY, spaceAfter=180))
+    for term, meaning in TERMS:
+        parts.append(para(term, size=BODY + 1, bold=True, color=NAVY,
+                          spaceAfter=40))
+        parts.append(para(meaning, size=BODY, spaceAfter=150))
+    parts.append(box(
+        "THE ONE TO REMEMBER",
+        ["IDE = coding environment = VS Code.",
+         "If somebody says \"open your IDE\", they mean open VS Code."],
+        trailing=0))
 
     parts.append(pageBreak())
 
@@ -470,27 +639,176 @@ def buildBody() -> str:
                           spaceAfter=30))
         parts.append(para(fix, size=CAPTION + 1, spaceAfter=120))
 
-    # ========================== CLOSING ========================== #
-    parts.append(para("", spaceAfter=120))
-    parts.append(para("What comes next", style="Heading1", spaceAfter=120))
+    parts.append(pageBreak())
+
+    # ======================== NEXT STEPS ======================== #
+    parts.append(stepBanner("NEXT STEPS",
+                            "import, and the cgs_ai package"))
+    parts.append(box("GOAL",
+                     "Learn what an import statement does, then use it to "
+                     "reach CGS's own Python package."))
+
+    parts.append(para("The import statement", style="Heading2",
+                      spaceAfter=100))
     parts.append(para(
-        "This tutorial looked small on purpose. What you actually built is "
-        "the foundation every later session depends on: a cloud folder, a "
-        "working editor, a terminal you can run code from, and a file that "
-        "runs.", size=BODY, spaceAfter=140))
+        "So far your program has been self-contained. Real work is not: you "
+        "borrow code somebody has already written and tested. The IMPORT "
+        "statement is how you reach it.",
+        size=BODY, spaceAfter=140))
     parts.append(para(
-        "That foundation is what the cgs_ai Python modules will be delivered "
-        "onto. cgs_ai is our own Python package — it holds the work we all "
-        "repeat, such as turning an extract into a formatted report and "
-        "sending it on, as functions you call by name. Those modules are "
-        "forthcoming, and when they arrive the instructions will begin exactly "
-        "where this tutorial ends: open your workspace, open the terminal, "
-        "run the file.", size=BODY, spaceAfter=140))
+        "So why did print work without one? Because print is a BUILT-IN "
+        "function — Python loads a small set of the most common functions "
+        "for you, every time, without being asked. Writing import builtins "
+        "is therefore optional; it changes nothing. For everything else — "
+        "any other library, and any package of ours — the import IS "
+        "required, and without it Python will not know the name.",
+        size=BODY, spaceAfter=160))
+
+    parts.append(action("N.1", "Open hello_world.py again and add these "
+                               "comment lines above your program:"))
+    parts.append(code(
+        "#The import statement gives your current script access to code "
+        "written in another file or library.\n"
+        "#It prevents you from having to reinvent the wheel,\n"
+        "#import builtins\n"
+        "#This is my first python comment\n"
+        'print("Hello, World!")'))
+    parts.append(note(
+        "Note that #import builtins is itself commented out — the # in front "
+        "of it means Python skips the line entirely. It is there to be read, "
+        "not run, because print already works without it."))
+    parts.append(action("N.2", "Save with Ctrl+S and run it again in the "
+                               "terminal:"))
+    parts.append(code("python hello_world.py"))
+    parts.append(note(
+        "The output is identical: Hello, World! Comments changed what the "
+        "file says to a human, and nothing about what it does."))
+
+    parts.append(para("CGS has its own Python package: cgs_ai",
+                      style="Heading2", spaceAfter=100))
     parts.append(para(
-        "Before then, practise the loop. Change the words inside the quotes "
-        "and run it again. Add another print line. Getting comfortable with "
-        "write, save, run is the only preparation needed.",
-        size=BODY, spaceAfter=200))
+        "cgs_ai is a package we built and maintain. It holds the work this "
+        "department repeats — turning an extract into a formatted report, "
+        "sending it to the people who need it, scanning a share for what "
+        "matters — as functions you call by name. You import it exactly the "
+        "way you would import any well-known library.",
+        size=BODY, spaceAfter=140))
+    parts.append(para(
+        "Why that matters: the alternative is everybody solving the same "
+        "problem privately, in their own style, with their own bugs. A "
+        "package makes one tested answer available to the whole team, and "
+        "makes the AI work we are building next possible — because AI "
+        "solutions need clean, repeatable data plumbing underneath them, "
+        "and that plumbing is what cgs_ai is.",
+        size=BODY, spaceAfter=180))
+
+    parts.append(action("N.3", "Create a new file called hello_cgs_ai.py in "
+                               "your tests folder, exactly as you created "
+                               "hello_world.py in Step 3."))
+    parts.append(action("N.4", "Type this in, then save it:"))
+    parts.append(code(
+        "# The folder that CONTAINS the cgs_ai package folder.\n"
+        f'SHARE = r"{SHARE}"\n'
+        'CGS_AI_HOME = SHARE + r"\\src\\py\\lite"\n'
+        "\n"
+        "# STEP 1. Import the python package\n"
+        "# Telling Python where to look, then importing cgs_ai exactly like "
+        "pandas.\n"
+        "import sys\n"
+        "sys.path.insert(0, CGS_AI_HOME)\n"
+        "import cgs_ai\n"
+        "\n"
+        "#STEP 2. Run examples\n"
+        "#Example 1\n"
+        "result = cgs_ai.doBasicHello()\n"
+        "print(result)\n"
+        "\n"
+        "#Example 2\n"
+        "result = cgs_ai.doPersonalizedHello('Alice')\n"
+        "print(result)", size=9))
+    parts.append(action("N.5", "Run it:"))
+    parts.append(code("python hello_cgs_ai.py"))
+    parts.append(note("You should see two lines back:"))
+    parts.append(code("Hello, World!\nHello, Alice!"))
+    parts.append(para(
+        "That second line is the point. doPersonalizedHello took something "
+        "you gave it — 'Alice' — and gave back a different answer. Every "
+        "other function in cgs_ai works the same way: you pass in what makes "
+        "your job different, and the package handles what is the same for "
+        "everybody.", size=BODY, spaceAfter=160))
+
+    parts.append(box(
+        "MORE TO COME",
+        ["These two examples are deliberately trivial — they prove the "
+         "import worked and nothing more.",
+         "More advanced examples, using the reporting and email functions, "
+         "will follow in the next tutorial."],
+        fill="F2F7F2", accent=GREEN, trailing=0))
+
+    parts.append(pageBreak())
+
+    # ======================== CONCLUSION ======================== #
+    parts.append(para("Conclusion", style="Heading1", spaceAfter=120))
+    parts.append(para(
+        "Three steps, and none of them difficult. Learn them, then practise "
+        "them until they are automatic — because everything that follows, "
+        "for the rest of your Python work, sits on top of exactly these.",
+        size=BODY, spaceAfter=150))
+    parts.append(para(
+        "Step 3 is the one that matters most. It taught you the whole loop:",
+        size=BODY, spaceAfter=80))
+    parts.append(box(
+        "THE LOOP",
+        ["WRITE  →  SAVE  →  RUN",
+         "Write the code. Press Ctrl+S. Type python yourfile.py and press "
+         "Enter. Look at what came back. Then go round again.",
+         "Every program ever written, of any size, is that loop repeated."],
+        monoFirst=True))
+    parts.append(para(
+        "Repetition is the only thing that makes it stick. Change the words "
+        "in the quotes and run it again. Add another print. Break it on "
+        "purpose and read the error. Ten minutes of that is worth more than "
+        "an hour of reading.", size=BODY, spaceAfter=180))
+
+    parts.append(para("Why cgs_ai matters to CGS", style="Heading2",
+                      spaceAfter=120))
+    parts.append(para(
+        "The package you imported at the end is not a teaching exercise. It "
+        "is how this team gets leverage from Python:",
+        size=BODY, spaceAfter=120))
+    for lead, rest in [
+        ("Code written once is reused by everyone.",
+         "A report format, a mail notification, a file scan — solved once, "
+         "tested once, then called by name for the rest of the team."),
+        ("It is OUR domain, not a generic toolbox.",
+         "The functions know about claims, logs and CMS extracts, because we "
+         "wrote them for that. No public library will ever fit our work this "
+         "closely."),
+        ("It is a box of Lego blocks.",
+         "Small pieces that snap together differently for each job. The same "
+         "few functions cover reporting, monitoring and analysis — you "
+         "assemble them, you do not rebuild them."),
+        ("It is the foundation for AI that delivers business results.",
+         "AI needs clean, repeatable data plumbing beneath it. cgs_ai is "
+         "that plumbing, which is what turns an interesting model into "
+         "something that actually runs every night."),
+        ("It makes the work auditable and consistent.",
+         "One implementation means one output format and one place to fix a "
+         "problem — which matters when the work supports Medicare "
+         "operations."),
+        ("It shortens the distance from idea to delivery.",
+         "A request that used to mean days of new code becomes a handful of "
+         "calls, so more ideas get tried and the good ones ship sooner."),
+    ]:
+        parts.append(leadPara(lead, rest, spaceAfter=120))
+
+    # keepNext so this closing thought travels with the panel below it,
+    # rather than leaving three orphaned words at the top of the last page.
+    parts.append(para(
+        "None of that happens without people who can write, save and run. "
+        "That is what this tutorial gave you, and it is why these three "
+        "steps are worth practising until they are dull.",
+        size=BODY, spaceAfter=180, keepNext=True))
 
     parts.append(box(
         "COMING SOON — cgs_ai",
@@ -500,8 +818,8 @@ def buildBody() -> str:
         fill="F2F7F2", accent=GREEN, monoFirst=True))
 
     parts.append(para(
-        "Questions, or a correction to this tutorial? Please contact "
-        "Manuel Figallo. cgs_ai is in beta — feedback is welcome now.",
+        f"Questions, or a correction to this tutorial? Please contact "
+        f"{CONTACT}. cgs_ai is in beta — feedback is welcome now.",
         size=BODY, spaceAfter=0))
 
     return "".join(parts)
@@ -510,4 +828,5 @@ def buildBody() -> str:
 if __name__ == "__main__":
     output = sys.argv[1] if len(sys.argv) > 1 else str(
         ROOT / "docs" / "VS_Studio_for_Python_in_the_Azure_Cloud_in_3_Steps.docx")
-    print("wrote", writeDocx(buildBody(), output, margin=1080, images=IMAGES))
+    print("wrote", writeDocx(buildBody(), output, margin=1080,
+                             images=IMAGES, pageNumbers=True))

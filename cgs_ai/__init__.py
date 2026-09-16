@@ -26,8 +26,10 @@
       cgs_ai.scanFileSystem(input_folder_root=..., extract_keyword=...)
 
   Function Index:
-    basic_hello              - standard greeting (smoke test)
-    personalized_hello       - greeting with input protection
+    doBasicHello             - standard greeting (smoke test)
+    doPersonalizedHello      - greeting with input protection
+    basic_hello              - alias of doBasicHello
+    personalized_hello       - alias of doPersonalizedHello
     detailed_hello           - structured greeting dictionary
     scanFileSystem           - keyword scan of directory roots; one row/match
     get_comments             - retrieve public comments from Regulations.gov
@@ -65,15 +67,35 @@ if str(_ROOT) not in _sys.path:
 # Greeting functions -- smoke tests that prove the import worked
 # =====================================================================
 
-def basic_hello() -> str:
-    """Version 1: Standard greeting."""
+def doBasicHello() -> str:
+    """Return a fixed greeting, to prove the import worked.
+
+    Parameters: none. Returns: str "Hello, World!".
+
+    The first line of cgs_ai anybody runs: if this prints, the package
+    imported and the environment is sound.
+    """
     return "Hello, World!"
 
 
+def doPersonalizedHello(name: str) -> str:
+    """Return a greeting addressed to `name`.
+
+    Parameters: name (str) - who to greet; blank falls back to "World".
+    Returns: str e.g. "Hello, Alice!".
+    """
+    cleaned = str(name).strip() if name else "World"
+    return f"Hello, {cleaned}!"
+
+
+def basic_hello() -> str:
+    """Version 1: Standard greeting. Alias of doBasicHello."""
+    return doBasicHello()
+
+
 def personalized_hello(name: str) -> str:
-    """Version 2: Personalized greeting with input protection."""
-    clean_name = str(name).strip() if name else "World"
-    return f"Hello, {clean_name}!"
+    """Version 2: Personalized greeting. Alias of doPersonalizedHello."""
+    return doPersonalizedHello(name)
 
 
 def detailed_hello(style: str = "friendly") -> dict:
@@ -113,6 +135,7 @@ from src.utils.logger import logError, logInfo, logWarn          # noqa: E402
 __all__ = [
     "__version__",
     # greetings
+    "doBasicHello", "doPersonalizedHello",
     "basic_hello", "personalized_hello", "detailed_hello",
     # toolkit
     "scanFileSystem", "runSQLServerQuery", "formatData", "formatCSV",

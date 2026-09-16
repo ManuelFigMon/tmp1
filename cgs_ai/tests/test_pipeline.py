@@ -707,6 +707,66 @@ def test_powershell_sendemail_validates_before_it_connects():
     assert "'To' is missing" in result.stderr
 
 
+# --- the tutorial's own code must run ----------------------------------------
+
+def test_the_greetings_the_tutorial_teaches_exist_in_the_lite_build():
+    """hello_cgs_ai.py in the tutorial calls these off the share.
+
+    The lite build is what CGS_AI_HOME points at, so a function present only
+    in the full package would fail on the reader's machine, not here.
+    """
+    import runpy
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    assert lite["doBasicHello"]() == "Hello, World!"
+    assert lite["doPersonalizedHello"]("Alice") == "Hello, Alice!"
+    for name in ("doBasicHello", "doPersonalizedHello"):
+        assert name in lite["__all__"]
+
+
+def test_the_tutorial_snippet_prints_what_the_tutorial_says(tmp_path):
+    """Run hello_cgs_ai.py exactly as printed, and check the output.
+
+    The tutorial tells the reader they will see two specific lines. This
+    executes the same code against the real lite package, so the document
+    cannot drift from what the package does.
+    """
+    script = tmp_path / "hello_cgs_ai.py"
+    script.write_text(
+        f"SHARE = r\"{ROOT}\"\n"
+        "CGS_AI_HOME = SHARE + r\"/src/py/lite\"\n"
+        "import sys\n"
+        "sys.path.insert(0, CGS_AI_HOME)\n"
+        "import cgs_ai\n"
+        "result = cgs_ai.doBasicHello()\n"
+        "print(result)\n"
+        "result = cgs_ai.doPersonalizedHello('Alice')\n"
+        "print(result)\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(script)],
+                            capture_output=True, text=True, cwd=str(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["Hello, World!", "Hello, Alice!"]
+
+
+def test_the_tutorial_builder_quotes_the_same_function_names():
+    """The document and the package must name the same functions."""
+    source = (ROOT / "src" / "utils" / "build_vscode_tutorial_docx.py").read_text()
+    for name in ("doBasicHello", "doPersonalizedHello"):
+        assert f"cgs_ai.{name}" in source, f"the tutorial no longer shows {name}"
+    assert "import builtins" in source, "the import lesson is missing"
+
+
+def test_the_contents_page_lists_every_section_once():
+    from src.utils import build_vscode_tutorial_docx as tutorial
+    labels = [label for label, _, _ in tutorial.CONTENTS]
+    assert len(labels) == len(set(labels)), "a section is listed twice"
+    pages = [page for _, page, _ in tutorial.CONTENTS]
+    assert pages == sorted(pages), "the contents are out of page order"
+    assert tutorial.VERSION_HISTORY[0][1] == tutorial.VERSION, \
+        "the cover version must match the newest row of the version history"
+
+
 # --- cross-language parity ---------------------------------------------------
 
 PS_DIR = ROOT / "src" / "ps"

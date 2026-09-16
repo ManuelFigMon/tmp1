@@ -253,7 +253,24 @@ CONTENT_TYPES = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
 <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
 <Default Extension="png" ContentType="image/png"/>
+<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/>
 </Types>"""
+
+#: A centred page number. The PAGE field is what makes it count up; Word and
+#: LibreOffice both render it without the reader having to refresh anything.
+FOOTER_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:p><w:pPr><w:jc w:val="center"/></w:pPr>
+<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="808080"/></w:rPr>
+<w:fldChar w:fldCharType="begin"/></w:r>
+<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="808080"/></w:rPr>
+<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>
+<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="808080"/></w:rPr>
+<w:fldChar w:fldCharType="separate"/></w:r>
+<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="808080"/></w:rPr><w:t>1</w:t></w:r>
+<w:r><w:rPr><w:sz w:val="18"/><w:color w:val="808080"/></w:rPr>
+<w:fldChar w:fldCharType="end"/></w:r>
+</w:p></w:ftr>"""
 
 RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
@@ -267,7 +284,7 @@ DOC_RELS = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 
 def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080,
-              images: Optional[dict] = None) -> str:
+              images: Optional[dict] = None, pageNumbers: bool = False) -> str:
     """Zip the OOXML parts into a .docx.
 
     Parameters:
@@ -280,18 +297,26 @@ def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080,
                            the body refers to. Each is copied into the package
                            and given a relationship; a missing entry shows in
                            Word as a broken-image placeholder.
+        pageNumbers (bool) - add a centred page number in the footer, skipped
+                           on the first page so a cover stays clean.
     Returns: the path written.
     """
     images = dict(images or {})
+    footerId = f"rIdFooter"
+    footerReference = (f'<w:footerReference w:type="default" r:id="{footerId}"/>'
+                       if pageNumbers else "")
+    # titlePg gives the first page its own (here, absent) footer, so the cover
+    # is not numbered while every later page is.
+    titlePage = "<w:titlePg/>" if pageNumbers else ""
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
         'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">'
         f"<w:body>{bodyXml}"
-        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+        f'<w:sectPr>{footerReference}<w:pgSz w:w="12240" w:h="15840"/>'
         f'<w:pgMar w:top="{margin}" w:right="{margin}" '
-        f'w:bottom="{margin}" w:left="{margin}"/>'
+        f'w:bottom="{margin}" w:left="{margin}"/>{titlePage}'
         "</w:sectPr></w:body></w:document>")
     target = Path(outputPath)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -301,6 +326,11 @@ def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080,
             f'<Relationship Id="{relationshipId}" Type="http://schemas.'
             f'openxmlformats.org/officeDocument/2006/relationships/image" '
             f'Target="media/{Path(source).name}"/>')
+    if pageNumbers:
+        relationships.append(
+            f'<Relationship Id="{footerId}" Type="http://schemas.'
+            f'openxmlformats.org/officeDocument/2006/relationships/footer" '
+            f'Target="footer1.xml"/>')
     relationships.append("</Relationships>")
 
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -309,6 +339,8 @@ def writeDocx(bodyXml: str, outputPath: str, margin: int = 1080,
         archive.writestr("word/_rels/document.xml.rels", "".join(relationships))
         archive.writestr("word/styles.xml", STYLES_XML)
         archive.writestr("word/document.xml", document)
+        if pageNumbers:
+            archive.writestr("word/footer1.xml", FOOTER_XML)
         for source in images.values():
             archive.write(source, f"word/media/{Path(source).name}")
     return str(target)

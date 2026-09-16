@@ -35,6 +35,8 @@
         formatCSV, sendEmail = ns["formatCSV"], ns["sendEmail"]
 
   Function Index:
+    doBasicHello        - fixed greeting; proves the import worked
+    doPersonalizedHello - greeting addressed to a name you pass in
     formatData - CSV to a styled Excel workbook (SAS ODS look and feel);
                  FormatType corporate | corporatev2 | plain | minimal.
                  The full package also reads .xlsx; this build does not --
@@ -64,7 +66,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 __version__ = "1.0beta-lite"
-__all__ = ["formatData", "formatCSV", "sendEmail", "__version__"]
+__all__ = ["doBasicHello", "doPersonalizedHello", "formatData",
+           "formatCSV", "sendEmail", "__version__"]
 
 # --------------------------------------------------------------------- #
 # Inlined helpers. The full package imports these from src.utils; the lite
@@ -132,6 +135,37 @@ def readCsv(inputPath: str) -> List[Dict[str, str]]:
     """
     with open(inputPath, encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+# --------------------------------------------------------------------- #
+# Greetings -- the smoke test a newcomer runs first
+# --------------------------------------------------------------------- #
+
+def doBasicHello() -> str:
+    """Return a fixed greeting, to prove the import worked.
+
+    Parameters: none.
+    Returns: str "Hello, World!".
+
+    The first line of cgs_ai anybody runs. It touches nothing outside the
+    package, so if this prints, the share is reachable, sys.path is right
+    and the import succeeded -- which is most of what goes wrong on a new
+    machine.
+    """
+    return "Hello, World!"
+
+
+def doPersonalizedHello(name: str) -> str:
+    """Return a greeting addressed to `name`.
+
+    Parameters: name (str) - who to greet; blank falls back to "World".
+    Returns: str e.g. "Hello, Alice!".
+
+    Shows that a function can take an ARGUMENT and give a different answer
+    back, which is the whole idea behind every other function in cgs_ai.
+    """
+    cleaned = str(name).strip() if name else "World"
+    return f"Hello, {cleaned}!"
 
 
 # --------------------------------------------------------------------- #
@@ -363,10 +397,12 @@ def _register(moduleName: str = "cgs_ai") -> None:
     if moduleName in sys.modules:
         return
     module = types.ModuleType(moduleName)
-    module.__doc__ = f"cgs_ai lite build {__version__} (formatCSV, sendEmail)"
+    module.__doc__ = (f"cgs_ai lite build {__version__} "
+                      "(greetings, formatData, sendEmail)")
     module.__version__ = __version__
     module.__all__ = list(__all__)
-    module.formatData = formatData
+    module.doBasicHello = doBasicHello
+    module.doPersonalizedHello = doPersonalizedHello
     module.formatData = formatData
     module.formatCSV = formatCSV
     module.sendEmail = sendEmail
