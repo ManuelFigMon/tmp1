@@ -1,6 +1,6 @@
 """Tests for the filescan pipeline, package exports and cross-language parity."""
 from __future__ import annotations
-import csv, re, shutil, subprocess, sys
+import csv, platform, re, shutil, subprocess, sys
 from pathlib import Path
 import pytest
 
@@ -1207,3 +1207,185 @@ def test_powershell_format_operator_is_not_applied_to_a_concatenation(psPath):
         f"{psPath.name}: line(s) {broken} apply -f to a concatenation, so "
         f"only the last string is formatted and earlier {{0}} placeholders "
         f"reach the user literally. Assign the message to a variable first.")
+
+
+# --- copySnowflakeFile2CGS ---------------------------------------------------
+
+SNOW_URI = ("snow://workspace/USER$FHER.PUBLIC.DEFAULT$/versions/head/"
+            "data/synthetic_medicare_claims.csv")
+
+
+@pytest.fixture
+def snowModule():
+    """The module, with its workspace mount list restored after each test."""
+    from src.py import copySnowflakeFile2CGS as module
+    original = module.WORKSPACE_MOUNT_CANDIDATES
+    yield module
+    module.WORKSPACE_MOUNT_CANDIDATES = original
+
+
+def _sourceCsv(tmp_path, name="synthetic_medicare_claims.csv"):
+    target = tmp_path / name
+    target.write_text("ClaimID,Amount\n000123,45.60\n", encoding="utf-8")
+    return target
+
+
+@pytest.mark.parametrize("location,kind", [
+    (SNOW_URI, "workspace"),
+    ("@CLAIMS_DB.PUBLIC.EXTRACTS/data/x.csv", "stage"),
+    ("CLAIMS_DB.PUBLIC.EXTRACTS/data/x.csv", "stage"),
+    (r"\\server\share\x.csv", "file"),
+    ("/tmp/x.csv", "file"),
+])
+def test_source_locations_are_classified(location, kind, snowModule):
+    assert snowModule.classifySource(location)["Kind"] == kind
+
+
+def test_smart_quotes_from_a_pasted_path_are_stripped(snowModule):
+    """A path copied out of Word or Teams arrives wrapped in curly quotes."""
+    pasted = "\u201c" + SNOW_URI + "\u201d"
+    assert snowModule.classifySource(pasted)["Raw"] == SNOW_URI
+
+
+def test_a_unc_target_is_refused_from_non_windows_before_downloading(snowModule):
+    """The reported constraint: a Snowflake kernel cannot reach \\\\Client\\C$.
+
+    It must fail BEFORE the download, and the message must say why and what
+    to do instead -- an unexplained OSError teaches the reader nothing.
+    """
+    if platform.system() == "Windows":
+        pytest.skip("this check only applies off Windows")
+    with pytest.raises(snowModule.UnreachableTargetError) as caught:
+        snowModule.copySnowflakeFile2CGS(
+            SOURCE_LOCATION=SNOW_URI,
+            TARGET_LOCATION=r"\\Client\C$\Temp\synthetic_medicare_claims.csv")
+    message = str(caught.value)
+    assert "FIX 1" in message and "FIX 2" in message
+    assert "Citrix" in message
+    # A real UNC path contains two backslashes; FOUR means the path went
+    # through repr() and the reader is being shown escaping, not a path.
+    assert r"\\\\" not in message, "the Windows path is repr-escaped"
+    assert r"\\Client\C$" in message, "the offending path should be quoted plainly"
+
+
+def test_a_local_target_is_allowed_on_the_kernel(snowModule, tmp_path):
+    """FIX 2 from that message must actually work."""
+    snowModule.WORKSPACE_MOUNT_CANDIDATES = (str(tmp_path / "mount"),)
+    mounted = tmp_path / "mount" / "data"
+    mounted.mkdir(parents=True)
+    (mounted / "synthetic_medicare_claims.csv").write_text(
+        "ClaimID\n000123\n", encoding="utf-8")
+    result = snowModule.copySnowflakeFile2CGS(
+        SOURCE_LOCATION=SNOW_URI, TARGET_LOCATION=str(tmp_path / "out.csv"))
+    assert result["Strategy"] == "workspace-mount"
+    assert (tmp_path / "out.csv").read_text() == "ClaimID\n000123\n"
+
+
+def test_a_stub_snowpark_session_is_used_when_nothing_is_mounted(snowModule,
+                                                                tmp_path):
+    snowModule.WORKSPACE_MOUNT_CANDIDATES = (str(tmp_path / "absent"),)
+    staged = _sourceCsv(tmp_path)
+
+    class FakeSession:
+        class file:                      # noqa: N801 - mirrors Snowpark
+            @staticmethod
+            def get(reference, destination):
+                import shutil
+                shutil.copyfile(staged, Path(destination) / staged.name)
+
+    result = snowModule.copySnowflakeFile2CGS(
+        SOURCE_LOCATION=SNOW_URI, TARGET_LOCATION=str(tmp_path / "o.csv"),
+        Session=FakeSession())
+    assert result["Strategy"] == "snowflake-get"
+    assert result["BytesCopied"] == staged.stat().st_size
+
+
+def test_a_failed_fetch_names_every_strategy_it_tried(snowModule, tmp_path):
+    snowModule.WORKSPACE_MOUNT_CANDIDATES = (str(tmp_path / "absent"),)
+    with pytest.raises(snowModule.SourceNotFoundError) as caught:
+        snowModule.copySnowflakeFile2CGS(
+            SOURCE_LOCATION=SNOW_URI, TARGET_LOCATION=str(tmp_path / "o.csv"))
+    message = str(caught.value)
+    assert "snowpark:" in message and "connector:" in message
+    assert "CHECK:" in message
+
+
+def test_access_denied_is_reported_as_access_not_as_a_bare_oserror(
+        snowModule, tmp_path, monkeypatch):
+    """Root bypasses file permissions here, so the branch is driven directly."""
+    import errno
+    source = _sourceCsv(tmp_path)
+
+    def denied(*args, **kwargs):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(snowModule.shutil, "copyfile", denied)
+    with pytest.raises(snowModule.TargetWriteError) as caught:
+        snowModule.copySnowflakeFile2CGS(SOURCE_LOCATION=str(source),
+                                         TARGET_LOCATION=str(tmp_path / "o.csv"))
+    assert "access denied" in str(caught.value)
+    assert "open in Excel" in str(caught.value)
+
+
+def test_a_full_disk_says_so(snowModule, tmp_path, monkeypatch):
+    import errno
+    source = _sourceCsv(tmp_path)
+
+    def full(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(snowModule.shutil, "copyfile", full)
+    with pytest.raises(snowModule.TargetWriteError) as caught:
+        snowModule.copySnowflakeFile2CGS(SOURCE_LOCATION=str(source),
+                                         TARGET_LOCATION=str(tmp_path / "o.csv"))
+    assert "full" in str(caught.value)
+
+
+def test_a_short_write_is_caught_rather_than_reported_as_success(
+        snowModule, tmp_path, monkeypatch):
+    """A truncated copy is worse than a failed one: it looks finished."""
+    source = _sourceCsv(tmp_path)
+
+    def truncated(sourcePath, destination):
+        Path(destination).write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(snowModule.shutil, "copyfile", truncated)
+    with pytest.raises(snowModule.TargetWriteError) as caught:
+        snowModule.copySnowflakeFile2CGS(SOURCE_LOCATION=str(source),
+                                         TARGET_LOCATION=str(tmp_path / "o.csv"))
+    assert "incomplete" in str(caught.value)
+
+
+def test_dry_run_writes_nothing_but_reports_whether_it_could(snowModule,
+                                                             tmp_path):
+    source = _sourceCsv(tmp_path)
+    target = tmp_path / "sub" / "o.csv"
+    result = snowModule.copySnowflakeFile2CGS(
+        SOURCE_LOCATION=str(source), TARGET_LOCATION=str(target), DryRun=True)
+    assert result["Copied"] is False
+    assert result["TargetWritable"] is True
+    assert not target.exists(), "a dry run must not create the target"
+
+
+def test_overwrite_false_refuses_an_existing_target(snowModule, tmp_path):
+    source = _sourceCsv(tmp_path)
+    target = tmp_path / "o.csv"
+    snowModule.copySnowflakeFile2CGS(SOURCE_LOCATION=str(source),
+                                     TARGET_LOCATION=str(target))
+    with pytest.raises(snowModule.TargetWriteError):
+        snowModule.copySnowflakeFile2CGS(SOURCE_LOCATION=str(source),
+                                         TARGET_LOCATION=str(target),
+                                         Overwrite=False)
+
+
+def test_the_module_imports_without_any_snowflake_library():
+    """cgs_ai must import on a machine with no Snowflake client installed."""
+    code = ("import sys;"
+            "sys.modules['snowflake'] = None;"
+            f"sys.path.insert(0, r'{ROOT.parent}');"
+            "import cgs_ai;"
+            "print(cgs_ai.copySnowflakeFile2CGS.__name__)")
+    result = subprocess.run([sys.executable, "-c", code],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "copySnowflakeFile2CGS" in result.stdout
