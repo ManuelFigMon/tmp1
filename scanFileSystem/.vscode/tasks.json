@@ -1,0 +1,31 @@
+{
+  // Ctrl+Shift+P -> "Tasks: Run Task"
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "install deps",
+      "type": "shell",
+      "command": "${command:python.interpreterPath} -m pip install -r requirements.txt",
+      "problemMatcher": []
+    },
+    {
+      "label": "run tests",
+      "type": "shell",
+      "command": "${command:python.interpreterPath} -m pytest -q",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "rebuild fixtures",
+      "type": "shell",
+      "command": "${command:python.interpreterPath} tests/make_fixtures.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "scan fixtures (sas_log -> CSV)",
+      "type": "shell",
+      "command": "${command:python.interpreterPath} scanFileSystem.py --input-folder-root tests/fixtures/logs --output-file-path out/scan.csv --metric-profile sas_log",
+      "problemMatcher": []
+    }
+  ]
+}

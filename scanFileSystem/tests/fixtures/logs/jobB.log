@@ -1,0 +1,8 @@
+1    proc sql; create table big as select * from huge; quit;
+NOTE: PROCEDURE SQL used (Total process time):
+      real time           1:03.05
+      cpu time            1:00.00
+2    data _null_; run;
+NOTE: DATA statement used (Total process time):
+      real time           0.10 seconds
+      cpu time            0.05 seconds

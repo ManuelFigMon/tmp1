@@ -1,0 +1,5 @@
+Migration notes
+The legacy tracker lives in S:/shared/claims.accdb today.
+A second extract still reads Archive.mdb every Monday.
+Both should move to Snowflake in Q3.
+Contact the DME team before touching claims.accdb again.

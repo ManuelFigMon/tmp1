@@ -1,0 +1,4 @@
+1    data keep; run;
+NOTE: DATA statement used (Total process time):
+      real time           0.11 seconds
+      cpu time            0.11 seconds

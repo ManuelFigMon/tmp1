@@ -1,0 +1,19 @@
+{
+  // Interpreter: the venv created by `python -m venv .venv`.
+  // Windows uses .venv\Scripts, Linux/macOS uses .venv/bin -- VS Code resolves
+  // whichever exists, but you can also pick it via "Python: Select Interpreter".
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+
+  // Test Explorer: discover the pytest suite in tests/.
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.autoTestDiscoverOnSaveEnabled": true,
+
+  // Keep generated scans out of the file explorer noise.
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  },
+  "python.analysis.extraPaths": ["${workspaceFolder}"]
+}
