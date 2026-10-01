@@ -1,0 +1,2299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMQ — Time Series Explorer v1.0</title>
+    <link rel="stylesheet" href="styles/ag-grid.css">
+    <link rel="stylesheet" href="styles/ag-theme-alpine.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+            padding-bottom: 36px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin-bottom: 0;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.95;
+            margin-top: 3px;
+        }
+
+        .top-nav {
+            position: absolute;
+            top: 15px;
+            right: 70px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .top-nav a {
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .top-nav a:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        #nav-welcome {
+            color: #d4f5d4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 10px;
+            display: none;
+        }
+
+        .sas-footer {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            z-index: 50;
+        }
+
+        .sas-footer .session-indicator {
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes sasPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #footer-signout {
+            color: #cc0000;
+            text-decoration: none;
+            display: none;
+        }
+
+        #footer-signout:hover { text-decoration: underline; }
+
+        .hamburger-container {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+        }
+
+        .hamburger {
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .hamburger:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .dropdown-menu {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background: white;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .dropdown-menu.active {
+            display: block;
+        }
+
+        .dropdown-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-menu a:hover {
+            background: #f8f8f8;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 560px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .modal-body {
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body ul {
+            margin: 0 0 12px 18px;
+        }
+
+        .modal-body li {
+            margin-bottom: 4px;
+        }
+
+        .modal-body h3 {
+            font-size: 12px;
+            font-weight: 700;
+            color: #4a7ba7;
+            margin: 14px 0 6px;
+        }
+
+        .modal-body a {
+            color: #4a7ba7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        /* Report Toolbar */
+        #reportToolbar {
+            display: none;
+            background: #f0f4f8;
+            border-bottom: 1px solid #c8d8e8;
+            padding: 6px 16px;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        #reportToolbar.visible {
+            display: flex;
+        }
+
+        #reportToolbar label {
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        #reportToolbar input[type="text"] {
+            width: 220px;
+            padding: 4px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+
+        #reportSaveFeedback {
+            font-size: 11px;
+            color: #2e7d32;
+            margin-left: 8px;
+        }
+
+        /* Main Layout */
+        .main-content {
+            padding: 15px;
+        }
+
+        .content-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+        }
+
+        .input-panel {
+            width: 35%;
+            flex-shrink: 0;
+        }
+
+        #vizPanel {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            background: white;
+            border-radius: 0;
+            padding: 15px;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 3px;
+            height: 18px;
+            background: #4a7ba7;
+            margin-right: 10px;
+            border-radius: 0;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #4a7ba7;
+            box-shadow: 0 0 0 1px #4a7ba7;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a7ba7;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+            margin-left: 6px;
+            flex-shrink: 0;
+        }
+
+        .info-icon:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #2b2b2b;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: normal;
+            width: 300px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            line-height: 1.4;
+            border: 1px solid #404040;
+        }
+
+        .info-icon:hover::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: #2b2b2b;
+            z-index: 1001;
+        }
+
+        .filters-container {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 10px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 160px 100px 160px 40px;
+            gap: 6px;
+            align-items: end;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .btn {
+            padding: 6px 16px;
+            border: 1px solid;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: #5a8ab8;
+            color: white;
+            border-color: #4a7ba7;
+        }
+
+        .btn-primary:hover {
+            background: #4a7ba7;
+        }
+
+        .btn-secondary {
+            background: #888;
+            color: white;
+            border-color: #777;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .btn-danger {
+            background: #d9534f;
+            color: white;
+            border-color: #d43f3a;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger:hover {
+            background: #c9302c;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .actions .btn {
+            margin: 0 5px;
+            min-width: 120px;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a7ba7;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
+            background: #f8f8f8;
+            border: 1px solid #d0d0d0;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .kpi-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .kpi-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1;
+        }
+
+        .kpi-value-sm {
+            font-size: 13px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1.2;
+        }
+
+        .kpi-label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Chart container */
+        #chartContainer {
+            margin-bottom: 12px;
+            overflow-x: auto;
+        }
+
+        #chartContainer svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .viz-placeholder {
+            color: #aaa;
+            text-align: center;
+            padding: 30px;
+            font-size: 12px;
+            font-style: italic;
+            border: 1px dashed #ddd;
+        }
+
+        #chartTooltip {
+            position: fixed;
+            background: rgba(30,30,30,0.92);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            display: none;
+            z-index: 5000;
+            line-height: 1.6;
+            max-width: 240px;
+        }
+
+        /* Chart legend (HTML, above chart) */
+        #chartLegend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            padding: 8px 4px;
+            border-bottom: 1px solid #eee;
+            margin-bottom: 6px;
+            font-size: 11px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .legend-item.off {
+            opacity: 0.35;
+            text-decoration: line-through;
+        }
+
+        .legend-swatch {
+            display: inline-block;
+            width: 18px;
+            height: 3px;
+            flex-shrink: 0;
+        }
+
+        .legend-dot {
+            display: inline-block;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Config section controls */
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .config-row label {
+            margin-bottom: 0;
+            min-width: 130px;
+        }
+
+        .config-row input[type="range"] {
+            flex: 1;
+            min-width: 80px;
+        }
+
+        .range-val {
+            font-weight: 700;
+            color: #4a7ba7;
+            min-width: 40px;
+        }
+
+        .series-warning {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            color: #856404;
+            padding: 6px 10px;
+            margin-bottom: 8px;
+            font-size: 11px;
+            display: none;
+        }
+
+        /* Grid section (full width below content row) */
+        .grid-section {
+            margin-top: 15px;
+            background: white;
+            border: 1px solid #d0d0d0;
+            padding: 15px;
+        }
+
+        .grid-toolbar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .grid-toolbar input[type="text"] {
+            width: 240px;
+        }
+
+        #dataGrid {
+            width: 100%;
+            height: 420px;
+        }
+
+        /* Compact AG Grid to match the 11px aesthetic */
+        .ag-theme-alpine {
+            --ag-font-size: 11px;
+            --ag-font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            --ag-grid-size: 4px;
+            --ag-row-height: 26px;
+            --ag-header-height: 30px;
+            --ag-selected-row-background-color: #fde9d4;
+        }
+
+        @media (max-width: 900px) {
+            .content-row {
+                flex-direction: column;
+            }
+            .input-panel {
+                width: 100%;
+            }
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <!-- Shared Tooltip -->
+    <div id="chartTooltip"></div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMQ — Time Series Explorer</h2>
+                <button class="modal-close" id="closeAboutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The <strong>Time Series Explorer</strong> draws one or more measurements as connected lines over time, so you can see trends, cycles, sudden jumps, and gradual drift at a glance. Each dot is one observation; the line simply connects consecutive observations in time order.</p>
+
+                <h3>Overlaid series</h3>
+                <p>Every numeric column you select becomes its own line. If you also pick a Group/Legend column (a character variable), the data is split by each distinct value of that variable, and each value gets its own colored line and legend entry. Selecting both produces one line per Y-column × group-value combination (capped at 20 series to stay readable).</p>
+
+                <h3>Reference lines</h3>
+                <ul>
+                    <li><strong>Mean</strong> (dashed): the arithmetic average of a series — sensitive to extreme values.</li>
+                    <li><strong>Median</strong> (dashed): the middle value — half the points are above it, half below; robust to outliers.</li>
+                    <li><strong>Mode</strong> (dotted): the most frequently occurring value (values are rounded slightly to find ties in continuous data).</li>
+                    <li><strong>P25 / P75</strong> (light dashed): the 25th and 75th percentiles — the middle 50% of values fall between these two lines.</li>
+                </ul>
+
+                <h3>Outlier exclusion (1.5×IQR)</h3>
+                <p>When "Include outliers" is unchecked, points are dropped if they fall more than 1.5 times the interquartile range (IQR = P75 − P25) below P25 or above P75 — the standard box-plot fence rule. The KPI strip reports how many points were excluded.</p>
+
+                <h3>Minimum points ("best so far")</h3>
+                <p>With "Highlight minimum points" on, every time a series sets a new all-time low it is marked with a larger red dot, and a red dashed step line tracks the best (lowest) value achieved up to each moment — like a personal-best line on a race-time chart. The lower it steps, the better the record.</p>
+
+                <h3>Linked data grid</h3>
+                <p>The table below the chart shows every underlying row. Selection is bidirectional: clicking a point on the chart selects (and scrolls to) its row in the grid, and ticking row checkboxes in the grid enlarges and rings the matching chart points while dimming the rest. Use Clear Selection to reset both.</p>
+
+                <p>Built with D3.js v7, AG Grid Community, and vanilla JavaScript — no frameworks required.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help &amp; Support</h2>
+                <button class="modal-close" id="closeHelpModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Thank you for using DMQ — Time Series Explorer.</p>
+                <p><strong>Quick steps:</strong></p>
+                <ul>
+                    <li>1. Choose a dataset.</li>
+                    <li>2. Pick an X-Axis (date/time) column and one or more numeric Y-Axis columns (Ctrl/Shift to multi-select).</li>
+                    <li>3. Optionally pick a Group/Legend character column to split lines by category.</li>
+                    <li>4. Add filters and adjust the Configuration toggles — the chart updates live.</li>
+                    <li>5. Click chart points or grid rows to cross-highlight; use the grid's quick filter, sorting, and pagination to explore.</li>
+                </ul>
+                <p>If you encounter any issues, have questions, or would like to suggest improvements, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day. Looking forward to hearing from you!</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMQ — Time Series Explorer v1.0</h1>
+            <p>Multi-series time-series line graph with linked data grid</p>
+
+            <div class="top-nav">
+                <a id="nav-logon" href="#">Logon</a>
+                <span id="nav-welcome"></span>
+                <a id="nav-about" href="#">About</a>
+                <a id="nav-help" href="#">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" id="menuAbout">About</a>
+                    <a href="#" id="menuHelp">Help</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Toolbar (visible when authenticated) -->
+        <div id="reportToolbar">
+            <label for="reportNameInput">Report Name:</label>
+            <input type="text" id="reportNameInput" value="Time Series Explorer">
+            <button class="btn btn-primary btn-sm" id="saveReportBtn">Save Report</button>
+            <span id="reportSaveFeedback"></span>
+        </div>
+
+        <div class="main-content">
+            <div class="content-row">
+                <!-- Left: Input Panel -->
+                <div class="input-panel">
+
+                    <!-- Dataset Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Dataset Selection</h2>
+                        <div class="form-group">
+                            <label for="dataset">Choose Dataset:</label>
+                            <select id="dataset">
+                                <option value="">Select a dataset...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Column Selection -->
+                    <div class="section">
+                        <h2 class="section-title">
+                            Column Selection
+                            <span class="info-icon" data-tooltip="X-Axis: the date/time (or sequence) column that orders points left-to-right. Y-Axis: one or more numeric columns — each becomes its own overlaid line. Group/Legend: an optional character column; when set, lines are split by its distinct values and colored per value.">i</span>
+                        </h2>
+                        <div class="form-group">
+                            <label for="xColumn">X-Axis (Date/Time) Column:</label>
+                            <select id="xColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="yColumns">Y-Axis (Numeric) Columns (Ctrl/Shift to multi-select):</label>
+                            <select id="yColumns" multiple size="6" style="width:100%;font-size:11px;">
+                                <option disabled>— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="groupColumn">Group/Legend (Character) Column:</label>
+                            <select id="groupColumn">
+                                <option value="">— none —</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="section">
+                        <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                        <div class="filters-container">
+                            <div id="filtersContainer">
+                                <p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>
+                            </div>
+                            <button class="btn btn-secondary" id="addFilterBtn" style="margin-top:10px;">Add Filter</button>
+                        </div>
+                    </div>
+
+                    <!-- Configuration Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Configuration Selection</h2>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgOutliers" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgOutliers" style="margin-bottom:0;font-weight:normal;">Include outliers</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgMean" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgMean" style="margin-bottom:0;font-weight:normal;">Show Mean line</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgMedian" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgMedian" style="margin-bottom:0;font-weight:normal;">Show Median line</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgMode" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgMode" style="margin-bottom:0;font-weight:normal;">Show Mode line</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgP25" style="width:auto;margin-bottom:0;">
+                            <label for="cfgP25" style="margin-bottom:0;font-weight:normal;">Show 1st percentile (P25)</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgP75" style="width:auto;margin-bottom:0;">
+                            <label for="cfgP75" style="margin-bottom:0;font-weight:normal;">Show 3rd percentile (P75)</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgMinPoints" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgMinPoints" style="margin-bottom:0;font-weight:normal;">Highlight minimum points</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="cfgLegend" checked style="width:auto;margin-bottom:0;">
+                            <label for="cfgLegend" style="margin-bottom:0;font-weight:normal;">Show legend</label>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="cfgInterp">Line interpolation:</label>
+                            <select id="cfgInterp">
+                                <option value="linear">Linear</option>
+                                <option value="step">Step</option>
+                                <option value="monotone">Smooth (monotone)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Point size: <span class="range-val" id="cfgPointSizeVal">3.5</span>px</label>
+                            <input type="range" id="cfgPointSize" min="2" max="8" step="0.5" value="3.5" style="width:100%;">
+                        </div>
+                    </div>
+
+                </div><!-- /input-panel -->
+
+                <!-- Right: Visualization Panel -->
+                <div id="vizPanel">
+
+                    <!-- KPI Strip -->
+                    <div class="kpi-strip" id="kpiStrip">
+                        <div class="kpi-item">
+                            <div class="kpi-label">All-time Min</div>
+                            <div class="kpi-value" id="kpiMin">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Mean</div>
+                            <div class="kpi-value" id="kpiMean">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Median</div>
+                            <div class="kpi-value" id="kpiMedian">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Mode</div>
+                            <div class="kpi-value" id="kpiMode">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Records (n)</div>
+                            <div class="kpi-value-sm" id="kpiRecords">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Series</div>
+                            <div class="kpi-value-sm" id="kpiSeries">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Outliers Excluded</div>
+                            <div class="kpi-value-sm" id="kpiExcluded">—</div>
+                        </div>
+                    </div>
+
+                    <div class="series-warning" id="seriesWarning"></div>
+
+                    <!-- Legend (HTML, clickable) -->
+                    <div id="chartLegend" style="display:none;"></div>
+
+                    <!-- Line Chart -->
+                    <div id="chartContainer">
+                        <div class="viz-placeholder">Select a dataset, an X-axis column, and at least one numeric Y-axis column to render the time series.</div>
+                    </div>
+
+                </div><!-- /vizPanel -->
+            </div><!-- /content-row -->
+
+            <!-- Ag-Grid Table (full width) -->
+            <div class="grid-section">
+                <h2 class="section-title">Data Grid</h2>
+                <div class="grid-toolbar">
+                    <input type="text" id="quickFilter" placeholder="Quick filter — search all columns...">
+                    <button class="btn btn-secondary btn-sm" id="clearSelectionBtn">Clear Selection</button>
+                    <button class="btn btn-secondary btn-sm" id="gridExportBtn">Export Grid CSV</button>
+                    <span id="selectionInfo" style="color:#888;"></span>
+                </div>
+                <div id="dataGrid" class="ag-theme-alpine">
+                    <div class="viz-placeholder">The data grid will appear here once a dataset is selected.</div>
+                </div>
+            </div>
+
+            <!-- Actions Strip -->
+            <div class="actions">
+                <button class="btn btn-primary" id="exportImageBtn">Export Image</button>
+                <button class="btn btn-secondary" id="exportCsvBtn">Export Chart Data to CSV</button>
+                <button class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout">Sign out</a>
+    </footer>
+
+    <script src="scripts/d3.min.js"></script>
+    <script src="scripts/html2canvas.min.js"></script>
+    <script src="scripts/lodash.min.js"></script>
+    <script src="scripts/ag-grid-community.min.js"></script>
+
+    <script>
+    /* =====================================================================
+       CONFIG / SESSION HELPERS (verbatim from template)
+       ===================================================================== */
+    function getProfileBasePath() {
+        return '../';
+    }
+
+    function showConfigError(msg) {
+        let banner = document.getElementById('config-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'config-error-banner';
+            banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+            document.body.insertBefore(banner, document.body.firstChild);
+        }
+        banner.textContent = msg;
+    }
+
+    async function loadConfig() {
+        const base = getProfileBasePath();
+        const tryFetch = async (path) => {
+            let r = await fetch(base + path);
+            if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+            return r.json();
+        };
+        const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+            tryFetch('data_config.json'),
+            tryFetch('datasets.json'),
+            tryFetch('sas_config.json')
+        ]);
+        window.DATA_CONFIG = dataCfg;
+        window.datasets = datasetsCfg;
+        window.SAS_CONFIG = Object.assign({}, sasCfg, {
+            portalUrl: window.location.origin + window.location.pathname
+        });
+    }
+
+    function initDatasetDropdown() {
+        const sel = document.getElementById('dataset');
+        if (!sel || !window.datasets) return;
+        sel.innerHTML = '<option value="">Select a dataset...</option>';
+        Object.keys(window.datasets).forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            sel.appendChild(opt);
+        });
+    }
+
+    /* =====================================================================
+       DATA FUNCTIONS (verbatim from template)
+       ===================================================================== */
+    function getDataSourceURL(dataset) {
+        const datasetConfig = window.datasets[dataset];
+        const mapping = window.DATA_CONFIG.Mapping[dataset];
+        if (!mapping) throw new Error('No mapping found for dataset: ' + dataset);
+        if (datasetConfig.dmsrc_type === 'file') {
+            return window.DATA_CONFIG.baseFileURL + mapping;
+        } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+            return null;
+        }
+        throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+    }
+
+    function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+        const dataset = window.datasets[selectedDataset];
+        let sqlQuery = 'SELECT';
+        if (useDistinct) sqlQuery += ' DISTINCT';
+        sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+        sqlQuery += ' FROM ' + (dataset.data_src_name || selectedDataset);
+        if (filters.length > 0) {
+            sqlQuery += ' WHERE ';
+            filters.forEach((filter, index) => {
+                if (index > 0) sqlQuery += ' AND ';
+                if (filter.operator === 'LIKE') {
+                    sqlQuery += filter.column + ' ' + filter.operator + " '%" + filter.value + "%'";
+                } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                    sqlQuery += filter.column + ' ' + filter.operator + ' (' + filter.value + ')';
+                } else {
+                    const isNumeric = dataset.types[filter.column] === 'numeric';
+                    const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                    sqlQuery += filter.column + ' ' + filter.operator + ' ' + value;
+                }
+            });
+        }
+        return sqlQuery;
+    }
+
+    function buildAPIURL(dataset, sqlQuery) {
+        const apiEndpoint = window.DATA_CONFIG.Mapping[dataset];
+        if (!apiEndpoint) throw new Error('No API endpoint mapping found for dataset: ' + dataset);
+        return window.DATA_CONFIG.baseAPIURL + apiEndpoint +
+               '&dmq_query=' + encodeURIComponent(sqlQuery);
+    }
+
+    function applyFilters(data, filters) {
+        if (filters.length === 0) return data;
+        return data.filter(row => {
+            return filters.every(filter => {
+                const columnValue = row[filter.column];
+                const filterValue = filter.value;
+                if (columnValue === null || columnValue === undefined) return false;
+                switch (filter.operator) {
+                    case '=':
+                        return String(columnValue).toLowerCase() === filterValue.toLowerCase() ||
+                               Number(columnValue) === Number(filterValue);
+                    case '<>':
+                        return String(columnValue).toLowerCase() !== filterValue.toLowerCase();
+                    case '>': return Number(columnValue) > Number(filterValue);
+                    case '<': return Number(columnValue) < Number(filterValue);
+                    case '>=': return Number(columnValue) >= Number(filterValue);
+                    case '<=': return Number(columnValue) <= Number(filterValue);
+                    case 'LIKE':
+                        return String(columnValue).toLowerCase().includes(filterValue.toLowerCase());
+                    case 'IN': {
+                        const inValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return inValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    case 'NOT IN': {
+                        const notInValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return !notInValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    default: return true;
+                }
+            });
+        });
+    }
+
+    async function fetchData(dataset, columns, filters, useDistinct) {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const datasetConfig = window.datasets[dataset];
+        try {
+            loadingOverlay.style.display = 'flex';
+            if (datasetConfig.dmsrc_type === 'file') {
+                const url = getDataSourceURL(dataset);
+                const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) throw new Error('Invalid or empty data');
+                let filteredData = applyFilters(jsonData, filters);
+                return filteredData;
+            } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                const sqlQuery = buildSQLQuery(dataset, columns, filters, useDistinct);
+                const apiURL = buildAPIURL(dataset, sqlQuery);
+                const response = await fetch(apiURL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('API error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) return [];
+                return jsonData;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error loading data: ' + error.message);
+            return null;
+        } finally {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    /* =====================================================================
+       TIME-SERIES STATE
+       ===================================================================== */
+    const ROW_ID_FIELD = '__dmqRowId';
+    const MAX_SERIES = 20;
+
+    let filterCount = 0;
+    let lastRows = null;          // fetched + filtered rows, each tagged with ROW_ID_FIELD
+    let lastSeries = null;        // computed series array
+    let gridApi = null;
+    let selectedIds = new Set();  // shared selection state (stable row ids)
+    let hiddenSeries = new Set(); // series keys toggled off via legend
+    let syncingSelection = false; // re-entrancy guard for grid<->chart sync
+
+    const SERIES_PALETTE = ['#3b82f6', '#e67e22', '#2e9e6b', '#9b59b6', '#c0392b',
+                            '#16a2b8', '#d4a017', '#7f8c8d', '#e84393', '#34495e',
+                            '#27ae60', '#8e44ad', '#f39c12', '#2980b9', '#c2185b',
+                            '#00897b', '#5d4037', '#455a64', '#6d4c41', '#1565c0'];
+
+    /* =====================================================================
+       COLUMN POPULATION
+       ===================================================================== */
+    function updateColumns() {
+        const ds = document.getElementById('dataset').value;
+        const xSel = document.getElementById('xColumn');
+        const ySel = document.getElementById('yColumns');
+        const gSel = document.getElementById('groupColumn');
+
+        xSel.innerHTML = '';
+        ySel.innerHTML = '';
+        gSel.innerHTML = '<option value="">— none —</option>';
+
+        if (!ds || !window.datasets || !window.datasets[ds]) {
+            xSel.innerHTML = '<option value="">— select dataset first —</option>';
+            ySel.innerHTML = '<option disabled>— select dataset first —</option>';
+            renderTimeSeries();
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        const types = dataset.types || {};
+
+        // X-axis: prefer date/datetime first, but allow any column
+        const dateCols = dataset.columns.filter(c => /date|time/i.test(String(types[c] || '')));
+        const otherCols = dataset.columns.filter(c => !dateCols.includes(c));
+
+        xSel.innerHTML = '<option value="">— choose X column —</option>';
+        if (dateCols.length > 0) {
+            const og = document.createElement('optgroup');
+            og.label = 'Date/Time columns';
+            dateCols.forEach(c => {
+                const o = document.createElement('option');
+                o.value = c; o.textContent = c;
+                og.appendChild(o);
+            });
+            xSel.appendChild(og);
+        }
+        const og2 = document.createElement('optgroup');
+        og2.label = dateCols.length > 0 ? 'Other columns' : 'All columns';
+        otherCols.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            og2.appendChild(o);
+        });
+        xSel.appendChild(og2);
+
+        // Y-axis: numeric columns
+        let hasNumeric = false;
+        dataset.columns.forEach(col => {
+            if (types[col] === 'numeric') {
+                hasNumeric = true;
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                ySel.appendChild(opt);
+            }
+        });
+        if (!hasNumeric) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— no numeric columns —';
+            ySel.appendChild(opt);
+        }
+
+        // Group: character columns
+        dataset.columns.forEach(col => {
+            const t = String(types[col] || '');
+            if (t === 'char' || t === 'character' || t === 'string' || t === 'text') {
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                gSel.appendChild(opt);
+            }
+        });
+
+        renderTimeSeries();
+    }
+
+    /* =====================================================================
+       FILTER MANAGEMENT (template pattern)
+       ===================================================================== */
+    function getTSFilters() {
+        const filters = [];
+        document.querySelectorAll('.filter-row').forEach(row => {
+            const column = row.querySelector('select[name="filter_column"]')?.value;
+            const operator = row.querySelector('select[name="filter_operator"]')?.value;
+            const value = row.querySelector('input[name="filter_value"]')?.value;
+            if (column && operator && value) filters.push({ column, operator, value });
+        });
+        return filters;
+    }
+
+    function addTSFilter() {
+        const ds = document.getElementById('dataset').value;
+        if (!ds) { alert('Please select a dataset first'); return; }
+
+        const dataset = window.datasets[ds];
+        const container = document.getElementById('filtersContainer');
+
+        if (filterCount === 0) container.innerHTML = '';
+        filterCount++;
+
+        let colOptions = '<option value="">Column...</option>';
+        dataset.columns.forEach(col => {
+            colOptions += '<option value="' + col + '">' + col + '</option>';
+        });
+
+        const id = filterCount;
+        const div = document.createElement('div');
+        div.className = 'filter-row';
+        div.id = 'filter_' + id;
+        div.innerHTML =
+            '<div><select name="filter_column">' + colOptions + '</select></div>' +
+            '<div><select name="filter_operator">' +
+                '<option value="">Op...</option>' +
+                '<option value="=">=</option>' +
+                '<option value="<>">&#8800;</option>' +
+                '<option value=">">&gt;</option>' +
+                '<option value="<">&lt;</option>' +
+                '<option value=">=">&ge;</option>' +
+                '<option value="<=">&le;</option>' +
+                '<option value="LIKE">LIKE</option>' +
+                '<option value="IN">IN</option>' +
+                '<option value="NOT IN">NOT IN</option>' +
+            '</select></div>' +
+            '<div><input type="text" name="filter_value" placeholder="Value..."></div>' +
+            '<div><button class="btn btn-danger" data-filterid="' + id + '">&times;</button></div>';
+
+        div.querySelector('select[name="filter_column"]').addEventListener('change', renderTimeSeries);
+        div.querySelector('select[name="filter_operator"]').addEventListener('change', renderTimeSeries);
+        div.querySelector('input[name="filter_value"]').addEventListener('input', _.debounce(renderTimeSeries, 400));
+        div.querySelector('.btn-danger').addEventListener('click', function() {
+            removeTSFilter(this.dataset.filterid);
+        });
+
+        container.appendChild(div);
+        renderTimeSeries();
+    }
+
+    function removeTSFilter(id) {
+        const el = document.getElementById('filter_' + id);
+        if (el) el.remove();
+        const container = document.getElementById('filtersContainer');
+        if (container.children.length === 0) {
+            container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+            filterCount = 0;
+        }
+        renderTimeSeries();
+    }
+
+    /* =====================================================================
+       STATS HELPERS
+       ===================================================================== */
+    function quantileSorted(sorted, q) {
+        if (sorted.length === 0) return NaN;
+        const pos = (sorted.length - 1) * q;
+        const base = Math.floor(pos);
+        const rest = pos - base;
+        if (sorted[base + 1] !== undefined) {
+            return sorted[base] + rest * (sorted[base + 1] - sorted[base]);
+        }
+        return sorted[base];
+    }
+
+    function computeStats(values) {
+        if (values.length === 0) return null;
+        const sorted = values.slice().sort((a, b) => a - b);
+        const mean = values.reduce((s, v) => s + v, 0) / values.length;
+        const median = quantileSorted(sorted, 0.5);
+        const p25 = quantileSorted(sorted, 0.25);
+        const p75 = quantileSorted(sorted, 0.75);
+        const min = sorted[0];
+        const max = sorted[sorted.length - 1];
+
+        // Mode: bucket continuous values to a sensible precision to find ties
+        const range = max - min;
+        const step = range > 0 ? Math.pow(10, Math.floor(Math.log10(range)) - 2) : 1;
+        const counts = {};
+        let mode = sorted[0], bestCount = 0;
+        sorted.forEach(v => {
+            const key = step > 0 ? (Math.round(v / step) * step) : v;
+            counts[key] = (counts[key] || 0) + 1;
+            if (counts[key] > bestCount) { bestCount = counts[key]; mode = Number(key); }
+        });
+
+        return { mean, median, mode, p25, p75, min, max, n: values.length };
+    }
+
+    function fmtVal(v) {
+        if (v === null || v === undefined || isNaN(v)) return '—';
+        const abs = Math.abs(v);
+        if (abs !== 0 && (abs < 0.01 || abs >= 1e6)) return v.toExponential(2);
+        if (Number.isInteger(v)) return v.toLocaleString('en-US');
+        return v.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    }
+
+    /* =====================================================================
+       X VALUE PARSING — dates if possible, else numeric, else ordinal
+       ===================================================================== */
+    function buildXAccessor(rows, xCol) {
+        const sample = rows.slice(0, 50).map(r => r[xCol]).filter(v => v !== null && v !== undefined && v !== '');
+        const asDates = sample.map(v => new Date(v));
+        const dateOk = sample.length > 0 && asDates.every(d => !isNaN(d.getTime())) &&
+                       sample.some(v => isNaN(Number(v))); // pure numbers stay numeric
+        if (dateOk) {
+            return { type: 'date', value: r => new Date(r[xCol]), format: d3.timeFormat('%b %y'),
+                     tooltipFormat: d3.timeFormat('%Y-%m-%d') };
+        }
+        const numOk = sample.length > 0 && sample.every(v => !isNaN(Number(v)));
+        if (numOk) {
+            return { type: 'number', value: r => Number(r[xCol]), format: v => fmtVal(v), tooltipFormat: v => fmtVal(v) };
+        }
+        // ordinal: keep first-seen order, map to index
+        const order = [];
+        const idx = {};
+        rows.forEach(r => {
+            const k = String(r[xCol]);
+            if (!(k in idx)) { idx[k] = order.length; order.push(k); }
+        });
+        return { type: 'ordinal', value: r => idx[String(r[xCol])],
+                 format: v => order[Math.round(v)] !== undefined ? order[Math.round(v)] : '',
+                 tooltipFormat: v => order[Math.round(v)] !== undefined ? order[Math.round(v)] : '' };
+    }
+
+    /* =====================================================================
+       SERIES CONSTRUCTION
+       ===================================================================== */
+    function buildSeries(rows, xCol, yCols, groupCol, includeOutliers) {
+        const xAcc = buildXAccessor(rows, xCol);
+        const warning = document.getElementById('seriesWarning');
+        warning.style.display = 'none';
+
+        let combos = [];
+        if (groupCol) {
+            const groups = Array.from(new Set(rows.map(r => String(r[groupCol] ?? '(blank)'))));
+            yCols.forEach(y => groups.forEach(g => combos.push({ yCol: y, group: g })));
+        } else {
+            combos = yCols.map(y => ({ yCol: y, group: null }));
+        }
+
+        if (combos.length > MAX_SERIES) {
+            warning.textContent = '⚠ ' + combos.length + ' series requested — showing the first ' +
+                MAX_SERIES + '. Reduce Y columns or group values for a complete view.';
+            warning.style.display = 'block';
+            combos = combos.slice(0, MAX_SERIES);
+        }
+
+        let totalExcluded = 0;
+        const series = combos.map((combo, i) => {
+            let pts = rows
+                .filter(r => combo.group === null || String(r[groupCol] ?? '(blank)') === combo.group)
+                .map(r => ({ x: xAcc.value(r), y: Number(r[combo.yCol]), id: r[ROW_ID_FIELD], row: r }))
+                .filter(p => p.x !== null && p.x !== undefined && !isNaN(p.y) &&
+                             (xAcc.type !== 'date' || !isNaN(p.x.getTime())));
+
+            pts.sort((a, b) => (xAcc.type === 'date' ? a.x - b.x : a.x - b.x));
+
+            let excluded = 0;
+            if (!includeOutliers && pts.length >= 4) {
+                const vals = pts.map(p => p.y).sort((a, b) => a - b);
+                const p25 = quantileSorted(vals, 0.25);
+                const p75 = quantileSorted(vals, 0.75);
+                const iqr = p75 - p25;
+                const lo = p25 - 1.5 * iqr;
+                const hi = p75 + 1.5 * iqr;
+                const before = pts.length;
+                pts = pts.filter(p => p.y >= lo && p.y <= hi);
+                excluded = before - pts.length;
+            }
+            totalExcluded += excluded;
+
+            const name = combo.group !== null ? (yCols.length > 1 ? combo.yCol + ' · ' + combo.group : combo.group) : combo.yCol;
+            const key = combo.yCol + '' + (combo.group === null ? '' : combo.group);
+
+            // Running minimum ("best so far") step data
+            const best = [];
+            let runMin = Infinity;
+            pts.forEach(p => {
+                const isNewMin = p.y < runMin;
+                if (isNewMin) runMin = p.y;
+                best.push({ x: p.x, best: runMin, isNewMin, id: p.id, y: p.y });
+            });
+
+            return {
+                key, name,
+                yCol: combo.yCol,
+                group: combo.group,
+                color: SERIES_PALETTE[i % SERIES_PALETTE.length],
+                points: pts,
+                best,
+                stats: computeStats(pts.map(p => p.y)),
+                excluded
+            };
+        }).filter(s => s.points.length > 0);
+
+        return { series, xAcc, totalExcluded };
+    }
+
+    /* =====================================================================
+       KPI STRIP
+       ===================================================================== */
+    function renderKPIStrip(series, totalRecords, totalExcluded) {
+        const ids = ['kpiMin', 'kpiMean', 'kpiMedian', 'kpiMode', 'kpiRecords', 'kpiSeries', 'kpiExcluded'];
+        if (!series || series.length === 0) {
+            ids.forEach(id => document.getElementById(id).textContent = '—');
+            return;
+        }
+        const allVals = series.flatMap(s => s.points.map(p => p.y));
+        const stats = computeStats(allVals);
+        document.getElementById('kpiMin').textContent = fmtVal(stats.min);
+        document.getElementById('kpiMean').textContent = fmtVal(stats.mean);
+        document.getElementById('kpiMedian').textContent = fmtVal(stats.median);
+        document.getElementById('kpiMode').textContent = fmtVal(stats.mode);
+        document.getElementById('kpiRecords').textContent = totalRecords.toLocaleString('en-US');
+        document.getElementById('kpiSeries').textContent = series.length;
+        document.getElementById('kpiExcluded').textContent = totalExcluded > 0 ? totalExcluded.toLocaleString('en-US') : '0';
+    }
+
+    /* =====================================================================
+       LEGEND (clickable, HTML)
+       ===================================================================== */
+    function renderLegend(series, showMinPoints) {
+        const legend = document.getElementById('chartLegend');
+        legend.innerHTML = '';
+        const show = document.getElementById('cfgLegend').checked && series && series.length > 0;
+        legend.style.display = show ? 'flex' : 'none';
+        if (!show) return;
+
+        series.forEach(s => {
+            const item = document.createElement('div');
+            item.className = 'legend-item' + (hiddenSeries.has(s.key) ? ' off' : '');
+            item.innerHTML = '<span class="legend-swatch" style="background:' + s.color + ';"></span>' +
+                             '<span class="legend-dot" style="background:' + s.color + ';margin-left:-14px;"></span>' +
+                             '<span>' + s.name + '</span>';
+            item.addEventListener('click', function() {
+                if (hiddenSeries.has(s.key)) hiddenSeries.delete(s.key);
+                else hiddenSeries.add(s.key);
+                drawChart(); // redraw without refetch
+            });
+            legend.appendChild(item);
+        });
+
+        const refs = [];
+        if (showMinPoints) {
+            refs.push({ html: '<span class="legend-dot" style="background:#e53935;"></span><span>Min points</span>' });
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#e53935 0 5px,transparent 5px 9px);"></span><span>Best-so-far</span>' });
+        }
+        if (document.getElementById('cfgMean').checked)
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#4a7ba7 0 6px,transparent 6px 10px);"></span><span>Mean</span>' });
+        if (document.getElementById('cfgMedian').checked)
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#5e35b1 0 6px,transparent 6px 10px);"></span><span>Median</span>' });
+        if (document.getElementById('cfgMode').checked)
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#d4a017 0 2px,transparent 2px 5px);"></span><span>Mode</span>' });
+        if (document.getElementById('cfgP25').checked)
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#90a4ae 0 4px,transparent 4px 8px);"></span><span>P25</span>' });
+        if (document.getElementById('cfgP75').checked)
+            refs.push({ html: '<span class="legend-swatch" style="background:repeating-linear-gradient(90deg,#90a4ae 0 4px,transparent 4px 8px);"></span><span>P75</span>' });
+
+        refs.forEach(r => {
+            const item = document.createElement('div');
+            item.className = 'legend-item';
+            item.style.cursor = 'default';
+            item.innerHTML = r.html;
+            legend.appendChild(item);
+        });
+    }
+
+    /* =====================================================================
+       CHART DRAW
+       ===================================================================== */
+    let lastDraw = null; // { series, xAcc }
+
+    function drawChart() {
+        const container = document.getElementById('chartContainer');
+        d3.select(container).selectAll('*').remove();
+
+        if (!lastDraw || !lastDraw.series || lastDraw.series.length === 0) {
+            container.innerHTML = '<div class="viz-placeholder">Select a dataset, an X-axis column, and at least one numeric Y-axis column to render the time series.</div>';
+            renderLegend(null, false);
+            return;
+        }
+
+        const { series, xAcc } = lastDraw;
+        const visible = series.filter(s => !hiddenSeries.has(s.key));
+        const showMinPoints = document.getElementById('cfgMinPoints').checked;
+        renderLegend(series, showMinPoints);
+
+        if (visible.length === 0) {
+            container.innerHTML = '<div class="viz-placeholder">All series are hidden — click legend entries to show them.</div>';
+            return;
+        }
+
+        const showMean = document.getElementById('cfgMean').checked;
+        const showMedian = document.getElementById('cfgMedian').checked;
+        const showMode = document.getElementById('cfgMode').checked;
+        const showP25 = document.getElementById('cfgP25').checked;
+        const showP75 = document.getElementById('cfgP75').checked;
+        const interp = document.getElementById('cfgInterp').value;
+        const pointR = parseFloat(document.getElementById('cfgPointSize').value) || 3.5;
+        const tooltip = document.getElementById('chartTooltip');
+
+        const W = 860, H = 440;
+        const margin = { top: 15, right: 25, bottom: 65, left: 60 };
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        const allPts = visible.flatMap(s => s.points);
+        const xExtent = d3.extent(allPts, p => p.x);
+        const yExtent = d3.extent(allPts, p => p.y);
+        const yPad = (yExtent[1] - yExtent[0]) * 0.06 || 1;
+
+        const xScale = (xAcc.type === 'date' ? d3.scaleTime() : d3.scaleLinear())
+            .domain(xExtent).range([0, innerW]);
+        const yScale = d3.scaleLinear()
+            .domain([yExtent[0] - yPad, yExtent[1] + yPad]).range([innerH, 0]);
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        // Horizontal gridlines
+        const yTicks = yScale.ticks(8);
+        yTicks.forEach(t => {
+            g.append('line')
+                .attr('x1', 0).attr('x2', innerW)
+                .attr('y1', yScale(t)).attr('y2', yScale(t))
+                .attr('stroke', '#e8e8e8').attr('stroke-width', 1);
+        });
+
+        // Axes
+        const xAxis = d3.axisBottom(xScale).ticks(12).tickFormat(xAcc.format).tickSize(4);
+        const yAxis = d3.axisLeft(yScale).ticks(8).tickFormat(v => fmtVal(v)).tickSize(4);
+
+        g.append('g')
+            .attr('transform', 'translate(0,' + innerH + ')')
+            .call(xAxis)
+            .call(ax => ax.select('.domain').attr('stroke', '#bbb'))
+            .call(ax => ax.selectAll('text')
+                .attr('font-size', '10px').attr('fill', '#666')
+                .attr('text-anchor', 'end')
+                .attr('transform', 'rotate(-45)')
+                .attr('dx', '-6px').attr('dy', '4px'));
+
+        g.append('g')
+            .call(yAxis)
+            .call(ax => ax.select('.domain').attr('stroke', '#bbb'))
+            .call(ax => ax.selectAll('text').attr('font-size', '10px').attr('fill', '#666'));
+
+        // Y axis label
+        const yColsSel = Array.from(document.getElementById('yColumns').selectedOptions).map(o => o.value);
+        g.append('text')
+            .attr('transform', 'rotate(-90)')
+            .attr('x', -innerH / 2).attr('y', -46)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '11px').attr('fill', '#333').attr('font-weight', '600')
+            .text(yColsSel.join(', '));
+
+        const curve = interp === 'step' ? d3.curveStepAfter :
+                      interp === 'monotone' ? d3.curveMonotoneX : d3.curveLinear;
+
+        const lineGen = d3.line()
+            .x(p => xScale(p.x)).y(p => yScale(p.y)).curve(curve);
+
+        const bestLineGen = d3.line()
+            .x(p => xScale(p.x)).y(p => yScale(p.best)).curve(d3.curveStepAfter);
+
+        // Reference lines per visible series
+        const refLine = (yVal, color, dash, label, sName) => {
+            if (yVal === null || yVal === undefined || isNaN(yVal)) return;
+            g.append('line')
+                .attr('x1', 0).attr('x2', innerW)
+                .attr('y1', yScale(yVal)).attr('y2', yScale(yVal))
+                .attr('stroke', color).attr('stroke-width', 1)
+                .attr('stroke-dasharray', dash)
+                .attr('opacity', 0.8)
+                .on('mousemove', function(event) {
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (event.clientX + 12) + 'px';
+                    tooltip.style.top = (event.clientY - 28) + 'px';
+                    tooltip.innerHTML = '<strong>' + label + '</strong> (' + sName + ')<br>' + fmtVal(yVal);
+                })
+                .on('mouseleave', function() { tooltip.style.display = 'none'; });
+        };
+
+        visible.forEach(s => {
+            if (!s.stats) return;
+            if (showMean)   refLine(s.stats.mean,   '#4a7ba7', '6,4', 'Mean', s.name);
+            if (showMedian) refLine(s.stats.median, '#5e35b1', '6,4', 'Median', s.name);
+            if (showMode)   refLine(s.stats.mode,   '#d4a017', '2,3', 'Mode', s.name);
+            if (showP25)    refLine(s.stats.p25,    '#90a4ae', '4,4', 'P25', s.name);
+            if (showP75)    refLine(s.stats.p75,    '#90a4ae', '4,4', 'P75', s.name);
+        });
+
+        // Hover crosshair (vertical)
+        const crosshair = g.append('line')
+            .attr('y1', 0).attr('y2', innerH)
+            .attr('stroke', '#999').attr('stroke-width', 1)
+            .attr('stroke-dasharray', '3,3')
+            .style('display', 'none')
+            .attr('pointer-events', 'none');
+
+        svg.on('mousemove', function(event) {
+            const [mx] = d3.pointer(event, g.node());
+            if (mx >= 0 && mx <= innerW) {
+                crosshair.attr('x1', mx).attr('x2', mx).style('display', null);
+            } else {
+                crosshair.style('display', 'none');
+            }
+        }).on('mouseleave', function() { crosshair.style('display', 'none'); });
+
+        const hasSelection = selectedIds.size > 0;
+
+        // Lines + points per series
+        visible.forEach(s => {
+            g.append('path')
+                .datum(s.points)
+                .attr('fill', 'none')
+                .attr('stroke', s.color)
+                .attr('stroke-width', 1.5)
+                .attr('d', lineGen);
+
+            // Best-so-far step line + min points
+            if (showMinPoints && s.best.length > 0) {
+                g.append('path')
+                    .datum(s.best)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#e53935')
+                    .attr('stroke-width', 1.3)
+                    .attr('stroke-dasharray', '5,4')
+                    .attr('opacity', 0.9)
+                    .attr('d', bestLineGen);
+            }
+
+            const ptsG = g.append('g');
+            s.points.forEach(p => {
+                const isMin = showMinPoints && s.best.find(b => b.id === p.id && b.isNewMin);
+                const isSel = selectedIds.has(p.id);
+                const r = isSel ? pointR + 2.5 : (isMin ? pointR + 1.5 : pointR);
+                const fill = isMin ? '#e53935' : s.color;
+                const dimmed = hasSelection && !isSel;
+
+                const circle = ptsG.append('circle')
+                    .attr('cx', xScale(p.x))
+                    .attr('cy', yScale(p.y))
+                    .attr('r', r)
+                    .attr('fill', fill)
+                    .attr('opacity', dimmed ? 0.3 : 1)
+                    .attr('stroke', isSel ? '#ff8f00' : 'white')
+                    .attr('stroke-width', isSel ? 2.5 : 1)
+                    .style('cursor', 'pointer');
+
+                circle
+                    .on('mousemove', function(event) {
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (event.clientX + 12) + 'px';
+                        tooltip.style.top = (event.clientY - 28) + 'px';
+                        const delta = p.y - s.stats.mean;
+                        tooltip.innerHTML =
+                            '<strong>' + s.yCol + '</strong>' +
+                            (s.group !== null ? '<br>Group: ' + s.group : '') +
+                            '<br>' + 'X: ' + xAcc.tooltipFormat(p.x) +
+                            '<br>' + 'Y: ' + fmtVal(p.y) +
+                            '<br>Δ vs mean: ' + (delta >= 0 ? '+' : '') + fmtVal(delta) +
+                            (isMin ? '<br><span style="color:#ff8a80;">★ New minimum</span>' : '');
+                    })
+                    .on('mouseleave', function() { tooltip.style.display = 'none'; })
+                    .on('click', function(event) {
+                        event.stopPropagation();
+                        if (selectedIds.has(p.id)) selectedIds.delete(p.id);
+                        else selectedIds.add(p.id);
+                        syncGridFromSelection(p.id);
+                        drawChart();
+                        updateSelectionInfo();
+                    });
+            });
+        });
+    }
+
+    /* =====================================================================
+       AG GRID
+       ===================================================================== */
+    function libIsMissing() {
+        const missing = [];
+        if (typeof d3 === 'undefined') missing.push('scripts/d3.min.js');
+        if (typeof html2canvas === 'undefined') missing.push('scripts/html2canvas.min.js');
+        if (typeof _ === 'undefined') missing.push('scripts/lodash.min.js');
+        if (typeof agGrid === 'undefined') missing.push('scripts/ag-grid-community.min.js');
+        return missing;
+    }
+
+    function buildGrid(rows, dsTypes) {
+        const gridDiv = document.getElementById('dataGrid');
+
+        if (gridApi) { gridApi.destroy(); gridApi = null; }
+        gridDiv.innerHTML = '';
+
+        if (!rows || rows.length === 0) {
+            gridDiv.innerHTML = '<div class="viz-placeholder">The data grid will appear here once a dataset is selected.</div>';
+            return;
+        }
+
+        const cols = Object.keys(rows[0]).filter(c => c !== ROW_ID_FIELD);
+        const columnDefs = cols.map(c => {
+            const t = String((dsTypes && dsTypes[c]) || '');
+            const isNum = t === 'numeric';
+            const isDate = /date|time/i.test(t);
+            return {
+                field: c,
+                sortable: true,
+                resizable: true,
+                filter: isNum ? 'agNumberColumnFilter' : (isDate ? 'agDateColumnFilter' : 'agTextColumnFilter'),
+                floatingFilter: true,
+                minWidth: 110
+            };
+        });
+
+        const gridOptions = {
+            theme: 'legacy',
+            columnDefs: columnDefs,
+            rowData: rows,
+            getRowId: params => String(params.data[ROW_ID_FIELD]),
+            rowSelection: {
+                mode: 'multiRow',
+                checkboxes: true,
+                headerCheckbox: true,
+                enableClickSelection: true
+            },
+            pagination: true,
+            paginationPageSize: 25,
+            paginationPageSizeSelector: [10, 25, 50, 100],
+            suppressMovableColumns: false,
+            animateRows: false,
+            onSelectionChanged: function() {
+                if (syncingSelection) return;
+                syncingSelection = true;
+                selectedIds = new Set(gridApi.getSelectedNodes().map(n => Number(n.data[ROW_ID_FIELD])));
+                syncingSelection = false;
+                drawChart();
+                updateSelectionInfo();
+            }
+        };
+
+        gridApi = agGrid.createGrid(gridDiv, gridOptions);
+        document.getElementById('quickFilter').value = '';
+    }
+
+    function syncGridFromSelection(scrollToId) {
+        if (!gridApi || syncingSelection) return;
+        syncingSelection = true;
+        gridApi.forEachNode(node => {
+            const id = Number(node.data[ROW_ID_FIELD]);
+            node.setSelected(selectedIds.has(id));
+        });
+        if (scrollToId !== undefined && selectedIds.has(scrollToId)) {
+            const node = gridApi.getRowNode(String(scrollToId));
+            if (node) gridApi.ensureNodeVisible(node, 'middle');
+        }
+        syncingSelection = false;
+    }
+
+    function clearSelection() {
+        selectedIds.clear();
+        if (gridApi) {
+            syncingSelection = true;
+            gridApi.deselectAll();
+            syncingSelection = false;
+        }
+        drawChart();
+        updateSelectionInfo();
+    }
+
+    function updateSelectionInfo() {
+        const el = document.getElementById('selectionInfo');
+        el.textContent = selectedIds.size > 0 ? selectedIds.size + ' row(s) selected' : '';
+    }
+
+    /* =====================================================================
+       MASTER RENDER
+       ===================================================================== */
+    async function renderTimeSeries() {
+        const ds = document.getElementById('dataset').value;
+        const xCol = document.getElementById('xColumn').value;
+        const yCols = Array.from(document.getElementById('yColumns').selectedOptions).map(o => o.value).filter(v => v);
+        const groupCol = document.getElementById('groupColumn').value;
+
+        if (!ds || !xCol || yCols.length === 0) {
+            lastDraw = null;
+            lastSeries = null;
+            renderKPIStrip(null, 0, 0);
+            drawChart();
+            if (ds && lastRows) return; // keep grid if dataset still loaded
+            buildGrid(null, null);
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        const filters = getTSFilters();
+
+        const rawData = await fetchData(ds, dataset.columns, filters, false);
+        if (!rawData) return;
+
+        const filteredData = applyFilters(rawData, filters);
+
+        // Assign stable row IDs (drives chart<->grid linkage)
+        filteredData.forEach((row, i) => { row[ROW_ID_FIELD] = i; });
+        lastRows = filteredData;
+
+        // Prune selection ids that no longer exist
+        const validIds = new Set(filteredData.map(r => r[ROW_ID_FIELD]));
+        selectedIds = new Set(Array.from(selectedIds).filter(id => validIds.has(id)));
+
+        const includeOutliers = document.getElementById('cfgOutliers').checked;
+        const { series, xAcc, totalExcluded } = buildSeries(filteredData, xCol, yCols, groupCol || null, includeOutliers);
+        lastSeries = series;
+        lastDraw = { series, xAcc };
+
+        // Drop hidden-series keys that no longer exist
+        const keys = new Set(series.map(s => s.key));
+        hiddenSeries = new Set(Array.from(hiddenSeries).filter(k => keys.has(k)));
+
+        renderKPIStrip(series, filteredData.length, totalExcluded);
+        drawChart();
+        buildGrid(filteredData, dataset.types);
+        updateSelectionInfo();
+    }
+
+    /* =====================================================================
+       SAS SESSION / AUTH (verbatim from template)
+       ===================================================================== */
+    window.session = { authenticated: false, userid: null, loginTime: null };
+
+    function sasGetParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function sasCleanUrl() {
+        history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function sasRenderLoggedIn() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'none';
+        if (welcome) {
+            welcome.style.display = 'inline';
+            welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+        }
+        document.getElementById('status-dot').classList.add('active');
+        document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+        document.getElementById('footer-signout').style.display = 'inline';
+        document.getElementById('reportToolbar').classList.add('visible');
+    }
+
+    function sasRenderLoggedOut() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'inline';
+        if (welcome) welcome.style.display = 'none';
+        document.getElementById('status-dot').classList.remove('active');
+        document.getElementById('status-label').textContent = 'No active session';
+        document.getElementById('footer-signout').style.display = 'none';
+        document.getElementById('reportToolbar').classList.remove('visible');
+    }
+
+    function handleLogon(e) {
+        if (e) e.preventDefault();
+        if (!window.SAS_CONFIG) { alert('Configuration not yet loaded.'); return; }
+        const returnUrl = encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        const target = window.SAS_CONFIG.storedProcessUrl +
+                       encodeURIComponent(window.SAS_CONFIG.storedProcessPath) +
+                       '&returnUrl=' + returnUrl;
+        window.location.href = target;
+    }
+
+    function handleSignOut(e) {
+        if (e) e.preventDefault();
+        window.session = { authenticated: false, userid: null, loginTime: null };
+        localStorage.removeItem('sas_session');
+        if (window.SAS_CONFIG) {
+            window.location.href = window.SAS_CONFIG.logoutUrl +
+                                   '?returnUrl=' + encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        } else {
+            sasRenderLoggedOut();
+        }
+    }
+
+    (function sasInit() {
+        const userid = sasGetParam('userid');
+        const sasAuth = sasGetParam('sasAuth');
+        if (userid && sasAuth === '1') {
+            window.session = {
+                authenticated: true,
+                userid: decodeURIComponent(userid),
+                loginTime: new Date().toLocaleTimeString()
+            };
+            localStorage.setItem('sas_session', JSON.stringify(window.session));
+            sasCleanUrl();
+            sasRenderLoggedIn();
+        } else {
+            try {
+                let rawSession = localStorage.getItem('sas_session');
+                if (!rawSession) {
+                    rawSession = sessionStorage.getItem('sas_session');
+                    if (rawSession) localStorage.setItem('sas_session', rawSession);
+                }
+                const stored = rawSession ? JSON.parse(rawSession) : null;
+                if (stored && stored.authenticated && stored.userid) {
+                    window.session = stored;
+                    sasRenderLoggedIn();
+                    return;
+                }
+            } catch (_) {}
+            sasRenderLoggedOut();
+        }
+    })();
+
+    /* =====================================================================
+       REPORT SAVE
+       ===================================================================== */
+    async function saveReport() {
+        const name = document.getElementById('reportNameInput').value.trim();
+        const feedback = document.getElementById('reportSaveFeedback');
+        if (!name) { feedback.textContent = 'Enter a report name'; feedback.style.color = '#cc0000'; return; }
+        if (!window.session || !window.session.authenticated) {
+            feedback.textContent = 'Must be logged in'; feedback.style.color = '#cc0000'; return;
+        }
+        const userid = window.session.userid;
+        const basePath = 'meta/profiles/' + encodeURIComponent(userid) + '/';
+        const reportEntry = {
+            name: name,
+            url: basePath + 'reports/time_series_explorer.html'
+        };
+        try {
+            feedback.textContent = 'Saving...'; feedback.style.color = '#555';
+            let existing = { reports: [] };
+            try {
+                const r = await fetch(basePath + 'reports.json');
+                if (r.ok) existing = await r.json();
+            } catch (_) {}
+            const idx = existing.reports.findIndex(rp => rp.url === reportEntry.url);
+            if (idx >= 0) existing.reports[idx] = reportEntry;
+            else existing.reports.push(reportEntry);
+            const res = await fetch(basePath + 'reports.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(existing, null, 2)
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            feedback.textContent = 'Saved'; feedback.style.color = '#2e7d32';
+        } catch (err) {
+            feedback.textContent = err.message; feedback.style.color = '#cc0000';
+        }
+    }
+
+    /* =====================================================================
+       EXPORT / RESET
+       ===================================================================== */
+    function exportImage() {
+        const target = document.querySelector('.main-content');
+        html2canvas(target).then(canvas => {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = 'time_series_explorer_' + ts + '.png';
+            a.click();
+        });
+    }
+
+    function exportChartCSV() {
+        if (!lastSeries || lastSeries.length === 0) {
+            alert('No data to export. Please render a time series first.');
+            return;
+        }
+        const xAcc = lastDraw.xAcc;
+        let csv = 'Series,Y Column,Group,X,Y,Is New Minimum\n';
+        lastSeries.forEach(s => {
+            s.points.forEach(p => {
+                const isMin = s.best.find(b => b.id === p.id && b.isNewMin) ? 'Y' : '';
+                const fields = [s.name, s.yCol, s.group === null ? '' : s.group,
+                                xAcc.tooltipFormat(p.x), p.y, isMin];
+                csv += fields.map(v => {
+                    const str = String(v);
+                    if (str.includes(',') || str.includes('"')) return '"' + str.replace(/"/g, '""') + '"';
+                    return str;
+                }).join(',') + '\n';
+            });
+        });
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'time_series_' + ts + '.csv';
+        a.click();
+    }
+
+    function exportGridCSV() {
+        if (!gridApi) { alert('No grid data to export.'); return; }
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        gridApi.exportDataAsCsv({ fileName: 'time_series_grid_' + ts + '.csv' });
+    }
+
+    function resetForm() {
+        document.getElementById('dataset').value = '';
+        document.getElementById('xColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('yColumns').innerHTML = '<option disabled>— select dataset first —</option>';
+        document.getElementById('groupColumn').innerHTML = '<option value="">— none —</option>';
+        document.getElementById('filtersContainer').innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+        document.getElementById('cfgOutliers').checked = true;
+        document.getElementById('cfgMean').checked = true;
+        document.getElementById('cfgMedian').checked = true;
+        document.getElementById('cfgMode').checked = true;
+        document.getElementById('cfgP25').checked = false;
+        document.getElementById('cfgP75').checked = false;
+        document.getElementById('cfgMinPoints').checked = true;
+        document.getElementById('cfgLegend').checked = true;
+        document.getElementById('cfgInterp').value = 'linear';
+        document.getElementById('cfgPointSize').value = '3.5';
+        document.getElementById('cfgPointSizeVal').textContent = '3.5';
+        document.getElementById('seriesWarning').style.display = 'none';
+        filterCount = 0;
+        lastRows = null;
+        lastSeries = null;
+        lastDraw = null;
+        selectedIds.clear();
+        hiddenSeries.clear();
+        renderKPIStrip(null, 0, 0);
+        drawChart();
+        buildGrid(null, null);
+        updateSelectionInfo();
+    }
+
+    /* =====================================================================
+       MODAL HELPERS
+       ===================================================================== */
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function toggleMenu() {
+        document.getElementById('dropdownMenu').classList.toggle('active');
+        document.getElementById('hamburgerBtn').classList.toggle('active');
+    }
+
+    function closeMenu() {
+        document.getElementById('dropdownMenu').classList.remove('active');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+    }
+
+    /* =====================================================================
+       DOM CONTENT LOADED — wire all events
+       ===================================================================== */
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Local library check (air-gapped: every script must be present)
+        const missing = libIsMissing();
+        if (missing.length > 0) {
+            showConfigError('Missing local library file(s): ' + missing.join(', ') +
+                ' — copy them into the reports folder (see README.md).');
+            return;
+        }
+
+        // Load config
+        try {
+            await loadConfig();
+            initDatasetDropdown();
+        } catch (err) {
+            console.error('Config load error:', err);
+            showConfigError('Configuration failed to load. Check console for details.');
+        }
+
+        // Dataset change
+        document.getElementById('dataset').addEventListener('change', updateColumns);
+
+        // Column selectors
+        document.getElementById('xColumn').addEventListener('change', renderTimeSeries);
+        document.getElementById('yColumns').addEventListener('change', renderTimeSeries);
+        document.getElementById('groupColumn').addEventListener('change', renderTimeSeries);
+
+        // Filter add button
+        document.getElementById('addFilterBtn').addEventListener('click', addTSFilter);
+
+        // Configuration controls — outlier toggle needs series rebuild; others only redraw
+        document.getElementById('cfgOutliers').addEventListener('change', renderTimeSeries);
+        ['cfgMean', 'cfgMedian', 'cfgMode', 'cfgP25', 'cfgP75', 'cfgMinPoints', 'cfgLegend'].forEach(id => {
+            document.getElementById(id).addEventListener('change', drawChart);
+        });
+        document.getElementById('cfgInterp').addEventListener('change', drawChart);
+        document.getElementById('cfgPointSize').addEventListener('input', function() {
+            document.getElementById('cfgPointSizeVal').textContent = this.value;
+            drawChart();
+        });
+
+        // Grid toolbar
+        document.getElementById('quickFilter').addEventListener('input', function() {
+            if (gridApi) gridApi.setGridOption('quickFilterText', this.value);
+        });
+        document.getElementById('clearSelectionBtn').addEventListener('click', clearSelection);
+        document.getElementById('gridExportBtn').addEventListener('click', exportGridCSV);
+
+        // Action buttons
+        document.getElementById('exportImageBtn').addEventListener('click', exportImage);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportChartCSV);
+        document.getElementById('resetFormBtn').addEventListener('click', resetForm);
+
+        // Report save
+        document.getElementById('saveReportBtn').addEventListener('click', saveReport);
+
+        // Nav
+        document.getElementById('nav-logon').addEventListener('click', handleLogon);
+        document.getElementById('footer-signout').addEventListener('click', handleSignOut);
+        document.getElementById('nav-about').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); });
+        document.getElementById('nav-help').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); });
+
+        // Hamburger
+        document.getElementById('hamburgerBtn').addEventListener('click', toggleMenu);
+        document.getElementById('menuAbout').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); closeMenu(); });
+        document.getElementById('menuHelp').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); closeMenu(); });
+
+        // Modal closes
+        document.getElementById('closeAboutModal').addEventListener('click', function() { closeModal('aboutModal'); });
+        document.getElementById('closeHelpModal').addEventListener('click', function() { closeModal('helpModal'); });
+
+        // Click outside to close modal/menu
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) this.classList.remove('active');
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+            }
+        });
+    });
+    </script>
+</body>
+</html>

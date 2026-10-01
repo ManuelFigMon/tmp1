@@ -1,0 +1,1865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMQ — Correlation Matrix v1.0</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+            padding-bottom: 36px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin-bottom: 0;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.95;
+            margin-top: 3px;
+        }
+
+        .top-nav {
+            position: absolute;
+            top: 15px;
+            right: 70px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .top-nav a {
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .top-nav a:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        #nav-welcome {
+            color: #d4f5d4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 10px;
+            display: none;
+        }
+
+        .sas-footer {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            z-index: 50;
+        }
+
+        .sas-footer .session-indicator {
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes sasPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #footer-signout {
+            color: #cc0000;
+            text-decoration: none;
+            display: none;
+        }
+
+        #footer-signout:hover { text-decoration: underline; }
+
+        .hamburger-container {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+        }
+
+        .hamburger {
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .hamburger:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .dropdown-menu {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background: white;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .dropdown-menu.active {
+            display: block;
+        }
+
+        .dropdown-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-menu a:hover {
+            background: #f8f8f8;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .modal-body {
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body a {
+            color: #4a7ba7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        /* Report Toolbar */
+        #reportToolbar {
+            display: none;
+            background: #f0f4f8;
+            border-bottom: 1px solid #c8d8e8;
+            padding: 6px 16px;
+            align-items: center;
+            gap: 10px;
+            font-size: 11px;
+        }
+
+        #reportToolbar.visible {
+            display: flex;
+        }
+
+        #reportToolbar label {
+            font-weight: 600;
+            color: #333;
+            margin: 0;
+            white-space: nowrap;
+        }
+
+        #reportToolbar input[type="text"] {
+            width: 220px;
+            padding: 4px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+        }
+
+        #reportSaveFeedback {
+            font-size: 11px;
+            color: #2e7d32;
+            margin-left: 8px;
+        }
+
+        /* Main Layout */
+        .main-content {
+            padding: 15px;
+        }
+
+        .content-row {
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+        }
+
+        .input-panel {
+            width: 35%;
+            flex-shrink: 0;
+        }
+
+        #vizPanel {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            background: white;
+            border-radius: 0;
+            padding: 15px;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 3px;
+            height: 18px;
+            background: #4a7ba7;
+            margin-right: 10px;
+            border-radius: 0;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #4a7ba7;
+            box-shadow: 0 0 0 1px #4a7ba7;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a7ba7;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+            margin-left: 6px;
+            flex-shrink: 0;
+        }
+
+        .info-icon:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #2b2b2b;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: normal;
+            width: 300px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            line-height: 1.4;
+            border: 1px solid #404040;
+        }
+
+        .info-icon:hover::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: #2b2b2b;
+            z-index: 1001;
+        }
+
+        .filters-container {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 10px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 160px 100px 160px 40px;
+            gap: 6px;
+            align-items: end;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .btn {
+            padding: 6px 16px;
+            border: 1px solid;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: #5a8ab8;
+            color: white;
+            border-color: #4a7ba7;
+        }
+
+        .btn-primary:hover {
+            background: #4a7ba7;
+        }
+
+        .btn-secondary {
+            background: #888;
+            color: white;
+            border-color: #777;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .btn-danger {
+            background: #d9534f;
+            color: white;
+            border-color: #d43f3a;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger:hover {
+            background: #c9302c;
+        }
+
+        .btn-sm {
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .actions .btn {
+            margin: 0 5px;
+            min-width: 120px;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a7ba7;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
+            background: #f8f8f8;
+            border: 1px solid #d0d0d0;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            gap: 24px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .kpi-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .kpi-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1;
+        }
+
+        .kpi-value-sm {
+            font-size: 13px;
+            font-weight: 700;
+            color: #4a7ba7;
+            line-height: 1.2;
+        }
+
+        .kpi-label {
+            font-size: 10px;
+            color: #888;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Matrix container */
+        #matrixContainer {
+            margin-bottom: 12px;
+            overflow-x: auto;
+        }
+
+        #matrixContainer svg {
+            width: 100%;
+            height: auto;
+        }
+
+        .viz-placeholder {
+            color: #aaa;
+            text-align: center;
+            padding: 30px;
+            font-size: 12px;
+            font-style: italic;
+            border: 1px dashed #ddd;
+        }
+
+        /* Correlation table */
+        #corrTableContainer {
+            margin-top: 12px;
+        }
+
+        #corrTableContainer table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+
+        #corrTableContainer th {
+            background: #e8f0f8;
+            border: 1px solid #c0c0c0;
+            padding: 6px 8px;
+            font-weight: 600;
+            color: #333;
+            text-align: left;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+
+        #corrTableContainer th:hover {
+            background: #d8e8f8;
+        }
+
+        #corrTableContainer td {
+            border: 1px solid #c0c0c0;
+            padding: 4px 8px;
+        }
+
+        #corrTableContainer tr:nth-child(even) td {
+            background: #f8f8f8;
+        }
+
+        #corrTableContainer tr:hover td {
+            background: #f0f4f8;
+        }
+
+        #chartTooltip {
+            position: fixed;
+            background: rgba(30,30,30,0.92);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            display: none;
+            z-index: 5000;
+            line-height: 1.6;
+            max-width: 220px;
+        }
+
+        /* Config section controls */
+        .config-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .config-row label {
+            margin-bottom: 0;
+            min-width: 130px;
+        }
+
+        .config-row input[type="range"] {
+            flex: 1;
+            min-width: 80px;
+        }
+
+        .config-row input[type="number"] {
+            width: 60px;
+        }
+
+        .range-val {
+            font-weight: 700;
+            color: #4a7ba7;
+            min-width: 40px;
+        }
+
+        @media (max-width: 900px) {
+            .content-row {
+                flex-direction: column;
+            }
+            .input-panel {
+                width: 100%;
+            }
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <!-- Shared Tooltip -->
+    <div id="chartTooltip"></div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMQ — Correlation Matrix</h2>
+                <button class="modal-close" id="closeAboutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The Correlation Matrix report computes pairwise Pearson correlations between selected numeric columns and renders an interactive heatmap.</p>
+                <p>Pearson correlation ranges from -1 (perfect negative) to +1 (perfect positive). Values near 0 indicate no linear relationship.</p>
+                <p>Built with D3.js v7 and vanilla JavaScript — no frameworks required.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help &amp; Support</h2>
+                <button class="modal-close" id="closeHelpModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Thank you for using DMQ — Correlation Matrix. Select a dataset, choose two or more numeric columns, and optionally apply filters to refine your data.</p>
+                <p>The heatmap renders automatically. Hold Ctrl/Shift to select multiple columns in the listbox.</p>
+                <p>If you encounter any issues, have questions, or would like to suggest improvements, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day. Looking forward to hearing from you!</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMQ — Correlation Matrix v1.0</h1>
+            <p>Pearson correlation heatmap across selected columns</p>
+
+            <div class="top-nav">
+                <a id="nav-logon" href="#">Logon</a>
+                <span id="nav-welcome"></span>
+                <a id="nav-about" href="#">About</a>
+                <a id="nav-help" href="#">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" id="menuAbout">About</a>
+                    <a href="#" id="menuHelp">Help</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Toolbar (visible when authenticated) -->
+        <div id="reportToolbar">
+            <label for="reportNameInput">Report Name:</label>
+            <input type="text" id="reportNameInput" value="Correlation Matrix">
+            <button class="btn btn-primary btn-sm" id="saveReportBtn">Save Report</button>
+            <span id="reportSaveFeedback"></span>
+        </div>
+
+        <div class="main-content">
+            <div class="content-row">
+                <!-- Left: Input Panel -->
+                <div class="input-panel">
+
+                    <!-- Dataset Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Dataset Selection</h2>
+                        <div class="form-group">
+                            <label for="dataset">Choose Dataset:</label>
+                            <select id="dataset">
+                                <option value="">Select a dataset...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Column Selection -->
+                    <div class="section">
+                        <h2 class="section-title">
+                            Column Selection
+                            <span class="info-icon" data-tooltip="Select two or more numeric columns to compute pairwise Pearson correlations. The diagonal always shows 1. Red = strong positive correlation, Blue = strong negative correlation, White = no correlation.">i</span>
+                        </h2>
+                        <div class="form-group">
+                            <label for="correlationColumns">Numeric Columns (Ctrl/Shift to multi-select):</label>
+                            <select id="correlationColumns" multiple size="8" style="width:100%;font-size:11px;">
+                                <option disabled>— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div style="display:flex;gap:6px;margin-top:6px;">
+                            <button class="btn btn-secondary btn-sm" id="selectAllColsBtn">Select All</button>
+                            <button class="btn btn-secondary btn-sm" id="clearColsBtn">Clear</button>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="section">
+                        <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                        <div class="filters-container">
+                            <div id="filtersContainer">
+                                <p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>
+                            </div>
+                            <button class="btn btn-secondary" id="addFilterBtn" style="margin-top:10px;">Add Filter</button>
+                        </div>
+                    </div>
+
+                    <!-- Configuration -->
+                    <div class="section">
+                        <h2 class="section-title">Configuration</h2>
+
+                        <div class="form-group">
+                            <label for="colorScheme">Color Scheme:</label>
+                            <select id="colorScheme">
+                                <option value="rwb">Red–White–Blue</option>
+                                <option value="rwg">Red–White–Green</option>
+                                <option value="brteal">Diverging Brown-Teal</option>
+                            </select>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="showValues" checked style="width:auto;margin-bottom:0;">
+                            <label for="showValues" style="margin-bottom:0;font-weight:normal;">Show correlation values in cells</label>
+                        </div>
+
+                        <div class="config-row">
+                            <label for="decimalPlaces" style="min-width:100px;">Decimal places:</label>
+                            <input type="number" id="decimalPlaces" value="2" min="1" max="4" style="width:60px;flex:none;">
+                        </div>
+
+                        <div class="form-group" style="margin-top:10px;">
+                            <label>Hide correlations below absolute value: <span class="range-val" id="minCorrFilterVal">0.00</span></label>
+                            <input type="range" id="minCorrFilter" min="0" max="1" step="0.05" value="0" style="width:100%;">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Cell size: <span class="range-val" id="cellSizeVal">70</span>px</label>
+                            <input type="range" id="cellSize" min="40" max="120" step="5" value="70" style="width:100%;">
+                        </div>
+                    </div>
+
+                </div><!-- /input-panel -->
+
+                <!-- Right: Visualization Panel -->
+                <div id="vizPanel">
+
+                    <!-- KPI Strip -->
+                    <div class="kpi-strip" id="kpiStrip">
+                        <div class="kpi-item">
+                            <div class="kpi-label">Selected Columns</div>
+                            <div class="kpi-value" id="kpiColCount">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Records (n)</div>
+                            <div class="kpi-value" id="kpiRecords">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Strongest Positive</div>
+                            <div class="kpi-value-sm" id="kpiStrongPos">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Strongest Negative</div>
+                            <div class="kpi-value-sm" id="kpiStrongNeg">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Matrix Heatmap -->
+                    <div id="matrixContainer">
+                        <div class="viz-placeholder">Select a dataset and two or more numeric columns to render the correlation matrix.</div>
+                    </div>
+
+                    <!-- Correlation Table -->
+                    <div id="corrTableContainer">
+                        <div class="viz-placeholder">Correlation pairs table will appear here.</div>
+                    </div>
+
+                </div><!-- /vizPanel -->
+            </div><!-- /content-row -->
+
+            <!-- Actions Strip -->
+            <div class="actions">
+                <button class="btn btn-primary" id="exportImageBtn">Export Image</button>
+                <button class="btn btn-secondary" id="exportCsvBtn">Export to CSV</button>
+                <button class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout">Sign out</a>
+    </footer>
+
+    <script src="scripts/d3.min.js"></script>
+    <script src="scripts/html2canvas.min.js"></script>
+    <script src="scripts/lodash.min.js"></script>
+
+    <script>
+    /* =====================================================================
+       CONFIG / SESSION HELPERS (verbatim from template)
+       ===================================================================== */
+    function getProfileBasePath() {
+        return '../';
+    }
+
+    function showConfigError(msg) {
+        let banner = document.getElementById('config-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'config-error-banner';
+            banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+            document.body.insertBefore(banner, document.body.firstChild);
+        }
+        banner.textContent = msg;
+    }
+
+    async function loadConfig() {
+        const base = getProfileBasePath();
+        const tryFetch = async (path) => {
+            let r = await fetch(base + path);
+            if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+            return r.json();
+        };
+        const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+            tryFetch('data_config.json'),
+            tryFetch('datasets.json'),
+            tryFetch('sas_config.json')
+        ]);
+        window.DATA_CONFIG = dataCfg;
+        window.datasets = datasetsCfg;
+        window.SAS_CONFIG = Object.assign({}, sasCfg, {
+            portalUrl: window.location.origin + window.location.pathname
+        });
+    }
+
+    function initDatasetDropdown() {
+        const sel = document.getElementById('dataset');
+        if (!sel || !window.datasets) return;
+        sel.innerHTML = '<option value="">Select a dataset...</option>';
+        Object.keys(window.datasets).forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            sel.appendChild(opt);
+        });
+    }
+
+    /* =====================================================================
+       DATA FUNCTIONS (verbatim from template)
+       ===================================================================== */
+    function getDataSourceURL(dataset) {
+        const datasetConfig = window.datasets[dataset];
+        const mapping = window.DATA_CONFIG.Mapping[dataset];
+        if (!mapping) throw new Error('No mapping found for dataset: ' + dataset);
+        if (datasetConfig.dmsrc_type === 'file') {
+            return window.DATA_CONFIG.baseFileURL + mapping;
+        } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+            return null;
+        }
+        throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+    }
+
+    function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+        const dataset = window.datasets[selectedDataset];
+        let sqlQuery = 'SELECT';
+        if (useDistinct) sqlQuery += ' DISTINCT';
+        sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+        sqlQuery += ' FROM ' + (dataset.data_src_name || selectedDataset);
+        if (filters.length > 0) {
+            sqlQuery += ' WHERE ';
+            filters.forEach((filter, index) => {
+                if (index > 0) sqlQuery += ' AND ';
+                if (filter.operator === 'LIKE') {
+                    sqlQuery += filter.column + ' ' + filter.operator + " '%" + filter.value + "%'";
+                } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                    sqlQuery += filter.column + ' ' + filter.operator + ' (' + filter.value + ')';
+                } else {
+                    const isNumeric = dataset.types[filter.column] === 'numeric';
+                    const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                    sqlQuery += filter.column + ' ' + filter.operator + ' ' + value;
+                }
+            });
+        }
+        return sqlQuery;
+    }
+
+    function buildAPIURL(dataset, sqlQuery) {
+        const apiEndpoint = window.DATA_CONFIG.Mapping[dataset];
+        if (!apiEndpoint) throw new Error('No API endpoint mapping found for dataset: ' + dataset);
+        return window.DATA_CONFIG.baseAPIURL + apiEndpoint +
+               '&dmq_query=' + encodeURIComponent(sqlQuery);
+    }
+
+    function applyFilters(data, filters) {
+        if (filters.length === 0) return data;
+        return data.filter(row => {
+            return filters.every(filter => {
+                const columnValue = row[filter.column];
+                const filterValue = filter.value;
+                if (columnValue === null || columnValue === undefined) return false;
+                switch (filter.operator) {
+                    case '=':
+                        return String(columnValue).toLowerCase() === filterValue.toLowerCase() ||
+                               Number(columnValue) === Number(filterValue);
+                    case '<>':
+                        return String(columnValue).toLowerCase() !== filterValue.toLowerCase();
+                    case '>': return Number(columnValue) > Number(filterValue);
+                    case '<': return Number(columnValue) < Number(filterValue);
+                    case '>=': return Number(columnValue) >= Number(filterValue);
+                    case '<=': return Number(columnValue) <= Number(filterValue);
+                    case 'LIKE':
+                        return String(columnValue).toLowerCase().includes(filterValue.toLowerCase());
+                    case 'IN': {
+                        const inValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return inValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    case 'NOT IN': {
+                        const notInValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                        return !notInValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                    }
+                    default: return true;
+                }
+            });
+        });
+    }
+
+    async function fetchData(dataset, columns, filters, useDistinct) {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const datasetConfig = window.datasets[dataset];
+        try {
+            loadingOverlay.style.display = 'flex';
+            if (datasetConfig.dmsrc_type === 'file') {
+                const url = getDataSourceURL(dataset);
+                const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('HTTP error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) throw new Error('Invalid or empty data');
+                let filteredData = applyFilters(jsonData, filters);
+                return filteredData;
+            } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                const sqlQuery = buildSQLQuery(dataset, columns, filters, useDistinct);
+                const apiURL = buildAPIURL(dataset, sqlQuery);
+                const response = await fetch(apiURL, { method: 'GET', headers: { 'Accept': 'application/json' } });
+                if (!response.ok) throw new Error('API error! status: ' + response.status);
+                const jsonData = await response.json();
+                if (!Array.isArray(jsonData) || jsonData.length === 0) return [];
+                return jsonData;
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Error loading data: ' + error.message);
+            return null;
+        } finally {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    /* =====================================================================
+       CORRELATION-SPECIFIC STATE
+       ===================================================================== */
+    let filterCount = 0;
+    let lastCorrData = null;
+    let lastCorrMatrix = null;
+    let lastCorrCols = null;
+    let corrTableSortCol = 'abs';
+    let corrTableSortAsc = false;
+
+    /* =====================================================================
+       COLUMN POPULATION
+       ===================================================================== */
+    function updateCorrelationColumns() {
+        const ds = document.getElementById('dataset').value;
+        const sel = document.getElementById('correlationColumns');
+        sel.innerHTML = '';
+
+        if (!ds || !window.datasets || !window.datasets[ds]) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— select dataset first —';
+            sel.appendChild(opt);
+            renderCorrelationMatrix();
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        let hasNumeric = false;
+        dataset.columns.forEach(col => {
+            if (dataset.types[col] === 'numeric') {
+                hasNumeric = true;
+                const opt = document.createElement('option');
+                opt.value = col;
+                opt.textContent = col;
+                sel.appendChild(opt);
+            }
+        });
+
+        if (!hasNumeric) {
+            const opt = document.createElement('option');
+            opt.disabled = true;
+            opt.textContent = '— no numeric columns —';
+            sel.appendChild(opt);
+        }
+
+        renderCorrelationMatrix();
+    }
+
+    /* =====================================================================
+       FILTER MANAGEMENT
+       ===================================================================== */
+    function getCorrelationFilters() {
+        const filters = [];
+        document.querySelectorAll('.filter-row').forEach(row => {
+            const column = row.querySelector('select[name="filter_column"]')?.value;
+            const operator = row.querySelector('select[name="filter_operator"]')?.value;
+            const value = row.querySelector('input[name="filter_value"]')?.value;
+            if (column && operator && value) filters.push({ column, operator, value });
+        });
+        return filters;
+    }
+
+    function addCorrelationFilter() {
+        const ds = document.getElementById('dataset').value;
+        if (!ds) { alert('Please select a dataset first'); return; }
+
+        const dataset = window.datasets[ds];
+        const container = document.getElementById('filtersContainer');
+
+        if (filterCount === 0) container.innerHTML = '';
+        filterCount++;
+
+        let colOptions = '<option value="">Column...</option>';
+        dataset.columns.forEach(col => {
+            colOptions += '<option value="' + col + '">' + col + '</option>';
+        });
+
+        const id = filterCount;
+        const div = document.createElement('div');
+        div.className = 'filter-row';
+        div.id = 'filter_' + id;
+        div.innerHTML =
+            '<div><select name="filter_column">' + colOptions + '</select></div>' +
+            '<div><select name="filter_operator">' +
+                '<option value="">Op...</option>' +
+                '<option value="=">=</option>' +
+                '<option value="<>">&#8800;</option>' +
+                '<option value=">">&gt;</option>' +
+                '<option value="<">&lt;</option>' +
+                '<option value=">=">&ge;</option>' +
+                '<option value="<=">&le;</option>' +
+                '<option value="LIKE">LIKE</option>' +
+                '<option value="IN">IN</option>' +
+                '<option value="NOT IN">NOT IN</option>' +
+            '</select></div>' +
+            '<div><input type="text" name="filter_value" placeholder="Value..."></div>' +
+            '<div><button class="btn btn-danger" data-filterid="' + id + '">&times;</button></div>';
+
+        div.querySelector('select[name="filter_column"]').addEventListener('change', renderCorrelationMatrix);
+        div.querySelector('select[name="filter_operator"]').addEventListener('change', renderCorrelationMatrix);
+        div.querySelector('input[name="filter_value"]').addEventListener('input', renderCorrelationMatrix);
+        div.querySelector('.btn-danger').addEventListener('click', function() {
+            removeCorrelationFilter(this.dataset.filterid);
+        });
+
+        container.appendChild(div);
+        renderCorrelationMatrix();
+    }
+
+    function removeCorrelationFilter(id) {
+        const el = document.getElementById('filter_' + id);
+        if (el) el.remove();
+        const container = document.getElementById('filtersContainer');
+        if (container.children.length === 0) {
+            container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+            filterCount = 0;
+        }
+        renderCorrelationMatrix();
+    }
+
+    /* =====================================================================
+       PEARSON CORRELATION
+       ===================================================================== */
+    function pearsonCorr(xs, ys) {
+        const n = xs.length;
+        if (n < 2) return 0;
+        const mx = xs.reduce((s, v) => s + v, 0) / n;
+        const my = ys.reduce((s, v) => s + v, 0) / n;
+        const num = xs.reduce((s, v, i) => s + (v - mx) * (ys[i] - my), 0);
+        const dx = Math.sqrt(xs.reduce((s, v) => s + (v - mx) ** 2, 0));
+        const dy = Math.sqrt(ys.reduce((s, v) => s + (v - my) ** 2, 0));
+        if (dx === 0 || dy === 0) return 0;
+        return num / (dx * dy);
+    }
+
+    function buildCorrelationMatrix(data, cols) {
+        // Extract numeric arrays per column (drop rows with any NaN in selected cols)
+        const arrays = cols.map(col => data.map(row => Number(row[col])));
+        // Filter to rows where all selected cols are valid numbers
+        const validIndices = data.reduce((acc, row, i) => {
+            const allValid = cols.every(col => !isNaN(Number(row[col])));
+            if (allValid) acc.push(i);
+            return acc;
+        }, []);
+        const cleanArrays = cols.map((col, ci) => validIndices.map(i => arrays[ci][i]));
+
+        const n = cols.length;
+        const matrix = [];
+        for (let i = 0; i < n; i++) {
+            matrix[i] = [];
+            for (let j = 0; j < n; j++) {
+                if (i === j) {
+                    matrix[i][j] = 1;
+                } else {
+                    matrix[i][j] = pearsonCorr(cleanArrays[i], cleanArrays[j]);
+                }
+            }
+        }
+        return { cols, matrix, n: validIndices.length };
+    }
+
+    /* =====================================================================
+       COLOR SCALE
+       ===================================================================== */
+    function getColorScale(scheme) {
+        if (scheme === 'rwb') {
+            return d3.scaleDiverging(t => d3.interpolateRdBu(1 - t)).domain([-1, 0, 1]);
+        }
+        if (scheme === 'rwg') {
+            return d3.scaleDiverging(t => d3.interpolateRdYlGn(t)).domain([-1, 0, 1]);
+        }
+        // brteal
+        return d3.scaleDiverging(t => d3.interpolateBrBG(t)).domain([-1, 0, 1]);
+    }
+
+    /* =====================================================================
+       KPI STRIP
+       ===================================================================== */
+    function renderKPIStrip(cols, n, matrix) {
+        document.getElementById('kpiColCount').textContent = cols ? cols.length : '—';
+        document.getElementById('kpiRecords').textContent = n !== null && n !== undefined ? n.toLocaleString('en-US') : '—';
+
+        if (!matrix || !cols || cols.length < 2) {
+            document.getElementById('kpiStrongPos').textContent = '—';
+            document.getElementById('kpiStrongNeg').textContent = '—';
+            return;
+        }
+
+        let maxVal = -Infinity, maxA = '', maxB = '';
+        let minVal = Infinity, minA = '', minB = '';
+
+        for (let i = 0; i < cols.length; i++) {
+            for (let j = i + 1; j < cols.length; j++) {
+                const r = matrix[i][j];
+                if (r > maxVal) { maxVal = r; maxA = cols[i]; maxB = cols[j]; }
+                if (r < minVal) { minVal = r; minA = cols[i]; minB = cols[j]; }
+            }
+        }
+
+        const dec = parseInt(document.getElementById('decimalPlaces').value) || 2;
+        document.getElementById('kpiStrongPos').innerHTML =
+            maxVal > -Infinity ? maxVal.toFixed(dec) + '<br><span style="font-size:9px;color:#666;">' + maxA + ' vs ' + maxB + '</span>' : '—';
+        document.getElementById('kpiStrongNeg').innerHTML =
+            minVal < Infinity ? minVal.toFixed(dec) + '<br><span style="font-size:9px;color:#666;">' + minA + ' vs ' + minB + '</span>' : '—';
+    }
+
+    /* =====================================================================
+       HEATMAP RENDER
+       ===================================================================== */
+    function renderHeatmap(result) {
+        const container = document.getElementById('matrixContainer');
+        d3.select(container).selectAll('*').remove();
+
+        if (!result) {
+            container.innerHTML = '<div class="viz-placeholder">Select a dataset and two or more numeric columns to render the correlation matrix.</div>';
+            return;
+        }
+
+        const { cols, matrix } = result;
+        const n = cols.length;
+        const cellSize = parseInt(document.getElementById('cellSize').value) || 70;
+        const showValues = document.getElementById('showValues').checked;
+        const dec = parseInt(document.getElementById('decimalPlaces').value) || 2;
+        const minFilter = parseFloat(document.getElementById('minCorrFilter').value) || 0;
+        const scheme = document.getElementById('colorScheme').value;
+        const colorScale = getColorScale(scheme);
+        const tooltip = document.getElementById('chartTooltip');
+
+        const margin = { top: 10, right: 120, bottom: cellSize + 30, left: cellSize + 10 };
+        const innerW = n * cellSize;
+        const innerH = n * cellSize;
+        const W = innerW + margin.left + margin.right;
+        const H = innerH + margin.top + margin.bottom;
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        const g = svg.append('g').attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        // Draw cells
+        for (let i = 0; i < n; i++) {
+            for (let j = 0; j < n; j++) {
+                const r = matrix[i][j];
+                const isDiag = (i === j);
+                const hidden = !isDiag && minFilter > 0 && Math.abs(r) < minFilter;
+                const fill = hidden ? '#f7f7f7' : colorScale(r);
+
+                g.append('rect')
+                    .attr('x', j * cellSize)
+                    .attr('y', i * cellSize)
+                    .attr('width', cellSize)
+                    .attr('height', cellSize)
+                    .attr('fill', fill)
+                    .attr('stroke', '#ccc')
+                    .attr('stroke-width', 0.5)
+                    .on('mousemove', function(event) {
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (event.clientX + 12) + 'px';
+                        tooltip.style.top = (event.clientY - 28) + 'px';
+                        tooltip.innerHTML = cols[j] + ' vs ' + cols[i] + '<br>r = ' + r.toFixed(dec);
+                    })
+                    .on('mouseleave', function() { tooltip.style.display = 'none'; });
+
+                if (showValues && !hidden) {
+                    const absR = Math.abs(r);
+                    const textColor = absR >= 0.5 ? '#fff' : '#333';
+                    g.append('text')
+                        .attr('x', j * cellSize + cellSize / 2)
+                        .attr('y', i * cellSize + cellSize / 2 + 4)
+                        .attr('text-anchor', 'middle')
+                        .attr('font-size', Math.max(9, Math.min(12, cellSize / 6)) + 'px')
+                        .attr('fill', textColor)
+                        .attr('pointer-events', 'none')
+                        .text(r.toFixed(dec));
+                }
+            }
+        }
+
+        // X-axis labels (bottom, rotated -45)
+        cols.forEach((col, j) => {
+            g.append('text')
+                .attr('x', j * cellSize + cellSize / 2)
+                .attr('y', innerH + 8)
+                .attr('text-anchor', 'end')
+                .attr('font-size', '11px')
+                .attr('fill', '#333')
+                .attr('transform', 'rotate(-45,' + (j * cellSize + cellSize / 2) + ',' + (innerH + 8) + ')')
+                .text(col);
+        });
+
+        // Y-axis labels (left side)
+        cols.forEach((col, i) => {
+            g.append('text')
+                .attr('x', -6)
+                .attr('y', i * cellSize + cellSize / 2 + 4)
+                .attr('text-anchor', 'end')
+                .attr('font-size', '11px')
+                .attr('fill', '#333')
+                .text(col);
+        });
+
+        // Color legend (right side)
+        const legendH = innerH;
+        const legendW = 16;
+        const legendX = innerW + 20;
+        const legendY = 0;
+        const nGrad = 100;
+
+        // Build linear gradient
+        const defs = svg.append('defs');
+        const gradId = 'corrLegendGrad_' + Date.now();
+        const grad = defs.append('linearGradient')
+            .attr('id', gradId)
+            .attr('x1', '0%').attr('y1', '100%')
+            .attr('x2', '0%').attr('y2', '0%');
+
+        for (let k = 0; k <= nGrad; k++) {
+            const t = k / nGrad;
+            const val = -1 + t * 2; // -1 to +1
+            grad.append('stop')
+                .attr('offset', (t * 100) + '%')
+                .attr('stop-color', colorScale(val));
+        }
+
+        g.append('rect')
+            .attr('x', legendX)
+            .attr('y', legendY)
+            .attr('width', legendW)
+            .attr('height', legendH)
+            .style('fill', 'url(#' + gradId + ')')
+            .attr('stroke', '#999')
+            .attr('stroke-width', 0.5);
+
+        // Legend ticks
+        [-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1].forEach(v => {
+            const ty = legendY + legendH * (1 - (v + 1) / 2);
+            g.append('line')
+                .attr('x1', legendX + legendW)
+                .attr('x2', legendX + legendW + 4)
+                .attr('y1', ty).attr('y2', ty)
+                .attr('stroke', '#333').attr('stroke-width', 1);
+            g.append('text')
+                .attr('x', legendX + legendW + 7)
+                .attr('y', ty + 4)
+                .attr('font-size', '10px')
+                .attr('fill', '#333')
+                .text(v.toFixed(2));
+        });
+    }
+
+    /* =====================================================================
+       CORRELATION TABLE
+       ===================================================================== */
+    function renderCorrelationTable(result) {
+        const container = document.getElementById('corrTableContainer');
+        if (!result || !result.cols || result.cols.length < 2) {
+            container.innerHTML = '<div class="viz-placeholder">Correlation pairs table will appear here.</div>';
+            return;
+        }
+
+        const { cols, matrix } = result;
+        const dec = parseInt(document.getElementById('decimalPlaces').value) || 2;
+        const colorScale = getColorScale(document.getElementById('colorScheme').value);
+
+        // Build pairs (upper triangle, no diagonal)
+        let pairs = [];
+        for (let i = 0; i < cols.length; i++) {
+            for (let j = i + 1; j < cols.length; j++) {
+                const r = matrix[i][j];
+                const absR = Math.abs(r);
+                const strength = absR >= 0.7 ? 'Strong' : absR >= 0.4 ? 'Moderate' : 'Weak';
+                pairs.push({ colA: cols[i], colB: cols[j], r, absR, strength });
+            }
+        }
+
+        // Sort
+        pairs.sort((a, b) => {
+            let va = a[corrTableSortCol === 'abs' ? 'absR' : corrTableSortCol === 'r' ? 'r' : corrTableSortCol];
+            let vb = b[corrTableSortCol === 'abs' ? 'absR' : corrTableSortCol === 'r' ? 'r' : corrTableSortCol];
+            if (typeof va === 'string') va = va.toLowerCase();
+            if (typeof vb === 'string') vb = vb.toLowerCase();
+            if (va < vb) return corrTableSortAsc ? -1 : 1;
+            if (va > vb) return corrTableSortAsc ? 1 : -1;
+            return 0;
+        });
+
+        const arrow = (col) => {
+            if (corrTableSortCol !== col) return '';
+            return corrTableSortAsc ? ' ▲' : ' ▼';
+        };
+
+        let html = '<table><thead><tr>' +
+            '<th data-sort="colA">Column A' + arrow('colA') + '</th>' +
+            '<th data-sort="colB">Column B' + arrow('colB') + '</th>' +
+            '<th data-sort="r">r' + arrow('r') + '</th>' +
+            '<th data-sort="abs">|r|' + arrow('abs') + '</th>' +
+            '<th data-sort="strength">Strength' + arrow('strength') + '</th>' +
+            '</tr></thead><tbody>';
+
+        pairs.forEach(p => {
+            const bg = colorScale(p.r);
+            const textColor = p.absR >= 0.5 ? '#fff' : '#333';
+            const strengthColor = p.strength === 'Strong' ? '#d32f2f' : p.strength === 'Moderate' ? '#e65100' : '#555';
+            html += '<tr>' +
+                '<td>' + p.colA + '</td>' +
+                '<td>' + p.colB + '</td>' +
+                '<td style="background:' + bg + ';color:' + textColor + ';font-weight:700;text-align:right;">' + p.r.toFixed(dec) + '</td>' +
+                '<td style="text-align:right;">' + p.absR.toFixed(dec) + '</td>' +
+                '<td style="color:' + strengthColor + ';font-weight:700;">' + p.strength + '</td>' +
+                '</tr>';
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        // Wire sort headers
+        container.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', function() {
+                const col = this.dataset.sort;
+                if (corrTableSortCol === col) {
+                    corrTableSortAsc = !corrTableSortAsc;
+                } else {
+                    corrTableSortCol = col;
+                    corrTableSortAsc = col === 'colA' || col === 'colB' || col === 'strength';
+                }
+                renderCorrelationTable(result);
+            });
+        });
+    }
+
+    /* =====================================================================
+       MASTER RENDER
+       ===================================================================== */
+    async function renderCorrelationMatrix() {
+        const ds = document.getElementById('dataset').value;
+        const colSel = document.getElementById('correlationColumns');
+        const selectedCols = Array.from(colSel.selectedOptions).map(o => o.value).filter(v => v);
+
+        if (!ds || selectedCols.length < 2) {
+            renderKPIStrip(selectedCols.length > 0 ? selectedCols : null, null, null);
+            renderHeatmap(null);
+            renderCorrelationTable(null);
+            return;
+        }
+
+        const dataset = window.datasets[ds];
+        const filters = getCorrelationFilters();
+
+        const rawData = await fetchData(ds, dataset.columns, filters, false);
+        if (!rawData) return;
+
+        const filteredData = applyFilters(rawData, filters);
+        lastCorrData = filteredData;
+
+        const result = buildCorrelationMatrix(filteredData, selectedCols);
+        lastCorrMatrix = result.matrix;
+        lastCorrCols = result.cols;
+
+        renderKPIStrip(result.cols, result.n, result.matrix);
+        renderHeatmap(result);
+        renderCorrelationTable(result);
+    }
+
+    /* =====================================================================
+       SAS SESSION / AUTH (verbatim from template)
+       ===================================================================== */
+    window.session = { authenticated: false, userid: null, loginTime: null };
+
+    function sasGetParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function sasCleanUrl() {
+        history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function sasRenderLoggedIn() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'none';
+        if (welcome) {
+            welcome.style.display = 'inline';
+            welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+        }
+        document.getElementById('status-dot').classList.add('active');
+        document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+        document.getElementById('footer-signout').style.display = 'inline';
+        document.getElementById('reportToolbar').classList.add('visible');
+    }
+
+    function sasRenderLoggedOut() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'inline';
+        if (welcome) welcome.style.display = 'none';
+        document.getElementById('status-dot').classList.remove('active');
+        document.getElementById('status-label').textContent = 'No active session';
+        document.getElementById('footer-signout').style.display = 'none';
+        document.getElementById('reportToolbar').classList.remove('visible');
+    }
+
+    function handleLogon(e) {
+        if (e) e.preventDefault();
+        if (!window.SAS_CONFIG) { alert('Configuration not yet loaded.'); return; }
+        const returnUrl = encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        const target = window.SAS_CONFIG.storedProcessUrl +
+                       encodeURIComponent(window.SAS_CONFIG.storedProcessPath) +
+                       '&returnUrl=' + returnUrl;
+        window.location.href = target;
+    }
+
+    function handleSignOut(e) {
+        if (e) e.preventDefault();
+        window.session = { authenticated: false, userid: null, loginTime: null };
+        localStorage.removeItem('sas_session');
+        if (window.SAS_CONFIG) {
+            window.location.href = window.SAS_CONFIG.logoutUrl +
+                                   '?returnUrl=' + encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        } else {
+            sasRenderLoggedOut();
+        }
+    }
+
+    (function sasInit() {
+        const userid = sasGetParam('userid');
+        const sasAuth = sasGetParam('sasAuth');
+        if (userid && sasAuth === '1') {
+            window.session = {
+                authenticated: true,
+                userid: decodeURIComponent(userid),
+                loginTime: new Date().toLocaleTimeString()
+            };
+            localStorage.setItem('sas_session', JSON.stringify(window.session));
+            sasCleanUrl();
+            sasRenderLoggedIn();
+        } else {
+            try {
+                let rawSession = localStorage.getItem('sas_session');
+                if (!rawSession) {
+                    rawSession = sessionStorage.getItem('sas_session');
+                    if (rawSession) localStorage.setItem('sas_session', rawSession);
+                }
+                const stored = rawSession ? JSON.parse(rawSession) : null;
+                if (stored && stored.authenticated && stored.userid) {
+                    window.session = stored;
+                    sasRenderLoggedIn();
+                    return;
+                }
+            } catch (_) {}
+            sasRenderLoggedOut();
+        }
+    })();
+
+    /* =====================================================================
+       REPORT SAVE
+       ===================================================================== */
+    async function saveReport() {
+        const name = document.getElementById('reportNameInput').value.trim();
+        const feedback = document.getElementById('reportSaveFeedback');
+        if (!name) { feedback.textContent = 'Enter a report name'; feedback.style.color = '#cc0000'; return; }
+        if (!window.session || !window.session.authenticated) {
+            feedback.textContent = 'Must be logged in'; feedback.style.color = '#cc0000'; return;
+        }
+        const userid = window.session.userid;
+        const basePath = 'meta/profiles/' + encodeURIComponent(userid) + '/';
+        const reportEntry = {
+            name: name,
+            url: basePath + 'reports/correlation_matrix.html'
+        };
+        try {
+            feedback.textContent = 'Saving...'; feedback.style.color = '#555';
+            let existing = { reports: [] };
+            try {
+                const r = await fetch(basePath + 'reports.json');
+                if (r.ok) existing = await r.json();
+            } catch (_) {}
+            const idx = existing.reports.findIndex(rp => rp.url === reportEntry.url);
+            if (idx >= 0) existing.reports[idx] = reportEntry;
+            else existing.reports.push(reportEntry);
+            const res = await fetch(basePath + 'reports.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(existing, null, 2)
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            feedback.textContent = 'Saved'; feedback.style.color = '#2e7d32';
+        } catch (err) {
+            feedback.textContent = err.message; feedback.style.color = '#cc0000';
+        }
+    }
+
+    /* =====================================================================
+       EXPORT / RESET
+       ===================================================================== */
+    function exportImage() {
+        const panel = document.getElementById('vizPanel');
+        html2canvas(panel).then(canvas => {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = 'correlation_matrix_' + ts + '.png';
+            a.click();
+        });
+    }
+
+    function exportCSV() {
+        if (!lastCorrMatrix || !lastCorrCols || lastCorrCols.length < 2) {
+            alert('No data to export. Please render a correlation matrix first.');
+            return;
+        }
+        const dec = parseInt(document.getElementById('decimalPlaces').value) || 2;
+        const cols = lastCorrCols;
+        const matrix = lastCorrMatrix;
+
+        const pairs = [];
+        for (let i = 0; i < cols.length; i++) {
+            for (let j = i + 1; j < cols.length; j++) {
+                const r = matrix[i][j];
+                const absR = Math.abs(r);
+                const strength = absR >= 0.7 ? 'Strong' : absR >= 0.4 ? 'Moderate' : 'Weak';
+                pairs.push([cols[i], cols[j], r.toFixed(dec), absR.toFixed(dec), strength]);
+            }
+        }
+
+        let csv = 'Column A,Column B,r,|r|,Strength\n';
+        pairs.forEach(p => {
+            csv += p.map(v => {
+                const s = String(v);
+                if (s.includes(',') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
+                return s;
+            }).join(',') + '\n';
+        });
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'correlation_matrix_' + ts + '.csv';
+        a.click();
+    }
+
+    function resetForm() {
+        document.getElementById('dataset').value = '';
+        document.getElementById('correlationColumns').innerHTML = '<option disabled>— select dataset first —</option>';
+        document.getElementById('filtersContainer').innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+        document.getElementById('colorScheme').value = 'rwb';
+        document.getElementById('showValues').checked = true;
+        document.getElementById('decimalPlaces').value = '2';
+        document.getElementById('minCorrFilter').value = '0';
+        document.getElementById('minCorrFilterVal').textContent = '0.00';
+        document.getElementById('cellSize').value = '70';
+        document.getElementById('cellSizeVal').textContent = '70';
+        filterCount = 0;
+        lastCorrData = null;
+        lastCorrMatrix = null;
+        lastCorrCols = null;
+        renderKPIStrip(null, null, null);
+        renderHeatmap(null);
+        renderCorrelationTable(null);
+    }
+
+    /* =====================================================================
+       MODAL HELPERS
+       ===================================================================== */
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function toggleMenu() {
+        document.getElementById('dropdownMenu').classList.toggle('active');
+        document.getElementById('hamburgerBtn').classList.toggle('active');
+    }
+
+    function closeMenu() {
+        document.getElementById('dropdownMenu').classList.remove('active');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+    }
+
+    /* =====================================================================
+       DOM CONTENT LOADED — wire all events
+       ===================================================================== */
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Load config
+        try {
+            await loadConfig();
+            initDatasetDropdown();
+        } catch (err) {
+            console.error('Config load error:', err);
+            showConfigError('Configuration failed to load. Check console for details.');
+        }
+
+        // Dataset change
+        document.getElementById('dataset').addEventListener('change', updateCorrelationColumns);
+
+        // Column multi-select change
+        document.getElementById('correlationColumns').addEventListener('change', renderCorrelationMatrix);
+
+        // Select All / Clear buttons
+        document.getElementById('selectAllColsBtn').addEventListener('click', function() {
+            const sel = document.getElementById('correlationColumns');
+            Array.from(sel.options).forEach(o => { if (!o.disabled) o.selected = true; });
+            renderCorrelationMatrix();
+        });
+
+        document.getElementById('clearColsBtn').addEventListener('click', function() {
+            const sel = document.getElementById('correlationColumns');
+            Array.from(sel.options).forEach(o => { o.selected = false; });
+            renderCorrelationMatrix();
+        });
+
+        // Filter add button
+        document.getElementById('addFilterBtn').addEventListener('click', addCorrelationFilter);
+
+        // Configuration controls
+        document.getElementById('colorScheme').addEventListener('change', renderCorrelationMatrix);
+        document.getElementById('showValues').addEventListener('change', renderCorrelationMatrix);
+        document.getElementById('decimalPlaces').addEventListener('input', renderCorrelationMatrix);
+
+        document.getElementById('minCorrFilter').addEventListener('input', function() {
+            document.getElementById('minCorrFilterVal').textContent = parseFloat(this.value).toFixed(2);
+            renderCorrelationMatrix();
+        });
+
+        document.getElementById('cellSize').addEventListener('input', function() {
+            document.getElementById('cellSizeVal').textContent = this.value;
+            renderCorrelationMatrix();
+        });
+
+        // Action buttons
+        document.getElementById('exportImageBtn').addEventListener('click', exportImage);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+        document.getElementById('resetFormBtn').addEventListener('click', resetForm);
+
+        // Report save
+        document.getElementById('saveReportBtn').addEventListener('click', saveReport);
+
+        // Nav
+        document.getElementById('nav-logon').addEventListener('click', handleLogon);
+        document.getElementById('footer-signout').addEventListener('click', handleSignOut);
+        document.getElementById('nav-about').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); });
+        document.getElementById('nav-help').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); });
+
+        // Hamburger
+        document.getElementById('hamburgerBtn').addEventListener('click', toggleMenu);
+        document.getElementById('menuAbout').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); closeMenu(); });
+        document.getElementById('menuHelp').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); closeMenu(); });
+
+        // Modal closes
+        document.getElementById('closeAboutModal').addEventListener('click', function() { closeModal('aboutModal'); });
+        document.getElementById('closeHelpModal').addEventListener('click', function() { closeModal('helpModal'); });
+
+        // Click outside to close modal/menu
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) this.classList.remove('active');
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+            }
+        });
+    });
+    </script>
+</body>
+</html>

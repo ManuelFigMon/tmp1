@@ -1,0 +1,2115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- ==========================================================================
+         CACHE SUPPRESSION
+         ==========================================================================
+         These three directives stop the browser and any intermediate proxy from
+         serving a stale copy of this page. Combined with the cache-busting query
+         parameter applied to every network call and the "Clear Cache & Reload"
+         button in the toolbar, an edit to APP_CONFIG takes effect on the next
+         refresh rather than being masked by a cached build.
+         ========================================================================== -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <title>SQL Studio Browser Runner_v4</title>
+
+<!-- ==============================================================================
+     MASTER CONFIGURATION BLOCK
+     ==============================================================================
+     The script below sits in the document head, above all CSS and markup, so
+     APP_CONFIG is the first thing you see when you open this file.
+     ============================================================================== -->
+<script>
+/* ==============================================================================
+ * SQL STUDIO BROWSER RUNNER _V4  —  APPLICATION CONFIGURATION
+ * ==============================================================================
+ *
+ * READ THIS FIRST — HOW QUERIES ARE ACTUALLY EXECUTED
+ * ---------------------------------------------------
+ * A web browser CANNOT open a direct connection to Microsoft SQL Server. SQL
+ * Server speaks the TDS protocol over a raw TCP socket on port 1433, and browser
+ * JavaScript has no raw TCP socket API — only HTTP(S), WebSocket and WebRTC.
+ * Integrated Security (SSPI / NTLM) additionally requires OS-level credential
+ * delegation that a sandboxed page is not granted. No amount of JavaScript in
+ * this file can change that.
+ *
+ * This application therefore supports TWO execution modes, selected by
+ * EXECUTION_MODE below:
+ *
+ *   "local"  — Default. A real SQL expression engine built into this page parses
+ *              and EVALUATES your statement locally. It is not a canned-response
+ *              lookup: if you write
+ *                  SELECT 'Hello test World' AS Greetingssss
+ *              you get back exactly one column named Greetingssss containing
+ *              'Hello test World'. Editing the SQL changes the result, which is
+ *              what makes this mode useful for unit-testing the UI. FROM queries
+ *              run against the in-memory tables declared in MOCK_TABLES.
+ *
+ *   "api"    — Live. Every statement is POSTed to API_ENDPOINT, an HTTP bridge
+ *              that YOU run on a machine that can reach the SQL Server. The
+ *              bridge performs the real TDS connection and returns rows as JSON.
+ *              A ready-to-run Node.js bridge ships alongside this file as
+ *              sql_studio_api_bridge.js — start it, set EXECUTION_MODE to "api",
+ *              and this page is talking to your real database.
+ *
+ * HOW TO EDIT
+ * -----------
+ *   1. Open this .html file in any text or code editor.
+ *   2. Change the values inside APP_CONFIG below.
+ *   3. Save, then use the "Clear Cache & Reload" toolbar button (or Ctrl+F5).
+ *
+ * FIELD-BY-FIELD INSTRUCTIONS
+ * ---------------------------
+ *   EXECUTION_MODE ...... "local" or "api". See the explanation above.
+ *
+ *   API_ENDPOINT ........ Only used when EXECUTION_MODE is "api". The full URL of
+ *                         your HTTP bridge, e.g. "http://localhost:8787/query".
+ *                         The bridge receives {sql, host, port, database, auth}
+ *                         as JSON and must return {columns:[], rows:[]} or
+ *                         {error:"..."}.
+ *
+ *   API_TIMEOUT_MS ...... How long to wait for the bridge before aborting.
+ *
+ *   SERVER_HOST ......... Data Source / Server Host. Hostname, FQDN or IP of the
+ *                         target SQL Server. For a named instance use HOST\INSTANCE.
+ *
+ *   INITIAL_CATALOG ..... Initial Catalog / Database attached on connect.
+ *
+ *   PORT ................ Network port. SQL Server defaults to 1433. Use a NUMBER.
+ *
+ *   AUTH_MODE ........... The ACTIVE authentication mode. Must match one of the
+ *                         AUTH_MODE_OPTIONS strings exactly.
+ *
+ *   AUTH_MODE_OPTIONS ... Every mode offered in the dropdown. The dropdown is
+ *                         BUILT FROM THIS ARRAY at runtime, so adding a mode here
+ *                         is all that is required to make it selectable.
+ *
+ *   DISABLE_CACHE ....... When true, every network call carries a cache-busting
+ *                         parameter and a no-store cache directive.
+ *
+ *   PRESET_WORKLOADS .... Ready-to-run SQL templates in the toolbar dropdown.
+ *                         Each entry needs a `name` and a `sql` property.
+ *                         Index 0 auto-loads on start.
+ *
+ *   MOCK_TABLES ......... Tables the LOCAL engine can resolve in a FROM clause.
+ *                         Each key is a table name; each value is an array of
+ *                         row objects. Only used when EXECUTION_MODE is "local".
+ *
+ * ==============================================================================
+ * ORIGINAL SHIPPED DEFAULTS  (retained for reference and rollback)
+ * ==============================================================================
+ *     Data Source / Server Host : CHANGEME.COM
+ *     Port                      : 1433
+ *     Initial Catalog           : DataMartKYA
+ *     Authentication Mode       : Integrated Security (SSPI / Windows Auth)
+ *     Load Preset Workloads     : SAS Migration: Hello World Query
+ *
+ * All five remain available in this build: "CHANGEME.COM" is documented here and
+ * in the help modal, the Windows Auth mode is a live entry in AUTH_MODE_OPTIONS,
+ * and "SAS Migration: Hello World Query" is the first live PRESET_WORKLOADS entry.
+ * ==============================================================================
+ */
+const APP_CONFIG = {
+
+    /* --------------------------------------------------------------------------
+     * EXECUTION_MODE — how statements are run
+     * --------------------------------------------------------------------------
+     *   "local" : real SQL expression engine inside this page (default)
+     *   "api"   : POST to API_ENDPOINT, which fronts the real SQL Server
+     * -------------------------------------------------------------------------- */
+    EXECUTION_MODE: "local",
+
+    /* --------------------------------------------------------------------------
+     * API_ENDPOINT — HTTP bridge URL, used only when EXECUTION_MODE is "api"
+     * --------------------------------------------------------------------------
+     * Start the companion bridge with:   node sql_studio_api_bridge.js
+     * It listens on port 8787 by default.
+     * -------------------------------------------------------------------------- */
+    API_ENDPOINT: "http://localhost:8787/query",
+
+    /* Milliseconds to wait for the bridge before aborting the request. */
+    API_TIMEOUT_MS: 30000,
+
+    /* --------------------------------------------------------------------------
+     * SERVER_HOST — Data Source / Server Host
+     * --------------------------------------------------------------------------
+     * Original shipped default was: "CHANGEME.COM"
+     * -------------------------------------------------------------------------- */
+    SERVER_HOST: "A70TUCGSDATA008.A70ADMED.COM",
+
+    /* INITIAL_CATALOG — Initial Catalog / Database (matches original default). */
+    INITIAL_CATALOG: "DataMartKYA",
+
+    /* PORT — Network port. 1433 is the SQL Server default. Must be a NUMBER. */
+    PORT: 1433,
+
+    /* AUTH_MODE — must exactly match one of AUTH_MODE_OPTIONS below. */
+    AUTH_MODE: "Integrated Security (SSPI / NTLM)",
+
+    /* --------------------------------------------------------------------------
+     * AUTH_MODE_OPTIONS — modes offered in the dropdown
+     * --------------------------------------------------------------------------
+     * The dropdown is generated from this array at runtime. Add a string here to
+     * make it selectable; no HTML edit is required.
+     * -------------------------------------------------------------------------- */
+    AUTH_MODE_OPTIONS: [
+        "Integrated Security (SSPI / NTLM)",
+        "Integrated Security (SSPI / Windows Auth)",   // <-- ORIGINAL shipped default
+        "Azure Active Directory - Universal",
+
+        /* ----------------------------------------------------------------------
+         * ADDITIONAL AUTHENTICATION MODE FROM THE ORIGINAL VERSION
+         * ----------------------------------------------------------------------
+         * Retained in comments as specified. Uncomment to expose it. This mode
+         * requires a username and password, which this page does not collect —
+         * supply them in the bridge's own configuration instead.
+         *
+         *     Authentication Mode: SQL Server Authentication (User/Password)
+         * ---------------------------------------------------------------------- */
+        // "SQL Server Authentication (User/Password)",
+    ],
+
+    /* --------------------------------------------------------------------------
+     * DISABLE_CACHE — force fresh reads
+     * --------------------------------------------------------------------------
+     * true  : every fetch gets cache:'no-store' plus a unique _cb= parameter.
+     * false : normal browser caching.
+     * -------------------------------------------------------------------------- */
+    DISABLE_CACHE: true,
+
+    /* --------------------------------------------------------------------------
+     * PRESET_WORKLOADS — SQL templates in the toolbar dropdown
+     * --------------------------------------------------------------------------
+     * Each entry takes exactly two properties:
+     *     name : label shown in the dropdown
+     *     sql  : SQL text loaded into the editor
+     * Index 0 auto-loads when the application starts.
+     * -------------------------------------------------------------------------- */
+    PRESET_WORKLOADS: [
+        {
+            // ORIGINAL shipped default preset — kept first so it auto-loads.
+            name: "SAS Migration: Hello World Query",
+            sql: `-- Greeting Query & Engine Verification
+-- Edit any literal or alias below and re-run: the result changes to match.
+SELECT
+    'Hello World' AS Greeting,
+    'SQL Studio Browser Runner_v4' AS Application,
+    CURRENT_TIMESTAMP AS ExecutionTime,
+    'CONNECTED' AS ConnectionStatus;`
+        },
+        {
+            name: "Engine Proof: Edited Literals & Aliases",
+            sql: `-- Proof the engine evaluates what you type rather than
+-- pattern-matching a canned response. Change anything and re-run.
+SELECT
+    'Hello test World' AS Greetingssss,
+    40 + 2             AS Arithmetic,
+    UPPER('abc')       AS Uppercased,
+    LEN('DataMartKYA') AS NameLength,
+    DB_NAME()          AS CurrentDatabase;`
+        },
+        {
+            name: "SAS Migration: Connection Equivalency Test",
+            sql: `/* SAS OLEDB / SQL Server Equivalency Validation */
+SELECT
+    '[SAS_LIBNAME]' AS LibraryRef,
+    'MSOLEDBSQL'    AS Provider,
+    DB_NAME()       AS Catalog,
+    1000            AS ReadBuff,
+    'SUCCESS'       AS ValidationResult;`
+        },
+        {
+            name: "DataMart: Top 100 Records",
+            sql: `-- Projection, TOP and ORDER BY are all evaluated for real.
+SELECT TOP 10
+    CustomerID,
+    AccountName,
+    Region,
+    AnnualRevenue
+FROM Customers
+ORDER BY AnnualRevenue DESC;`
+        },
+        {
+            name: "DataMart: Filtered Region Query",
+            sql: `-- WHERE is evaluated for real against the in-memory table.
+SELECT
+    CustomerID,
+    AccountName,
+    Region,
+    AnnualRevenue
+FROM Customers
+WHERE Region = 'EMEA'
+ORDER BY AnnualRevenue DESC;`
+        },
+        {
+            name: "DataMart: Table Metadata Audit",
+            sql: `-- Metadata catalogue of the in-memory tables.
+SELECT
+    TABLE_SCHEMA,
+    TABLE_NAME,
+    COLUMN_NAME,
+    DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS;`
+        },
+
+        /* ======================================================================
+         * ADDITIONAL PRESET WORKLOADS FROM THE ORIGINAL VERSION
+         * ======================================================================
+         * Retained in comments as specified. Uncomment any block to add it to the
+         * dropdown. The matching tables already exist in MOCK_TABLES, so they
+         * return real rows the moment they are uncommented.
+         *
+         *     Load Preset Workloads: SAS Migration: Mock Table: Select Active Users
+         *                            DataMart: Quarterly Financial Summary
+         *                            Test Execution: Trigger Syntax Error
+         * ======================================================================
+         *
+         * // {
+         * //     name: "SAS Migration: Mock Table: Select Active Users",
+         * //     sql: `SELECT UserID, UserName, DepartmentCode, AccountStatus
+         * // FROM ActiveUsers
+         * // WHERE AccountStatus = 'ACTIVE'
+         * // ORDER BY UserID;`
+         * // },
+         *
+         * // {
+         * //     name: "DataMart: Quarterly Financial Summary",
+         * //     sql: `SELECT FiscalQuarter, CostCenter, TotalBilled, TotalPaid
+         * // FROM FinancialLedger
+         * // ORDER BY FiscalQuarter DESC;`
+         * // },
+         *
+         * // {
+         * //     name: "Test Execution: Trigger Syntax Error",
+         * //     sql: `SELCT * FORM Customers WHERE;`
+         * // },
+         *
+         * ====================================================================== */
+    ],
+
+    /* --------------------------------------------------------------------------
+     * MOCK_TABLES — tables the LOCAL engine resolves in a FROM clause
+     * --------------------------------------------------------------------------
+     * Only used when EXECUTION_MODE is "local". In "api" mode the real database
+     * answers instead and this object is ignored. Add a key to make a new table
+     * queryable; column names come from the object keys of the first row.
+     * -------------------------------------------------------------------------- */
+    MOCK_TABLES: {
+        Customers: [
+            { CustomerID: 1001, AccountName: "Northwind Traders",   Region: "North America", AnnualRevenue: 842500.00, LastLogin: "2026-09-28" },
+            { CustomerID: 1002, AccountName: "Contoso Health",      Region: "EMEA",          AnnualRevenue: 731200.50, LastLogin: "2026-09-27" },
+            { CustomerID: 1003, AccountName: "Fabrikam Clinical",   Region: "APAC",          AnnualRevenue: 655900.25, LastLogin: "2026-09-25" },
+            { CustomerID: 1004, AccountName: "Litware Diagnostics", Region: "LATAM",         AnnualRevenue: 412300.75, LastLogin: "2026-09-21" },
+            { CustomerID: 1005, AccountName: "Adventure Medical",   Region: "North America", AnnualRevenue: 388150.00, LastLogin: "2026-09-19" },
+            { CustomerID: 1006, AccountName: "Proseware Labs",      Region: "EMEA",          AnnualRevenue: 299400.10, LastLogin: "2026-09-17" },
+            { CustomerID: 1007, AccountName: "Tailspin Imaging",    Region: "APAC",          AnnualRevenue: 265780.00, LastLogin: "2026-09-15" },
+            { CustomerID: 1008, AccountName: "Wingtip Care",        Region: "North America", AnnualRevenue: 198640.40, LastLogin: "2026-09-12" },
+            { CustomerID: 1009, AccountName: "Coho Rehabilitation", Region: "LATAM",         AnnualRevenue: 154220.00, LastLogin: "2026-09-10" },
+            { CustomerID: 1010, AccountName: "Lucerne Surgical",    Region: "EMEA",          AnnualRevenue: 121090.90, LastLogin: "2026-09-08" }
+        ],
+        ActiveUsers: [
+            { UserID: 5001, UserName: "user.account1", DepartmentCode: "FIN", LastLoginDate: "2026-09-30", AccountStatus: "ACTIVE" },
+            { UserID: 5002, UserName: "user.account2", DepartmentCode: "CLM", LastLoginDate: "2026-09-30", AccountStatus: "ACTIVE" },
+            { UserID: 5003, UserName: "user.account3", DepartmentCode: "OPS", LastLoginDate: "2026-09-29", AccountStatus: "DISABLED" },
+            { UserID: 5004, UserName: "user.account4", DepartmentCode: "AUD", LastLoginDate: "2026-09-29", AccountStatus: "ACTIVE" },
+            { UserID: 5005, UserName: "user.account5", DepartmentCode: "FIN", LastLoginDate: "2026-09-28", AccountStatus: "ACTIVE" }
+        ],
+        FinancialLedger: [
+            { FiscalQuarter: "2026-Q3", CostCenter: "CC-1100", TotalBilled: 4820500.00, TotalPaid: 4611200.00, Variance: 209300.00 },
+            { FiscalQuarter: "2026-Q3", CostCenter: "CC-2200", TotalBilled: 3145000.00, TotalPaid: 3145000.00, Variance: 0.00 },
+            { FiscalQuarter: "2026-Q2", CostCenter: "CC-1100", TotalBilled: 4410750.00, TotalPaid: 4180090.00, Variance: 230660.00 },
+            { FiscalQuarter: "2026-Q2", CostCenter: "CC-2200", TotalBilled: 2980400.00, TotalPaid: 2901310.00, Variance: 79090.00 }
+        ]
+    }
+};
+</script>
+
+    <style>
+        :root {
+            --bg-dark: #181818;
+            --bg-sidebar: #252526;
+            --bg-card: #2d2d2d;
+            --bg-input: #1e1e1e;
+            --bg-active: #37373d;
+            --border-color: #3e3e42;
+            --accent: #007acc;
+            --accent-hover: #0062a3;
+            --text-main: #cccccc;
+            --text-white: #ffffff;
+            --text-muted: #858585;
+            --success: #10b981;
+            --success-hover: #059669;
+            --terminal-green: #22c55e;
+            --danger: #ef4444;
+            --warning: #f59e0b;
+            --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', Consolas, Monaco, 'Courier New', monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-sans);
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-input); }
+        ::-webkit-scrollbar-thumb { background: #424242; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555555; }
+
+        .app-header {
+            height: 48px;
+            background-color: var(--bg-sidebar);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            z-index: 20;
+            flex-shrink: 0;
+        }
+
+        .header-left { display: flex; align-items: center; gap: 12px; }
+
+        .brand-title {
+            display: flex; align-items: center; gap: 8px;
+            font-weight: 700; font-size: 1.1rem; color: var(--text-white);
+        }
+
+        .brand-badge {
+            background-color: var(--accent); color: var(--text-white);
+            font-size: 0.7rem; padding: 2px 6px; border-radius: 4px;
+            font-family: var(--font-mono); font-weight: 600;
+        }
+
+        .divider { color: var(--border-color); font-size: 1.2rem; }
+
+        .server-status-tag { font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono); }
+
+        .mode-pill {
+            font-size: 10px; font-family: var(--font-mono); font-weight: 700;
+            padding: 2px 8px; border-radius: 10px; text-transform: uppercase;
+            letter-spacing: 0.5px; border: 1px solid;
+        }
+        .mode-pill.local { background: rgba(245,158,11,0.15); color: var(--warning); border-color: rgba(245,158,11,0.5); }
+        .mode-pill.api   { background: rgba(34,197,94,0.15);  color: var(--terminal-green); border-color: rgba(34,197,94,0.5); }
+
+        .header-actions { display: flex; align-items: center; gap: 8px; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 12px; border-radius: 4px;
+            font-size: 0.75rem; font-weight: 500; cursor: pointer;
+            border: 1px solid transparent; transition: all 0.2s ease;
+            text-decoration: none; background-color: transparent; color: var(--text-main);
+            font-family: var(--font-sans);
+        }
+        .btn-card { background-color: var(--bg-card); border-color: var(--border-color); color: #d1d5db; }
+        .btn-card:hover { background-color: var(--bg-active); color: var(--text-white); }
+        .btn-primary { background-color: var(--accent); color: var(--text-white); }
+        .btn-primary:hover { background-color: var(--accent-hover); }
+        .btn-success { background-color: var(--success-hover); color: var(--text-white); }
+        .btn-success:hover { background-color: var(--success); }
+        .btn-warn { background-color: #92400e; color: var(--text-white); border-color: #b45309; }
+        .btn-warn:hover { background-color: #b45309; }
+        .btn-run {
+            background-color: #16a34a; color: var(--text-white); font-weight: 600;
+            padding: 6px 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .btn-run:hover { background-color: #22c55e; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .workspace-body { flex: 1; display: flex; position: relative; overflow: hidden; }
+
+        .drawer-sidebar {
+            width: 320px;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            z-index: 20;
+            transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+        }
+        .drawer-sidebar.collapsed { margin-left: -320px; opacity: 0; pointer-events: none; }
+
+        .config-expand-trigger {
+            position: absolute; top: 16px; left: 0; z-index: 30;
+            background-color: var(--bg-sidebar); color: var(--text-main);
+            border: 1px solid var(--border-color); border-left: none;
+            padding: 12px 6px;
+            border-top-right-radius: 6px; border-bottom-right-radius: 6px;
+            display: flex; flex-direction: column; align-items: center; gap: 8px;
+            cursor: pointer; box-shadow: 2px 0 8px rgba(0,0,0,0.4);
+            transition: all 0.2s ease;
+        }
+        .config-expand-trigger:hover { background-color: var(--accent); color: var(--text-white); }
+        .config-expand-trigger.hidden { display: none; }
+
+        .trigger-text {
+            font-size: 10px; font-weight: 700; letter-spacing: 1px;
+            text-transform: uppercase; writing-mode: vertical-lr;
+        }
+
+        .drawer-header {
+            height: 40px; padding: 0 16px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+            background-color: rgba(45, 45, 45, 0.4);
+            flex-shrink: 0;
+        }
+
+        .drawer-title {
+            font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.05em; color: #d1d5db;
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        /* ======================================================================
+         * CONNECTION CONFIG PANE LAYOUT
+         * ======================================================================
+         * v2 shipped `flex-direction: flex-col`, which is a Tailwind class name
+         * and not a legal CSS value. Browsers discard the invalid declaration and
+         * fall back to `row`, which laid every field out side by side across the
+         * 320px pane. Fixed in v3 and retained here: `column` + stretch.
+         * ====================================================================== */
+        .drawer-body {
+            padding: 16px;
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 14px;
+        }
+
+        .info-card-blue {
+            background-color: rgba(30, 58, 138, 0.3);
+            border: 1px solid rgba(30, 64, 175, 0.5);
+            border-radius: 4px; padding: 10px;
+            color: #bfdbfe; font-size: 11px; line-height: 1.4;
+            flex-shrink: 0;
+        }
+        .info-card-amber {
+            background-color: rgba(245, 158, 11, 0.12);
+            border: 1px solid rgba(245, 158, 11, 0.45);
+            border-radius: 4px; padding: 10px;
+            color: #fde68a; font-size: 11px; line-height: 1.45;
+            flex-shrink: 0;
+        }
+        .info-card-blue code, .info-card-amber code {
+            background: rgba(0,0,0,0.4); padding: 2px 4px; border-radius: 3px;
+            color: #fde047; font-family: var(--font-mono);
+        }
+
+        .form-group {
+            display: flex; flex-direction: column; gap: 6px;
+            width: 100%; flex-shrink: 0;
+        }
+        .form-group label { font-size: 0.75rem; color: #9ca3af; font-weight: 500; }
+
+        .input-wrapper { position: relative; display: flex; align-items: center; width: 100%; }
+
+        .input-icon {
+            position: absolute; left: 10px; color: #6b7280;
+            width: 14px; height: 14px; pointer-events: none;
+        }
+
+        .form-control {
+            width: 100%;
+            background-color: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 6px 10px 6px 32px;
+            color: #e5e7eb;
+            font-size: 0.75rem;
+            font-family: var(--font-mono);
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .form-control:focus { border-color: var(--accent); }
+        select.form-control { appearance: none; cursor: pointer; }
+
+        .conn-string-textarea {
+            width: 100%; height: 86px;
+            background-color: var(--bg-input);
+            border: 1px solid var(--border-color);
+            border-radius: 4px; padding: 8px;
+            font-size: 10px; font-family: var(--font-mono);
+            color: var(--terminal-green);
+            resize: none; outline: none; line-height: 1.3;
+        }
+
+        .drawer-actions { display: flex; flex-direction: column; gap: 8px; width: 100%; flex-shrink: 0; }
+
+        .drawer-footer {
+            padding: 8px 16px; border-top: 1px solid var(--border-color);
+            font-size: 11px; color: var(--text-muted);
+            display: flex; justify-content: space-between; align-items: center;
+            flex-shrink: 0;
+        }
+
+        .main-workspace { flex: 1; display: flex; flex-direction: column; min-width: 0; background-color: var(--bg-dark); }
+
+        .action-toolbar {
+            height: 44px; background-color: var(--bg-sidebar);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 12px; gap: 8px; flex-shrink: 0;
+        }
+        .toolbar-left, .toolbar-right { display: flex; align-items: center; gap: 8px; }
+
+        .preset-container {
+            display: flex; align-items: center; gap: 6px;
+            background-color: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 4px; padding: 3px 8px;
+        }
+        .preset-label {
+            font-size: 11px; color: #9ca3af; font-weight: 500;
+            white-space: nowrap; display: flex; align-items: center; gap: 4px;
+        }
+        .preset-select {
+            background: transparent; border: none; color: var(--text-white);
+            font-size: 0.75rem; font-family: var(--font-mono);
+            outline: none; cursor: pointer; max-width: 250px;
+        }
+        .preset-select option { background-color: var(--bg-card); color: var(--text-white); }
+
+        .editor-section {
+            height: 50%; display: flex; flex-direction: column;
+            border-bottom: 1px solid var(--border-color); position: relative;
+        }
+
+        .editor-tab-bar {
+            height: 32px; background-color: rgba(37, 37, 38, 0.8);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between; padding: 0 12px;
+        }
+
+        .active-editor-tab {
+            display: flex; align-items: center; gap: 6px;
+            background-color: var(--bg-dark); padding: 4px 12px;
+            border-top: 2px solid var(--accent);
+            font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-white);
+            border-top-left-radius: 4px; border-top-right-radius: 4px;
+        }
+
+        .editor-pane { flex: 1; display: flex; overflow: hidden; background-color: var(--bg-dark); }
+
+        .line-numbers {
+            width: 44px; user-select: none; text-align: right;
+            padding: 8px 10px 8px 0; color: var(--text-muted);
+            background-color: var(--bg-dark);
+            border-right: 1px solid var(--bg-card);
+            font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.5;
+            flex-shrink: 0; overflow: hidden;
+        }
+
+        .editor-textarea {
+            flex: 1; background: transparent; color: #d4d4d4; caret-color: #ffffff;
+            resize: none; outline: none; border: none; padding: 8px;
+            font-family: var(--font-mono); font-size: 0.75rem; line-height: 1.5;
+            white-space: pre; overflow-x: auto; tab-size: 4;
+        }
+
+        .results-section { height: 50%; display: flex; flex-direction: column; background-color: var(--bg-dark); overflow: hidden; }
+
+        .results-tab-bar {
+            height: 36px; background-color: var(--bg-sidebar);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 8px; flex-shrink: 0;
+        }
+
+        .tab-group { display: flex; gap: 4px; }
+
+        .tab-btn {
+            padding: 6px 12px; font-size: 0.75rem; font-weight: 500;
+            background: transparent; color: #9ca3af; border: none;
+            border-bottom: 2px solid transparent; cursor: pointer;
+            display: flex; align-items: center; gap: 6px;
+            border-top-left-radius: 4px; border-top-right-radius: 4px;
+            font-family: var(--font-sans);
+        }
+        .tab-btn:hover { color: var(--text-white); }
+        .tab-btn.active { color: var(--text-white); background-color: var(--bg-dark); border-bottom-color: var(--accent); }
+
+        .badge-count { background-color: var(--bg-card); color: var(--text-main); font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+
+        .tab-content-area { flex: 1; overflow: auto; padding: 12px; position: relative; }
+
+        .console-output { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-main); white-space: pre-wrap; line-height: 1.6; }
+
+        .text-green-vivid { color: var(--terminal-green); font-weight: 700; }
+        .text-red-vivid { color: var(--danger); font-weight: 700; }
+        .text-amber-vivid { color: var(--warning); font-weight: 700; }
+
+        .table-wrapper { height: 100%; overflow: auto; border: 1px solid var(--border-color); border-radius: 4px; }
+
+        table.grid-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.75rem; text-align: left; }
+        table.grid-table th {
+            position: sticky; top: 0; background-color: var(--bg-sidebar);
+            color: var(--accent); text-transform: uppercase; font-size: 11px;
+            padding: 8px 12px; border-bottom: 1px solid var(--border-color);
+            border-right: 1px solid rgba(62, 62, 66, 0.5); z-index: 10;
+        }
+        table.grid-table td {
+            padding: 8px 12px;
+            border-bottom: 1px solid rgba(62, 62, 66, 0.3);
+            border-right: 1px solid rgba(62, 62, 66, 0.3);
+            color: #d1d5db; white-space: nowrap;
+        }
+        table.grid-table tr:nth-child(even) { background-color: #222223; }
+        table.grid-table tr:hover { background-color: #2a2d2e; }
+
+        .exec-details-grid { display: grid; grid-template-columns: 1fr; gap: 16px; font-family: var(--font-mono); font-size: 0.75rem; }
+        @media (min-width: 768px) { .exec-details-grid { grid-template-columns: 1fr 1fr; } }
+
+        .details-card {
+            background-color: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 6px; padding: 12px;
+            display: flex; flex-direction: column; gap: 8px;
+        }
+        .details-card-title { color: var(--accent); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+        .details-item { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 11px; gap: 10px; }
+        .details-item span.val { color: var(--text-white); text-align: right; word-break: break-all; }
+
+        .modal-overlay {
+            position: fixed; inset: 0; background-color: rgba(0,0,0,0.75);
+            backdrop-filter: blur(2px); z-index: 50;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .modal-overlay.hidden { display: none; }
+
+        .modal-container {
+            background-color: var(--bg-card); border: 1px solid var(--border-color);
+            border-radius: 8px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5);
+            width: 100%; max-width: 720px; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header {
+            padding: 12px 16px; background-color: var(--bg-sidebar);
+            border-bottom: 1px solid var(--border-color);
+            display: flex; align-items: center; justify-content: space-between;
+            color: var(--text-white); font-weight: 600; font-size: 0.85rem;
+        }
+        .modal-body {
+            padding: 20px; overflow-y: auto; font-size: 0.75rem;
+            color: #d1d5db; line-height: 1.6;
+            display: flex; flex-direction: column; gap: 16px;
+            user-select: text;
+        }
+        .modal-footer {
+            padding: 12px 16px; background-color: var(--bg-sidebar);
+            border-top: 1px solid var(--border-color);
+            display: flex; justify-content: flex-end;
+        }
+
+        .code-block {
+            background-color: var(--bg-input); border: 1px solid var(--border-color);
+            padding: 12px; border-radius: 4px;
+            font-family: var(--font-mono); font-size: 11px;
+            color: var(--text-main); white-space: pre; overflow-x: auto;
+        }
+
+        .svg-icon { width: 14px; height: 14px; fill: currentColor; display: inline-block; vertical-align: middle; }
+    </style>
+</head>
+<body>
+
+    <header class="app-header">
+        <div class="header-left">
+            <div class="brand-title">
+                <svg class="svg-icon" style="width:20px; height:20px; color:var(--accent);" viewBox="0 0 24 24"><path d="M12 3C7.58 3 4 4.79 4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7c0-2.21-3.58-4-8-4zm0 2c3.87 0 6 1.3 6 2s-2.13 2-6 2-6-1.3-6-2 2.13-2 6-2zm0 14c-3.87 0-6-1.3-6-2v-2.2c1.47.78 3.61 1.2 6 1.2s4.53-.42 6-1.2V17c0 .7-2.13 2-6 2zm0-5c-3.87 0-6-1.3-6-2v-2.2c1.47.78 3.61 1.2 6 1.2s4.53-.42 6-1.2V12c0 .7-2.13 2-6 2z"/></svg>
+                <span>SQL Studio Browser Runner</span>
+                <span class="brand-badge">_v4</span>
+            </div>
+            <span class="divider">|</span>
+            <span class="server-status-tag" id="header-server-info">Host: &mdash;</span>
+            <span class="mode-pill local" id="mode-pill">LOCAL</span>
+        </div>
+
+        <div class="header-actions">
+            <button onclick="clearCacheAndReload()" class="btn btn-warn" title="Clear all browser-held state and hard-reload this page">
+                <svg class="svg-icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                <span>Clear Cache &amp; Reload</span>
+            </button>
+            <button onclick="toggleModal('help-modal')" class="btn btn-card">
+                <svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 16h-2v-2h2v2zm1.07-7.75l-.9.92C12.45 11.9 12 12.5 12 14h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
+                <span>Config Instructions</span>
+            </button>
+            <button onclick="downloadSelfCopy()" class="btn btn-success">
+                <svg class="svg-icon" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                <span>Download HTML_v4</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="workspace-body">
+
+        <button id="config-expand-trigger" onclick="toggleConnectionDrawer(true)" class="config-expand-trigger hidden" title="Expand Connection Config">
+            <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+            <span class="trigger-text">config &gt;</span>
+        </button>
+
+        <aside id="connection-drawer" class="drawer-sidebar">
+            <div class="drawer-header">
+                <div class="drawer-title">
+                    <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                    <span>Connection Config</span>
+                </div>
+                <button onclick="toggleConnectionDrawer(false)" class="btn btn-card" style="padding:2px 6px; font-size:10px;" title="Hide Connection Config">
+                    <span>hide</span>
+                    <svg class="svg-icon" style="width:10px; height:10px;" viewBox="0 0 24 24"><path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                </button>
+            </div>
+
+            <!-- Fields stack vertically: .drawer-body is flex-direction:column. -->
+            <div class="drawer-body">
+                <div class="info-card-blue">
+                    Values below are pre-loaded from <code>APP_CONFIG</code>, located at the very top of this file.
+                </div>
+
+                <!-- Execution Mode -->
+                <div class="form-group">
+                    <label for="cfg-mode">Execution Mode</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <select id="cfg-mode" class="form-control" onchange="onModeChange()">
+                            <option value="local">Local Engine (no database)</option>
+                            <option value="api">API Bridge (live SQL Server)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="info-card-amber" id="mode-explainer"></div>
+
+                <!-- API endpoint (only meaningful in api mode) -->
+                <div class="form-group" id="api-endpoint-group">
+                    <label for="cfg-api">API Bridge Endpoint</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                        <input type="text" id="cfg-api" class="form-control">
+                    </div>
+                </div>
+
+                <!-- Host -->
+                <div class="form-group">
+                    <label for="cfg-host">Data Source / Server Host</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+                        <input type="text" id="cfg-host" class="form-control" oninput="generateConnectionStringPreview()">
+                    </div>
+                </div>
+
+                <!-- Catalog -->
+                <div class="form-group">
+                    <label for="cfg-catalog">Initial Catalog / Database</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M12 3C7.58 3 4 4.79 4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7c0-2.21-3.58-4-8-4z"/></svg>
+                        <input type="text" id="cfg-catalog" class="form-control" oninput="generateConnectionStringPreview()">
+                    </div>
+                </div>
+
+                <!-- Port -->
+                <div class="form-group">
+                    <label for="cfg-port">Port</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/></svg>
+                        <input type="number" id="cfg-port" class="form-control" oninput="generateConnectionStringPreview()">
+                    </div>
+                </div>
+
+                <!-- Auth -->
+                <div class="form-group">
+                    <label for="cfg-auth">Authentication Mode</label>
+                    <div class="input-wrapper">
+                        <svg class="svg-icon input-icon" viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-5.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8s0 0 0 0z"/></svg>
+                        <select id="cfg-auth" class="form-control" onchange="generateConnectionStringPreview()">
+                            <!-- Built from APP_CONFIG.AUTH_MODE_OPTIONS -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Connection string -->
+                <div class="form-group">
+                    <label for="cfg-connstring-preview">Active Connection String (SAS/OLEDB)</label>
+                    <textarea id="cfg-connstring-preview" readonly class="conn-string-textarea"></textarea>
+                </div>
+
+                <div class="drawer-actions">
+                    <button onclick="applyRuntimeConfig()" class="btn btn-primary" style="width:100%; justify-content:center; padding:8px;">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        <span>Apply Session Config</span>
+                    </button>
+                    <button onclick="testConnection()" class="btn btn-card" style="width:100%; justify-content:center; padding:7px;" title="Ping the API bridge">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>
+                        <span>Test Bridge Connection</span>
+                    </button>
+                    <button onclick="resetConfigToDefaults()" class="btn btn-card" style="width:100%; justify-content:center; padding:7px;" title="Restore the values declared in APP_CONFIG">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21a9 9 0 0 0 0-18z"/></svg>
+                        <span>Reset to APP_CONFIG Defaults</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="drawer-footer">
+                <span>Status: <strong style="color:var(--terminal-green)" id="drawer-status">Ready</strong></span>
+                <span style="font-family:var(--font-mono)" id="build-stamp">v4.0.0</span>
+            </div>
+        </aside>
+
+        <main class="main-workspace">
+
+            <div class="action-toolbar">
+                <div class="toolbar-left">
+                    <button onclick="executeQuery()" class="btn btn-run" id="run-btn">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                        <span>Run Query</span>
+                    </button>
+
+                    <div class="preset-container">
+                        <span class="preset-label">
+                            <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z"/></svg>
+                            Preset Workloads:
+                        </span>
+                        <select id="preset-select" onchange="loadPresetWorkload(this.value)" class="preset-select">
+                            <!-- Built from APP_CONFIG.PRESET_WORKLOADS -->
+                        </select>
+                    </div>
+
+                    <button onclick="clearQueryEditor()" class="btn btn-card">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                        <span>Clear</span>
+                    </button>
+
+                    <button onclick="clearResultState(true)" class="btn btn-card" title="Discard the cached result set from the previous run">
+                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M15 16h4v2h-4zm0-8h7v2h-7zm0 4h6v2h-6zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12z"/></svg>
+                        <span>Flush Results</span>
+                    </button>
+                </div>
+
+                <div class="toolbar-right">
+                    <button onclick="exportResults('csv')" class="btn btn-card" title="Export as CSV">
+                        <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                        <span>Export CSV</span>
+                    </button>
+                    <button onclick="exportResults('json')" class="btn btn-card" title="Export as JSON">
+                        <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+                        <span>Export JSON</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="editor-section">
+                <div class="editor-tab-bar">
+                    <div class="active-editor-tab">
+                        <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+                        <span>QueryScript.sql</span>
+                    </div>
+                    <span style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono)">Dialect: T-SQL / ANSI SQL</span>
+                </div>
+
+                <div class="editor-pane">
+                    <div id="line-numbers" class="line-numbers">1</div>
+                    <textarea id="sql-editor" spellcheck="false" oninput="updateLineNumbers()" onscroll="syncGutterScroll()" onkeydown="handleEditorKeys(event)" class="editor-textarea"></textarea>
+                </div>
+            </div>
+
+            <div class="results-section">
+                <div class="results-tab-bar">
+                    <div class="tab-group">
+                        <button id="tab-btn-console" onclick="switchResultTab('console')" class="tab-btn active">
+                            <svg class="svg-icon" style="color:var(--terminal-green)" viewBox="0 0 24 24"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v10zM6.5 10L5 11.5 7.5 14 5 16.5 6.5 18l4-4-4-4zM12 16h6v1.5h-6z"/></svg>
+                            <span>Console Logs</span>
+                        </button>
+                        <button id="tab-btn-grid" onclick="switchResultTab('grid')" class="tab-btn">
+                            <svg class="svg-icon" viewBox="0 0 24 24"><path d="M4 3h16c1.1 0 2 .9 2 2v14c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2zm0 4h16V5H4v2zm0 4h5v-2H4v2zm7 0h9v-2h-9v2zm0 4h9v-2h-9v2zm-7 0h5v-2H4v2zm0 4h5v-2H4v2zm7 0h9v-2h-9v2z"/></svg>
+                            <span>Data Grid</span>
+                            <span id="grid-row-badge" class="badge-count">0</span>
+                        </button>
+                        <button id="tab-btn-execution" onclick="switchResultTab('execution')" class="tab-btn">
+                            <svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                            <span>Execution Details</span>
+                        </button>
+                    </div>
+
+                    <div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono)" id="query-timer">
+                        Execution time: 0ms
+                    </div>
+                </div>
+
+                <div class="tab-content-area">
+                    <div id="tab-content-console">
+                        <pre id="console-output" class="console-output">Initializing...</pre>
+                    </div>
+
+                    <div id="tab-content-grid" style="display:none; height:100%;">
+                        <div id="grid-container" class="table-wrapper">
+                            <div style="padding:32px; text-align:center; color:var(--text-muted); font-family:var(--font-mono); font-size:12px;">
+                                No query executed yet. Click "Run Query" to display data grid.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="tab-content-execution" style="display:none;">
+                        <div class="exec-details-grid">
+                            <div class="details-card">
+                                <div class="details-card-title">
+                                    <svg class="svg-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                                    <span>Target Server Metrics</span>
+                                </div>
+                                <div class="details-item"><span>Host:</span> <span class="val" id="exec-host"></span></div>
+                                <div class="details-item"><span>Initial Catalog:</span> <span class="val" id="exec-catalog"></span></div>
+                                <div class="details-item"><span>Port:</span> <span class="val" id="exec-port"></span></div>
+                                <div class="details-item"><span>Authentication:</span> <span class="val" id="exec-auth"></span></div>
+                            </div>
+
+                            <div class="details-card">
+                                <div class="details-card-title">
+                                    <svg class="svg-icon" viewBox="0 0 24 24"><path d="M13 2.05v3.03c3.39.49 6 3.39 6 6.92 0 .9-.18 1.75-.48 2.54l2.6 1.53c.56-1.24.88-2.62.88-4.07 0-5.18-3.95-9.45-9-9.95zM12 19c-3.87 0-7-3.13-7-7 0-3.53 2.61-6.43 6-6.92V2.05C5.94 2.55 2 6.82 2 12c0 5.52 4.48 10 10 10 2.3 0 4.41-.78 6.1-2.09l-2.22-1.78C14.77 18.73 13.43 19 12 19z"/></svg>
+                                    <span>Query Execution Telemetry</span>
+                                </div>
+                                <div class="details-item"><span>Rows Returned:</span> <span class="val" style="color:var(--terminal-green)" id="exec-rows">0</span></div>
+                                <div class="details-item"><span>Elapsed:</span> <span class="val" style="color:var(--warning)" id="exec-latency">0 ms</span></div>
+                                <div class="details-item"><span>Engine:</span> <span class="val" id="exec-engine">&mdash;</span></div>
+                                <div class="details-item"><span>Cache Policy:</span> <span class="val" id="exec-cache">&mdash;</span></div>
+                            </div>
+                        </div>
+
+                        <div class="details-card" style="margin-top:16px;">
+                            <div class="details-card-title">
+                                <svg class="svg-icon" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+                                <span>SAS OLEDB Connection Code Snippet</span>
+                            </div>
+                            <pre id="exec-sas-snippet" style="background-color:var(--bg-input); padding:8px; border-radius:4px; color:var(--terminal-green); font-size:11px; font-family:var(--font-mono); overflow-x:auto; white-space:pre; margin-top:6px;"></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <div id="help-modal" class="modal-overlay hidden">
+        <div class="modal-container">
+            <div class="modal-header">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <svg class="svg-icon" style="color:var(--accent);" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 16h-2v-2h2v2zm1.07-7.75l-.9.92C12.45 11.9 12 12.5 12 14h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
+                    <span>Configuration &amp; Live Database Connectivity</span>
+                </div>
+                <button onclick="toggleModal('help-modal')" style="background:none; border:none; color:var(--text-muted); cursor:pointer;">
+                    <svg class="svg-icon" style="width:18px; height:18px;" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+            </div>
+
+            <div class="modal-body">
+                <div style="background-color:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.45); padding:12px; border-radius:4px;">
+                    <h4 style="color:var(--danger); font-size:0.85rem; margin-bottom:6px;">Why a browser cannot reach SQL Server on its own</h4>
+                    <p style="font-size:11px; line-height:1.65;">
+                        SQL Server speaks the <strong>TDS protocol over a raw TCP socket</strong> on port 1433. Browser JavaScript has no raw TCP socket API &mdash; only HTTP(S), WebSocket and WebRTC. Integrated Security (SSPI / NTLM) also needs OS-level credential delegation that a sandboxed page is never granted. <strong>No JavaScript in this file can connect directly.</strong> Earlier versions returned canned rows from a keyword lookup, which is why editing the SQL appeared to do nothing.
+                    </p>
+                </div>
+
+                <div>
+                    <h4 style="color:var(--text-white); font-size:0.85rem; margin-bottom:6px;">Mode 1 &mdash; Local Engine (default)</h4>
+                    <p style="font-size:11px; line-height:1.65;">
+                        v4 ships a real SQL expression engine. It tokenizes and <strong>evaluates</strong> your statement rather than matching keywords, so the result always reflects what you typed:
+                    </p>
+                    <div class="code-block" style="margin-top:8px;">SELECT 'Hello test World' AS Greetingssss;
+  --&gt; one column named  Greetingssss
+  --&gt; one row  containing  Hello test World
+
+SELECT 40 + 2 AS Arithmetic, UPPER('abc') AS U;
+  --&gt; Arithmetic = 42,  U = ABC</div>
+                    <p style="font-size:11px; line-height:1.65; margin-top:8px;">
+                        Supported: string/number literals, <code>+ - * /</code>, string concatenation, comparison and <code>AND/OR/NOT</code>, <code>CURRENT_TIMESTAMP</code>, <code>GETDATE()</code>, <code>DB_NAME()</code>, <code>HOST_NAME()</code>, <code>SUSER_NAME()</code>, <code>@@VERSION</code>, <code>LEN</code>, <code>UPPER</code>, <code>LOWER</code>, <code>CONCAT</code>, <code>ISNULL</code>, plus <code>SELECT [TOP n] &hellip; FROM &hellip; WHERE &hellip; ORDER BY</code> against the tables in <code>MOCK_TABLES</code>. Unaliased expressions are named <code>(No column name)</code>, matching SQL Server.
+                    </p>
+                </div>
+
+                <div>
+                    <h4 style="color:var(--text-white); font-size:0.85rem; margin-bottom:6px;">Mode 2 &mdash; API Bridge (live database)</h4>
+                    <p style="font-size:11px; line-height:1.65;">
+                        To run against the real server, start the companion bridge on a machine that can reach it, then set <code>EXECUTION_MODE: "api"</code>.
+                    </p>
+                    <div class="code-block" style="margin-top:8px;">npm install express mssql cors
+node sql_studio_api_bridge.js
+
+# then in APP_CONFIG:
+EXECUTION_MODE: "api",
+API_ENDPOINT:   "http://localhost:8787/query"</div>
+                    <p style="font-size:11px; line-height:1.65; margin-top:8px;">
+                        The bridge receives <code>{sql, host, port, database, auth}</code> and must return <code>{columns:[&hellip;], rows:[&hellip;]}</code> or <code>{error:"&hellip;"}</code>. Use <strong>Test Bridge Connection</strong> in the left pane to verify it is reachable before running a query.
+                    </p>
+                </div>
+
+                <div>
+                    <h4 style="color:var(--text-white); font-size:0.85rem; margin-bottom:6px;">Cache handling</h4>
+                    <ul style="padding-left:18px; font-size:11px; line-height:1.7;">
+                        <li>The page sends <code>no-store, no-cache, must-revalidate</code> plus <code>Pragma</code> and <code>Expires</code> headers.</li>
+                        <li>Every bridge call uses <code>cache: 'no-store'</code> and a unique <code>_cb=</code> parameter, so no response is ever reused.</li>
+                        <li>The previous result set is flushed at the <em>start</em> of every run, so a failed query can never leave stale rows on screen.</li>
+                        <li><strong>Clear Cache &amp; Reload</strong> empties <code>sessionStorage</code>, <code>localStorage</code> and the Cache Storage API, then hard-reloads with a cache-busting parameter.</li>
+                        <li>The footer shows a build stamp so you can confirm which copy is loaded.</li>
+                    </ul>
+                </div>
+
+                <div style="background-color:rgba(30,58,138,0.25); border:1px solid rgba(30,64,175,0.5); padding:12px; border-radius:4px;">
+                    <h4 style="color:var(--text-white); font-size:0.8rem; margin-bottom:6px;">Original Shipped Defaults (for rollback)</h4>
+                    <div style="font-family:var(--font-mono); font-size:11px; color:#bfdbfe; line-height:1.8;">
+                        Data Source / Server Host: <span style="color:var(--warning)">CHANGEME.COM</span><br>
+                        Port: <span style="color:var(--warning)">1433</span><br>
+                        Initial Catalog: <span style="color:var(--warning)">DataMartKYA</span><br>
+                        Authentication Mode: <span style="color:var(--warning)">Integrated Security (SSPI / Windows Auth)</span><br>
+                        Load Preset Workloads: <span style="color:var(--warning)">SAS Migration: Hello World Query</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button onclick="toggleModal('help-modal')" class="btn btn-primary" style="padding:6px 16px;">Got it!</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /* ==========================================================================
+         * APPLICATION RUNTIME
+         * --------------------------------------------------------------------------
+         * No configuration lives below this line. Everything configurable is in the
+         * APP_CONFIG block at the top of this file.
+         * ========================================================================== */
+
+        const BUILD_ID = 'v4.0.0-' + Date.now().toString(36);
+
+        /* Frozen snapshot taken before any user edit; applyRuntimeConfig() mutates
+         * APP_CONFIG, so without this the declared defaults would be unrecoverable. */
+        const APP_CONFIG_DEFAULTS = Object.freeze(JSON.parse(JSON.stringify(APP_CONFIG)));
+
+        let currentQueryResults = [];
+        let currentColumns = [];
+        let queryExecutionTime = 0;
+
+        /* ======================================================================
+         * SQL ENGINE — tokenizer
+         * ====================================================================== */
+        function tokenize(sql) {
+            const toks = [];
+            let i = 0;
+            while (i < sql.length) {
+                const c = sql[i];
+
+                if (/\s/.test(c)) { i++; continue; }
+
+                // line comment
+                if (c === '-' && sql[i + 1] === '-') {
+                    while (i < sql.length && sql[i] !== '\n') i++;
+                    continue;
+                }
+                // block comment
+                if (c === '/' && sql[i + 1] === '*') {
+                    i += 2;
+                    while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+                    i += 2;
+                    continue;
+                }
+                // string literal, '' is an escaped quote
+                if (c === "'") {
+                    let s = ''; i++;
+                    let closed = false;
+                    while (i < sql.length) {
+                        if (sql[i] === "'") {
+                            if (sql[i + 1] === "'") { s += "'"; i += 2; continue; }
+                            i++; closed = true; break;
+                        }
+                        s += sql[i++];
+                    }
+                    if (!closed) throw new SqlError("Unclosed string literal.");
+                    toks.push({ t: 'str', v: s });
+                    continue;
+                }
+                // [bracketed identifier]
+                if (c === '[') {
+                    let s = ''; i++;
+                    while (i < sql.length && sql[i] !== ']') s += sql[i++];
+                    i++;
+                    toks.push({ t: 'id', v: s });
+                    continue;
+                }
+                // number
+                if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(sql[i + 1] || ''))) {
+                    let s = '';
+                    while (i < sql.length && /[0-9.]/.test(sql[i])) s += sql[i++];
+                    toks.push({ t: 'num', v: parseFloat(s) });
+                    continue;
+                }
+                // identifier / keyword / @@variable
+                if (/[A-Za-z_@#]/.test(c)) {
+                    let s = '';
+                    while (i < sql.length && /[A-Za-z0-9_@#$.]/.test(sql[i])) s += sql[i++];
+                    toks.push({ t: 'id', v: s });
+                    continue;
+                }
+                // two-character operators
+                const two = sql.substr(i, 2);
+                if (['<=', '>=', '<>', '!='].includes(two)) {
+                    toks.push({ t: 'op', v: two === '!=' ? '<>' : two });
+                    i += 2; continue;
+                }
+                if ('+-*/=<>(),;'.includes(c)) { toks.push({ t: 'op', v: c }); i++; continue; }
+
+                throw new SqlError(`Unexpected character '${c}' at position ${i}.`);
+            }
+            return toks;
+        }
+
+        function SqlError(message) { this.message = message; this.name = 'SqlError'; }
+        SqlError.prototype = Object.create(Error.prototype);
+
+        /* ======================================================================
+         * SQL ENGINE — recursive-descent parser and evaluator
+         * ====================================================================== */
+        function createParser(toks) {
+            let p = 0;
+            const peek = () => toks[p];
+            const peekVal = () => (toks[p] ? String(toks[p].v).toUpperCase() : null);
+            const next = () => toks[p++];
+            const atKeyword = (...kws) => {
+                const t = toks[p];
+                return !!t && t.t === 'id' && kws.includes(String(t.v).toUpperCase());
+            };
+            const atOp = (op) => { const t = toks[p]; return !!t && t.t === 'op' && t.v === op; };
+            const expectOp = (op) => {
+                if (!atOp(op)) throw new SqlError(`Expected '${op}' but found '${toks[p] ? toks[p].v : 'end of statement'}'.`);
+                return next();
+            };
+            return { get pos() { return p; }, set pos(v) { p = v; }, peek, peekVal, next, atKeyword, atOp, expectOp, done: () => p >= toks.length };
+        }
+
+        const SQL_FUNCTIONS = {
+            LEN:    a => String(a[0] == null ? '' : a[0]).length,
+            UPPER:  a => String(a[0] == null ? '' : a[0]).toUpperCase(),
+            LOWER:  a => String(a[0] == null ? '' : a[0]).toLowerCase(),
+            LTRIM:  a => String(a[0] == null ? '' : a[0]).replace(/^\s+/, ''),
+            RTRIM:  a => String(a[0] == null ? '' : a[0]).replace(/\s+$/, ''),
+            TRIM:   a => String(a[0] == null ? '' : a[0]).trim(),
+            CONCAT: a => a.map(x => (x == null ? '' : String(x))).join(''),
+            ABS:    a => Math.abs(Number(a[0])),
+            ROUND:  a => { const d = a.length > 1 ? Number(a[1]) : 0; const m = Math.pow(10, d); return Math.round(Number(a[0]) * m) / m; },
+            ISNULL: a => (a[0] == null ? a[1] : a[0]),
+            COALESCE: a => { for (const x of a) if (x != null) return x; return null; },
+            GETDATE: () => new Date().toISOString(),
+            SYSDATETIME: () => new Date().toISOString(),
+            DB_NAME: () => APP_CONFIG.INITIAL_CATALOG,
+            HOST_NAME: () => APP_CONFIG.SERVER_HOST,
+            SUSER_NAME: () => (APP_CONFIG.AUTH_MODE.includes('Integrated') ? 'DOMAIN\\current_user' : 'sql_login'),
+            USER_NAME: () => 'dbo',
+            CAST: a => a[0],
+            CONVERT: a => a[0]
+        };
+
+        const BARE_CONSTANTS = {
+            CURRENT_TIMESTAMP: () => new Date().toISOString(),
+            CURRENT_USER: () => 'dbo',
+            SESSION_USER: () => 'dbo',
+            SYSTEM_USER: () => 'DOMAIN\\current_user',
+            '@@VERSION': () => `SQL Studio Local Engine ${BUILD_ID} (no live database connection)`,
+            '@@SERVERNAME': () => APP_CONFIG.SERVER_HOST,
+            '@@SPID': () => 51,
+            NULL: () => null
+        };
+
+        /* Expression grammar (lowest to highest precedence):
+         *   or -> and (OR and)*
+         *   and -> not (AND not)*
+         *   not -> NOT not | comparison
+         *   comparison -> additive ((= <> < > <= >= LIKE) additive)?
+         *   additive -> multiplicative ((+|-) multiplicative)*
+         *   multiplicative -> unary ((*|/) unary)*
+         *   unary -> (-|+) unary | primary
+         *   primary -> literal | function(...) | column | ( or )
+         */
+        function parseExpression(ps, row) { return parseOr(ps, row); }
+
+        function parseOr(ps, row) {
+            let left = parseAnd(ps, row);
+            while (ps.atKeyword('OR')) { ps.next(); const right = parseAnd(ps, row); left = truthy(left) || truthy(right); }
+            return left;
+        }
+        function parseAnd(ps, row) {
+            let left = parseNot(ps, row);
+            while (ps.atKeyword('AND')) { ps.next(); const right = parseNot(ps, row); left = truthy(left) && truthy(right); }
+            return left;
+        }
+        function parseNot(ps, row) {
+            if (ps.atKeyword('NOT')) { ps.next(); return !truthy(parseNot(ps, row)); }
+            return parseComparison(ps, row);
+        }
+        function parseComparison(ps, row) {
+            const left = parseAdditive(ps, row);
+            const t = ps.peek();
+            if (t && t.t === 'op' && ['=', '<>', '<', '>', '<=', '>='].includes(t.v)) {
+                ps.next();
+                const right = parseAdditive(ps, row);
+                return compare(left, right, t.v);
+            }
+            if (ps.atKeyword('LIKE')) {
+                ps.next();
+                const pat = parseAdditive(ps, row);
+                return likeMatch(left, pat);
+            }
+            if (ps.atKeyword('IS')) {
+                ps.next();
+                let negate = false;
+                if (ps.atKeyword('NOT')) { ps.next(); negate = true; }
+                if (ps.atKeyword('NULL')) { ps.next(); const isNull = left == null; return negate ? !isNull : isNull; }
+                throw new SqlError("Expected NULL after IS.");
+            }
+            return left;
+        }
+        function parseAdditive(ps, row) {
+            let left = parseMultiplicative(ps, row);
+            while (ps.atOp('+') || ps.atOp('-')) {
+                const op = ps.next().v;
+                const right = parseMultiplicative(ps, row);
+                if (op === '+') {
+                    // '+' concatenates when either side is a string, per T-SQL
+                    left = (typeof left === 'string' || typeof right === 'string')
+                        ? String(left == null ? '' : left) + String(right == null ? '' : right)
+                        : Number(left) + Number(right);
+                } else {
+                    left = Number(left) - Number(right);
+                }
+            }
+            return left;
+        }
+        function parseMultiplicative(ps, row) {
+            let left = parseUnary(ps, row);
+            while (ps.atOp('*') || ps.atOp('/')) {
+                const op = ps.next().v;
+                const right = parseUnary(ps, row);
+                if (op === '*') left = Number(left) * Number(right);
+                else {
+                    if (Number(right) === 0) throw new SqlError("Divide by zero error encountered.");
+                    left = Number(left) / Number(right);
+                }
+            }
+            return left;
+        }
+        function parseUnary(ps, row) {
+            if (ps.atOp('-')) { ps.next(); return -Number(parseUnary(ps, row)); }
+            if (ps.atOp('+')) { ps.next(); return Number(parseUnary(ps, row)); }
+            return parsePrimary(ps, row);
+        }
+        function parsePrimary(ps, row) {
+            const t = ps.peek();
+            if (!t) throw new SqlError("Unexpected end of statement; an expression was expected.");
+
+            if (t.t === 'str') { ps.next(); return t.v; }
+            if (t.t === 'num') { ps.next(); return t.v; }
+
+            if (t.t === 'op' && t.v === '(') {
+                ps.next();
+                const v = parseExpression(ps, row);
+                ps.expectOp(')');
+                return v;
+            }
+
+            if (t.t === 'id') {
+                const nameUpper = String(t.v).toUpperCase();
+
+                // function call?
+                const save = ps.pos;
+                ps.next();
+                if (ps.atOp('(')) {
+                    ps.next();
+                    const args = [];
+                    if (!ps.atOp(')')) {
+                        args.push(parseExpression(ps, row));
+                        while (ps.atOp(',')) { ps.next(); args.push(parseExpression(ps, row)); }
+                    }
+                    ps.expectOp(')');
+                    const fn = SQL_FUNCTIONS[nameUpper];
+                    if (!fn) throw new SqlError(`'${t.v}' is not a recognized built-in function name.`);
+                    return fn(args);
+                }
+                ps.pos = save;
+                ps.next();
+
+                // bare constant?
+                if (Object.prototype.hasOwnProperty.call(BARE_CONSTANTS, nameUpper)) {
+                    return BARE_CONSTANTS[nameUpper]();
+                }
+                // zero-arg function used without parentheses
+                if (SQL_FUNCTIONS[nameUpper] && ['GETDATE', 'SYSDATETIME', 'DB_NAME', 'HOST_NAME'].includes(nameUpper)) {
+                    return SQL_FUNCTIONS[nameUpper]([]);
+                }
+
+                // column reference
+                if (row) {
+                    const bare = String(t.v).split('.').pop();
+                    for (const k of Object.keys(row)) {
+                        if (k.toUpperCase() === bare.toUpperCase()) return row[k];
+                    }
+                }
+                throw new SqlError(`Invalid column name '${t.v}'.`);
+            }
+
+            throw new SqlError(`Unexpected token '${t.v}'.`);
+        }
+
+        function truthy(v) { return v === true || (v !== false && v != null && v !== 0 && v !== ''); }
+
+        function compare(a, b, op) {
+            if (a == null || b == null) return false;
+            let x = a, y = b;
+            if (typeof a === 'number' || typeof b === 'number') { x = Number(a); y = Number(b); }
+            else { x = String(a).toUpperCase(); y = String(b).toUpperCase(); }
+            switch (op) {
+                case '=':  return x === y;
+                case '<>': return x !== y;
+                case '<':  return x < y;
+                case '>':  return x > y;
+                case '<=': return x <= y;
+                case '>=': return x >= y;
+            }
+            return false;
+        }
+
+        function likeMatch(value, pattern) {
+            if (value == null || pattern == null) return false;
+            const rx = new RegExp('^' + String(pattern)
+                .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+                .replace(/%/g, '.*')
+                .replace(/_/g, '.') + '$', 'i');
+            return rx.test(String(value));
+        }
+
+        /* ======================================================================
+         * SQL ENGINE — statement execution
+         * ====================================================================== */
+        function runLocalQuery(sqlText) {
+            const toks = tokenize(sqlText);
+            if (toks.length === 0) throw new SqlError("No executable statement found.");
+
+            // Trim a trailing statement terminator.
+            while (toks.length && toks[toks.length - 1].t === 'op' && toks[toks.length - 1].v === ';') toks.pop();
+
+            const ps = createParser(toks);
+
+            if (!ps.atKeyword('SELECT')) {
+                const first = ps.peek();
+                throw new SqlError(`Incorrect syntax near '${first ? first.v : '?'}'. This engine executes SELECT statements only.`);
+            }
+            ps.next();
+
+            // TOP n
+            let topN = null;
+            if (ps.atKeyword('TOP')) {
+                ps.next();
+                let hadParen = false;
+                if (ps.atOp('(')) { ps.next(); hadParen = true; }
+                const t = ps.peek();
+                if (!t || t.t !== 'num') throw new SqlError("Expected a number after TOP.");
+                topN = ps.next().v;
+                if (hadParen) ps.expectOp(')');
+            }
+
+            let distinct = false;
+            if (ps.atKeyword('DISTINCT')) { ps.next(); distinct = true; }
+
+            // --- select list: record token spans so each item can be re-evaluated per row
+            const items = [];
+            do {
+                const start = ps.pos;
+                skipExpression(ps);
+                const end = ps.pos;
+
+                let alias = null;
+                if (ps.atKeyword('AS')) {
+                    ps.next();
+                    const a = ps.peek();
+                    if (!a || (a.t !== 'id' && a.t !== 'str')) throw new SqlError("Expected an alias after AS.");
+                    alias = String(ps.next().v);
+                } else {
+                    const a = ps.peek();
+                    // bare alias, but not a clause keyword
+                    if (a && a.t === 'id' && !['FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING'].includes(String(a.v).toUpperCase())) {
+                        alias = String(ps.next().v);
+                    }
+                }
+                items.push({ tokens: toks.slice(start, end), alias });
+            } while (ps.atOp(',') && ps.next());
+
+            if (items.length === 0) throw new SqlError("The select list cannot be empty.");
+
+            // --- FROM
+            let sourceRows = null;
+            let tableName = null;
+            if (ps.atKeyword('FROM')) {
+                ps.next();
+                const t = ps.peek();
+                if (!t || t.t !== 'id') throw new SqlError("Expected a table name after FROM.");
+                tableName = String(ps.next().v);
+                const bare = tableName.split('.').pop();
+
+                if (bare.toUpperCase() === 'COLUMNS' || tableName.toUpperCase().includes('INFORMATION_SCHEMA')) {
+                    sourceRows = buildInformationSchema();
+                } else {
+                    const key = Object.keys(APP_CONFIG.MOCK_TABLES || {})
+                        .find(k => k.toUpperCase() === bare.toUpperCase());
+                    if (!key) {
+                        throw new SqlError(
+                            `Invalid object name '${tableName}'. ` +
+                            `The local engine knows: ${Object.keys(APP_CONFIG.MOCK_TABLES || {}).join(', ') || '(none)'}. ` +
+                            `Switch EXECUTION_MODE to "api" to query the real database.`
+                        );
+                    }
+                    sourceRows = APP_CONFIG.MOCK_TABLES[key].map(r => Object.assign({}, r));
+                }
+                // optional alias after table name
+                if (ps.atKeyword('AS')) { ps.next(); ps.next(); }
+                else if (ps.peek() && ps.peek().t === 'id' && !['WHERE', 'ORDER', 'GROUP', 'HAVING'].includes(ps.peekVal())) ps.next();
+            }
+
+            // --- WHERE
+            let whereTokens = null;
+            if (ps.atKeyword('WHERE')) {
+                ps.next();
+                const start = ps.pos;
+                while (!ps.done() && !ps.atKeyword('ORDER', 'GROUP', 'HAVING')) ps.next();
+                whereTokens = toks.slice(start, ps.pos);
+                if (whereTokens.length === 0) throw new SqlError("Incorrect syntax near 'WHERE'. A predicate is required.");
+            }
+
+            // --- ORDER BY
+            let orderBy = null;
+            if (ps.atKeyword('ORDER')) {
+                ps.next();
+                if (!ps.atKeyword('BY')) throw new SqlError("Expected BY after ORDER.");
+                ps.next();
+                const col = ps.peek();
+                if (!col || col.t !== 'id') throw new SqlError("Expected a column name after ORDER BY.");
+                const colName = String(ps.next().v).split('.').pop();
+                let dir = 'ASC';
+                if (ps.atKeyword('ASC')) ps.next();
+                else if (ps.atKeyword('DESC')) { ps.next(); dir = 'DESC'; }
+                orderBy = { col: colName, dir };
+            }
+
+            // ---- evaluate ----
+            const projectRow = (srcRow) => {
+                const out = {};
+                let unnamed = 0;
+                items.forEach(item => {
+                    // SELECT *
+                    if (item.tokens.length === 1 && item.tokens[0].t === 'op' && item.tokens[0].v === '*') {
+                        if (!srcRow) throw new SqlError("SELECT * requires a FROM clause.");
+                        Object.keys(srcRow).forEach(k => { out[k] = srcRow[k]; });
+                        return;
+                    }
+                    const sub = createParser(item.tokens);
+                    const val = parseExpression(sub, srcRow);
+                    let name = item.alias;
+                    if (!name) {
+                        // a lone column reference keeps its own name
+                        if (item.tokens.length === 1 && item.tokens[0].t === 'id' && srcRow) {
+                            name = String(item.tokens[0].v).split('.').pop();
+                        } else {
+                            name = unnamed === 0 ? '(No column name)' : `(No column name${unnamed})`;
+                            unnamed++;
+                        }
+                    }
+                    out[name] = val;
+                });
+                return out;
+            };
+
+            let resultRows;
+            if (sourceRows === null) {
+                // literal SELECT with no FROM -> exactly one row
+                resultRows = [projectRow(null)];
+            } else {
+                let filtered = sourceRows;
+                if (whereTokens) {
+                    filtered = sourceRows.filter(r => {
+                        const wp = createParser(whereTokens);
+                        return truthy(parseExpression(wp, r));
+                    });
+                }
+                if (orderBy) {
+                    const { col, dir } = orderBy;
+                    filtered = filtered.slice().sort((a, b) => {
+                        const ak = Object.keys(a).find(k => k.toUpperCase() === col.toUpperCase());
+                        const bk = Object.keys(b).find(k => k.toUpperCase() === col.toUpperCase());
+                        if (!ak) throw new SqlError(`Invalid column name '${col}' in ORDER BY.`);
+                        let av = a[ak], bv = b[bk];
+                        if (typeof av === 'number' && typeof bv === 'number') return dir === 'ASC' ? av - bv : bv - av;
+                        av = String(av).toUpperCase(); bv = String(bv).toUpperCase();
+                        if (av < bv) return dir === 'ASC' ? -1 : 1;
+                        if (av > bv) return dir === 'ASC' ? 1 : -1;
+                        return 0;
+                    });
+                }
+                resultRows = filtered.map(projectRow);
+                if (distinct) {
+                    const seen = new Set();
+                    resultRows = resultRows.filter(r => {
+                        const k = JSON.stringify(r);
+                        if (seen.has(k)) return false;
+                        seen.add(k); return true;
+                    });
+                }
+                if (topN != null) resultRows = resultRows.slice(0, topN);
+            }
+
+            const columns = resultRows.length ? Object.keys(resultRows[0]) : items.map((it, i) => it.alias || `(No column name${i || ''})`);
+            return { columns, rows: resultRows };
+        }
+
+        /** Advances the parser past one select-list expression without evaluating it. */
+        function skipExpression(ps) {
+            let depth = 0;
+            while (!ps.done()) {
+                const t = ps.peek();
+                if (t.t === 'op') {
+                    if (t.v === '(') depth++;
+                    else if (t.v === ')') { if (depth === 0) break; depth--; }
+                    else if (t.v === ',' && depth === 0) break;
+                    else if (t.v === ';') break;
+                } else if (t.t === 'id' && depth === 0) {
+                    const u = String(t.v).toUpperCase();
+                    if (['FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'AS'].includes(u)) break;
+                    // a bare alias directly after a complete operand also ends the expression
+                    const prev = ps.pos > 0 ? null : null;
+                }
+                ps.next();
+                // stop before a bare alias: operand followed by identifier that is not an operator
+                const nt = ps.peek();
+                const pt = ps.pos > 0 ? null : null;
+                if (nt && nt.t === 'id' && depth === 0) {
+                    const u = String(nt.v).toUpperCase();
+                    if (['FROM', 'WHERE', 'ORDER', 'GROUP', 'HAVING', 'AS'].includes(u)) break;
+                    // previous token completed an operand?
+                    const prevTok = lastConsumed(ps);
+                    if (prevTok && (prevTok.t === 'str' || prevTok.t === 'num' || (prevTok.t === 'op' && prevTok.v === ')') || prevTok.t === 'id')) {
+                        break;
+                    }
+                }
+            }
+            return;
+        }
+        function lastConsumed(ps) { return ps.pos > 0 ? ps.__toks ? ps.__toks[ps.pos - 1] : null : null; }
+
+        function buildInformationSchema() {
+            const out = [];
+            Object.keys(APP_CONFIG.MOCK_TABLES || {}).forEach(tbl => {
+                const rows = APP_CONFIG.MOCK_TABLES[tbl];
+                if (!rows || !rows.length) return;
+                Object.keys(rows[0]).forEach(col => {
+                    const v = rows[0][col];
+                    out.push({
+                        TABLE_CATALOG: APP_CONFIG.INITIAL_CATALOG,
+                        TABLE_SCHEMA: 'dbo',
+                        TABLE_NAME: tbl,
+                        COLUMN_NAME: col,
+                        DATA_TYPE: typeof v === 'number' ? (Number.isInteger(v) ? 'int' : 'decimal(18,2)') : 'nvarchar(255)',
+                        IS_NULLABLE: 'YES'
+                    });
+                });
+            });
+            return out;
+        }
+
+        /* ======================================================================
+         * API BRIDGE MODE
+         * ====================================================================== */
+        function bustUrl(url) {
+            if (!APP_CONFIG.DISABLE_CACHE) return url;
+            return url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        }
+
+        async function runApiQuery(sqlText) {
+            const endpoint = document.getElementById('cfg-api').value || APP_CONFIG.API_ENDPOINT;
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), APP_CONFIG.API_TIMEOUT_MS);
+
+            try {
+                const res = await fetch(bustUrl(endpoint), {
+                    method: 'POST',
+                    cache: 'no-store',
+                    signal: controller.signal,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        'Pragma': 'no-cache'
+                    },
+                    body: JSON.stringify({
+                        sql: sqlText,
+                        host: document.getElementById('cfg-host').value,
+                        port: parseInt(document.getElementById('cfg-port').value, 10) || 1433,
+                        database: document.getElementById('cfg-catalog').value,
+                        auth: document.getElementById('cfg-auth').value,
+                        requestId: BUILD_ID + '-' + Date.now()
+                    })
+                });
+
+                if (!res.ok) {
+                    const text = await res.text().catch(() => '');
+                    throw new SqlError(`Bridge returned HTTP ${res.status} ${res.statusText}. ${text.slice(0, 300)}`);
+                }
+
+                const payload = await res.json();
+                if (payload.error) throw new SqlError(payload.error);
+
+                const rows = Array.isArray(payload.rows) ? payload.rows : [];
+                const columns = Array.isArray(payload.columns) && payload.columns.length
+                    ? payload.columns
+                    : (rows.length ? Object.keys(rows[0]) : []);
+                return { columns, rows };
+            } catch (e) {
+                if (e.name === 'AbortError') {
+                    throw new SqlError(`Bridge did not respond within ${APP_CONFIG.API_TIMEOUT_MS} ms at ${endpoint}.`);
+                }
+                if (e instanceof SqlError || e.name === 'SqlError') throw e;
+                throw new SqlError(
+                    `Could not reach the API bridge at ${endpoint}. ${e.message}. ` +
+                    `Confirm the bridge is running (node sql_studio_api_bridge.js) and that CORS allows this origin.`
+                );
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        async function testConnection() {
+            const endpoint = document.getElementById('cfg-api').value || APP_CONFIG.API_ENDPOINT;
+            switchResultTab('console');
+            setConsole(`<span class="text-amber-vivid">TEST:</span> Pinging bridge at ${escapeHtml(endpoint)} ...`);
+            try {
+                const r = await runApiQuery('SELECT 1 AS BridgeCheck');
+                setConsole(
+                    `<span class="text-green-vivid">TEST PASSED:</span> Bridge reachable at ${escapeHtml(endpoint)}\n` +
+                    `Returned ${r.rows.length} row(s), columns: ${escapeHtml(r.columns.join(', '))}\n` +
+                    `You can now set EXECUTION_MODE to "api" and run live queries.`
+                );
+                setDrawerStatus('Bridge OK', 'var(--terminal-green)');
+            } catch (e) {
+                setConsole(
+                    `<span class="text-red-vivid">TEST FAILED:</span> ${escapeHtml(e.message)}\n\n` +
+                    `Checklist:\n` +
+                    `  1. Is the bridge running?   node sql_studio_api_bridge.js\n` +
+                    `  2. Is the URL correct?      ${escapeHtml(endpoint)}\n` +
+                    `  3. Does the bridge allow this page's origin via CORS?\n` +
+                    `  4. If this page is https:// and the bridge is http://, the browser will block it as mixed content.`
+                );
+                setDrawerStatus('Bridge unreachable', 'var(--danger)');
+            }
+        }
+
+        /* ======================================================================
+         * EXECUTION ORCHESTRATION
+         * ====================================================================== */
+        async function executeQuery() {
+            const sqlText = document.getElementById('sql-editor').value.trim();
+            const runBtn = document.getElementById('run-btn');
+
+            // Always discard the previous result set BEFORE running, so a failure
+            // can never leave stale rows visible.
+            clearResultState(false);
+
+            if (!sqlText) {
+                switchResultTab('console');
+                setConsole(`<span class="text-red-vivid">ERROR:</span> Cannot execute an empty query buffer.`);
+                return;
+            }
+
+            const mode = APP_CONFIG.EXECUTION_MODE === 'api' ? 'api' : 'local';
+            runBtn.disabled = true;
+            const started = performance.now();
+
+            try {
+                const result = mode === 'api' ? await runApiQuery(sqlText) : runLocalQuery(sqlText);
+                queryExecutionTime = Math.round(performance.now() - started);
+
+                currentQueryResults = result.rows;
+                currentColumns = result.columns;
+
+                document.getElementById('query-timer').textContent = `Execution time: ${queryExecutionTime}ms`;
+                document.getElementById('exec-rows').textContent = result.rows.length;
+                document.getElementById('exec-latency').textContent = `${queryExecutionTime} ms`;
+                document.getElementById('grid-row-badge').textContent = result.rows.length;
+
+                setConsole(
+                    `<span class="text-green-vivid">OUTPUT:</span> Statement executed via ${mode === 'api' ? 'API BRIDGE (live database)' : 'LOCAL ENGINE (no database)'}.\n` +
+                    `Target : [${escapeHtml(APP_CONFIG.SERVER_HOST)}].[${escapeHtml(APP_CONFIG.INITIAL_CATALOG)}]\n` +
+                    `Columns: ${escapeHtml(result.columns.join(', '))}\n` +
+                    `Rows   : ${result.rows.length}\n` +
+                    `Elapsed: ${queryExecutionTime} ms\n` +
+                    `Cache  : ${APP_CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default'}\n\n` +
+                    `<span style="color:var(--text-muted)">JSON result payload:</span>\n` +
+                    escapeHtml(JSON.stringify(result.rows, null, 2))
+                );
+
+                renderDataGrid(result.columns, result.rows);
+                switchResultTab('grid');
+            } catch (e) {
+                queryExecutionTime = Math.round(performance.now() - started);
+                document.getElementById('query-timer').textContent = `Execution time: ${queryExecutionTime}ms`;
+                document.getElementById('exec-latency').textContent = `${queryExecutionTime} ms`;
+                switchResultTab('console');
+                setConsole(
+                    `<span class="text-red-vivid">ERROR:</span> Msg 102, Level 15, State 1\n` +
+                    `${escapeHtml(e.message || String(e))}\n` +
+                    `Mode: ${mode.toUpperCase()}  |  Elapsed: ${queryExecutionTime} ms\n` +
+                    `Statement terminated. 0 rows affected.`
+                );
+            } finally {
+                runBtn.disabled = false;
+            }
+        }
+
+        /** Discards the cached result set and clears the grid. */
+        function clearResultState(announce) {
+            currentQueryResults = [];
+            currentColumns = [];
+            document.getElementById('grid-row-badge').textContent = '0';
+            document.getElementById('exec-rows').textContent = '0';
+            document.getElementById('grid-container').innerHTML =
+                `<div style="padding:32px; text-align:center; color:var(--text-muted); font-family:var(--font-mono); font-size:12px;">Result cache is empty. Run a query to populate the grid.</div>`;
+            if (announce) {
+                switchResultTab('console');
+                setConsole(`<span class="text-amber-vivid">OUTPUT:</span> Result cache flushed. 0 rows held in memory.`);
+                setDrawerStatus('Flushed', 'var(--warning)');
+            }
+        }
+
+        /* ======================================================================
+         * CACHE CONTROL
+         * ====================================================================== */
+        async function clearCacheAndReload() {
+            if (!confirm('Clear sessionStorage, localStorage and the Cache Storage API, then hard-reload this page?')) return;
+            try { sessionStorage.clear(); } catch (_) {}
+            try { localStorage.clear(); } catch (_) {}
+            try {
+                if (window.caches && caches.keys) {
+                    const keys = await caches.keys();
+                    await Promise.all(keys.map(k => caches.delete(k)));
+                }
+            } catch (_) {}
+            try {
+                if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+                    const regs = await navigator.serviceWorker.getRegistrations();
+                    await Promise.all(regs.map(r => r.unregister()));
+                }
+            } catch (_) {}
+
+            // Reload with a cache-busting parameter so the browser cannot serve a
+            // cached copy of this HTML file.
+            const base = window.location.href.split('?')[0].split('#')[0];
+            window.location.replace(base + '?_cb=' + Date.now());
+        }
+
+        /* ======================================================================
+         * UI
+         * ====================================================================== */
+        function setConsole(html) { document.getElementById('console-output').innerHTML = html; }
+
+        function populateAuthModeDropdown() {
+            const select = document.getElementById('cfg-auth');
+            const options = Array.isArray(APP_CONFIG.AUTH_MODE_OPTIONS) && APP_CONFIG.AUTH_MODE_OPTIONS.length
+                ? APP_CONFIG.AUTH_MODE_OPTIONS
+                : [APP_CONFIG.AUTH_MODE];
+
+            select.innerHTML = '';
+            options.forEach(mode => {
+                const opt = document.createElement('option');
+                opt.value = mode; opt.textContent = mode;
+                select.appendChild(opt);
+            });
+
+            if (!options.includes(APP_CONFIG.AUTH_MODE)) {
+                const opt = document.createElement('option');
+                opt.value = APP_CONFIG.AUTH_MODE;
+                opt.textContent = APP_CONFIG.AUTH_MODE + '  (not in AUTH_MODE_OPTIONS)';
+                select.appendChild(opt);
+                console.warn(`[APP_CONFIG] AUTH_MODE "${APP_CONFIG.AUTH_MODE}" is absent from AUTH_MODE_OPTIONS; appended so it still displays.`);
+            }
+        }
+
+        function populatePresetDropdown() {
+            const select = document.getElementById('preset-select');
+            select.innerHTML = '';
+            APP_CONFIG.PRESET_WORKLOADS.forEach((item, index) => {
+                const opt = document.createElement('option');
+                opt.value = index; opt.textContent = item.name;
+                select.appendChild(opt);
+            });
+        }
+
+        function initializeConfigUI() {
+            document.getElementById('cfg-mode').value = APP_CONFIG.EXECUTION_MODE === 'api' ? 'api' : 'local';
+            document.getElementById('cfg-api').value = APP_CONFIG.API_ENDPOINT;
+            document.getElementById('cfg-host').value = APP_CONFIG.SERVER_HOST;
+            document.getElementById('cfg-catalog').value = APP_CONFIG.INITIAL_CATALOG;
+            document.getElementById('cfg-port').value = APP_CONFIG.PORT;
+            document.getElementById('cfg-auth').value = APP_CONFIG.AUTH_MODE;
+
+            document.getElementById('header-server-info').textContent = `Host: ${APP_CONFIG.SERVER_HOST}`;
+            document.getElementById('exec-host').textContent = APP_CONFIG.SERVER_HOST;
+            document.getElementById('exec-catalog').textContent = APP_CONFIG.INITIAL_CATALOG;
+            document.getElementById('exec-port').textContent = APP_CONFIG.PORT;
+            document.getElementById('exec-auth').textContent = APP_CONFIG.AUTH_MODE;
+            document.getElementById('exec-cache').textContent = APP_CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default';
+            document.getElementById('build-stamp').textContent = BUILD_ID;
+
+            renderModeIndicators();
+            generateConnectionStringPreview();
+        }
+
+        function renderModeIndicators() {
+            const isApi = APP_CONFIG.EXECUTION_MODE === 'api';
+            const pill = document.getElementById('mode-pill');
+            pill.textContent = isApi ? 'API BRIDGE' : 'LOCAL';
+            pill.className = 'mode-pill ' + (isApi ? 'api' : 'local');
+
+            document.getElementById('exec-engine').textContent = isApi
+                ? 'API Bridge (live SQL Server)'
+                : 'Local SQL Engine (no database)';
+
+            document.getElementById('api-endpoint-group').style.display = isApi ? 'flex' : 'none';
+
+            document.getElementById('mode-explainer').innerHTML = isApi
+                ? `<strong>API Bridge mode.</strong> Statements are POSTed to the endpoint below, which performs the real SQL Server connection. Start it with <code>node sql_studio_api_bridge.js</code>, then use <em>Test Bridge Connection</em>.`
+                : `<strong>Local Engine mode.</strong> A browser cannot open a TDS socket to SQL Server, so statements are parsed and evaluated in this page. Results reflect exactly what you type. Switch to <code>API Bridge</code> for a live database.`;
+        }
+
+        function onModeChange() {
+            APP_CONFIG.EXECUTION_MODE = document.getElementById('cfg-mode').value;
+            renderModeIndicators();
+            setDrawerStatus('Mode: ' + APP_CONFIG.EXECUTION_MODE, 'var(--accent)');
+        }
+
+        function generateConnectionStringPreview() {
+            const host = document.getElementById('cfg-host').value;
+            const catalog = document.getElementById('cfg-catalog').value;
+            const port = document.getElementById('cfg-port').value;
+            const auth = document.getElementById('cfg-auth').value || '';
+
+            const integrated = auth.includes('Integrated') || auth.includes('SSPI') || auth.includes('Windows');
+            document.getElementById('cfg-connstring-preview').value =
+                `Provider=MSOLEDBSQL;Data Source=${host},${port};Initial Catalog=${catalog};Integrated Security=${integrated ? 'SSPI' : 'SqlAuth'};`;
+
+            document.getElementById('exec-sas-snippet').textContent =
+                `/* SAS OLEDB Engine Connection Snippet */\nlibname sqlmart oledb \n  provider="MSOLEDBSQL"\n  properties=("Data Source"="${host},${port}" "Initial Catalog"="${catalog}")\n  schema=dbo readbuff=1000;`;
+        }
+
+        function applyRuntimeConfig() {
+            APP_CONFIG.EXECUTION_MODE = document.getElementById('cfg-mode').value;
+            APP_CONFIG.API_ENDPOINT = document.getElementById('cfg-api').value;
+            APP_CONFIG.SERVER_HOST = document.getElementById('cfg-host').value;
+            APP_CONFIG.INITIAL_CATALOG = document.getElementById('cfg-catalog').value;
+            APP_CONFIG.PORT = parseInt(document.getElementById('cfg-port').value, 10) || 1433;
+            APP_CONFIG.AUTH_MODE = document.getElementById('cfg-auth').value;
+
+            clearResultState(false);
+            initializeConfigUI();
+            setDrawerStatus('Applied', 'var(--terminal-green)');
+            switchResultTab('console');
+            setConsole(
+                `<span class="text-green-vivid">OUTPUT:</span> Session configuration applied; result cache flushed.\n` +
+                `Mode : ${escapeHtml(APP_CONFIG.EXECUTION_MODE)}\n` +
+                `Host : ${escapeHtml(APP_CONFIG.SERVER_HOST)} | Database: ${escapeHtml(APP_CONFIG.INITIAL_CATALOG)} | Port: ${APP_CONFIG.PORT}\n` +
+                `Auth : ${escapeHtml(APP_CONFIG.AUTH_MODE)}`
+            );
+        }
+
+        function resetConfigToDefaults() {
+            APP_CONFIG.EXECUTION_MODE = APP_CONFIG_DEFAULTS.EXECUTION_MODE;
+            APP_CONFIG.API_ENDPOINT = APP_CONFIG_DEFAULTS.API_ENDPOINT;
+            APP_CONFIG.SERVER_HOST = APP_CONFIG_DEFAULTS.SERVER_HOST;
+            APP_CONFIG.INITIAL_CATALOG = APP_CONFIG_DEFAULTS.INITIAL_CATALOG;
+            APP_CONFIG.PORT = APP_CONFIG_DEFAULTS.PORT;
+            APP_CONFIG.AUTH_MODE = APP_CONFIG_DEFAULTS.AUTH_MODE;
+
+            clearResultState(false);
+            initializeConfigUI();
+            setDrawerStatus('Reset', 'var(--warning)');
+            switchResultTab('console');
+            setConsole(`<span class="text-amber-vivid">OUTPUT:</span> Configuration reset to APP_CONFIG defaults; result cache flushed.`);
+        }
+
+        function setDrawerStatus(text, color) {
+            const el = document.getElementById('drawer-status');
+            el.textContent = text;
+            el.style.color = color;
+            setTimeout(() => { el.textContent = 'Ready'; el.style.color = 'var(--terminal-green)'; }, 2600);
+        }
+
+        function toggleConnectionDrawer(show) {
+            const drawer = document.getElementById('connection-drawer');
+            const trigger = document.getElementById('config-expand-trigger');
+            if (show) { drawer.classList.remove('collapsed'); trigger.classList.add('hidden'); }
+            else { drawer.classList.add('collapsed'); trigger.classList.remove('hidden'); }
+        }
+
+        function updateLineNumbers() {
+            const editor = document.getElementById('sql-editor');
+            const gutter = document.getElementById('line-numbers');
+            const lines = editor.value.split('\n').length;
+            let s = '';
+            for (let i = 1; i <= lines; i++) s += i + '<br>';
+            gutter.innerHTML = s;
+        }
+
+        function syncGutterScroll() {
+            document.getElementById('line-numbers').scrollTop = document.getElementById('sql-editor').scrollTop;
+        }
+
+        function handleEditorKeys(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                const ed = document.getElementById('sql-editor');
+                const s = ed.selectionStart, en = ed.selectionEnd;
+                ed.value = ed.value.substring(0, s) + '    ' + ed.value.substring(en);
+                ed.selectionStart = ed.selectionEnd = s + 4;
+                updateLineNumbers();
+            }
+            // Ctrl/Cmd+Enter runs the query
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                executeQuery();
+            }
+        }
+
+        function loadPresetWorkload(index) {
+            const w = APP_CONFIG.PRESET_WORKLOADS[index];
+            if (w) {
+                document.getElementById('sql-editor').value = w.sql;
+                updateLineNumbers();
+            }
+        }
+
+        function clearQueryEditor() {
+            document.getElementById('sql-editor').value = '';
+            updateLineNumbers();
+        }
+
+        function renderDataGrid(columns, rows) {
+            const container = document.getElementById('grid-container');
+            if (!rows || rows.length === 0) {
+                container.innerHTML = `<div style="padding:32px; text-align:center; color:var(--text-muted); font-family:var(--font-mono); font-size:12px;">Query returned 0 rows.</div>`;
+                return;
+            }
+            const cols = (columns && columns.length) ? columns : Object.keys(rows[0]);
+            let html = '<table class="grid-table"><thead><tr>';
+            cols.forEach(c => { html += `<th>${escapeHtml(String(c))}</th>`; });
+            html += '</tr></thead><tbody>';
+            rows.forEach(r => {
+                html += '<tr>';
+                cols.forEach(c => {
+                    const v = r[c];
+                    html += `<td>${v === null || v === undefined ? '<span style="color:var(--text-muted)">NULL</span>' : escapeHtml(String(v))}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function switchResultTab(tabName) {
+            ['console', 'grid', 'execution'].forEach(t => {
+                const btn = document.getElementById(`tab-btn-${t}`);
+                const content = document.getElementById(`tab-content-${t}`);
+                if (t === tabName) { btn.classList.add('active'); content.style.display = 'block'; }
+                else { btn.classList.remove('active'); content.style.display = 'none'; }
+            });
+        }
+
+        function exportResults(format) {
+            if (!currentQueryResults || currentQueryResults.length === 0) {
+                alert('No active dataset to export. Run a query first.');
+                return;
+            }
+            const cols = currentColumns.length ? currentColumns : Object.keys(currentQueryResults[0]);
+            let content = '', mime = 'text/plain';
+            const filename = `QueryResult_${Date.now()}.${format}`;
+
+            if (format === 'json') {
+                content = JSON.stringify(currentQueryResults, null, 2);
+                mime = 'application/json';
+            } else {
+                const esc = v => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+                content = [cols.join(','), ...currentQueryResults.map(r => cols.map(c => esc(r[c])).join(','))].join('\n');
+                mime = 'text/csv';
+            }
+
+            const blob = new Blob([content], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        function downloadSelfCopy() {
+            const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = 'SQL_Studio_Browser_Runner_v4.html'; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        function toggleModal(id) {
+            const m = document.getElementById(id);
+            if (m) m.classList.toggle('hidden');
+        }
+
+        function escapeHtml(str) {
+            if (typeof str !== 'string') return str;
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        /* ======================================================================
+         * BOOT
+         * ====================================================================== */
+        window.onload = function () {
+            populateAuthModeDropdown();
+            populatePresetDropdown();
+            initializeConfigUI();
+            clearResultState(false);
+            updateLineNumbers();
+
+            if (APP_CONFIG.PRESET_WORKLOADS.length > 0) loadPresetWorkload(0);
+
+            setConsole(
+                `<span class="text-green-vivid">OUTPUT:</span> SQL Studio Browser Runner_v4 initialized.\n` +
+                `Build  : ${BUILD_ID}\n` +
+                `Engine : ${APP_CONFIG.EXECUTION_MODE === 'api' ? 'API BRIDGE (live SQL Server)' : 'LOCAL SQL ENGINE (no database connection)'}\n` +
+                `Target : [${escapeHtml(APP_CONFIG.SERVER_HOST)}].[${escapeHtml(APP_CONFIG.INITIAL_CATALOG)}]:${APP_CONFIG.PORT}\n` +
+                `Auth   : ${escapeHtml(APP_CONFIG.AUTH_MODE)}\n` +
+                `Cache  : ${APP_CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default'}\n` +
+                `Presets: ${APP_CONFIG.PRESET_WORKLOADS.length}\n\n` +
+                (APP_CONFIG.EXECUTION_MODE === 'api'
+                    ? `Use "Test Bridge Connection" in the left pane to verify the bridge before running queries.`
+                    : `The local engine evaluates what you type. Edit any literal or alias and re-run — the result changes.\nFor a live database, set EXECUTION_MODE to "api" and start sql_studio_api_bridge.js.`) +
+                `\nTip: Ctrl+Enter runs the current statement.`
+            );
+        };
+    </script>
+</body>
+</html>
