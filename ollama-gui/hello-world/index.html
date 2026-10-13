@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Hello Ollama</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 16px; }
+    textarea { width: 100%; height: 80px; font-size: 16px; box-sizing: border-box; }
+    button { margin-top: 8px; padding: 8px 20px; font-size: 16px; }
+    #answer { margin-top: 20px; padding: 12px; background: #f2f2f2; white-space: pre-wrap; min-height: 40px; }
+  </style>
+</head>
+<body>
+  <h1>Hello Ollama 👋</h1>
+
+  <label>Model: <input id="model" value="llama3.2"></label>
+  <p>Ask a question:</p>
+  <textarea id="question">Say hello world in three languages.</textarea>
+  <br>
+  <button onclick="ask()">Ask</button>
+
+  <div id="answer"></div>
+
+  <script>
+    async function ask() {
+      const answer = document.getElementById("answer");
+      answer.textContent = "Thinking...";
+
+      try {
+        // Send the question to Ollama's REST API and wait for the full reply.
+        const response = await fetch("http://localhost:11434/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            model: document.getElementById("model").value,
+            prompt: document.getElementById("question").value,
+            stream: false
+          })
+        });
+        const data = await response.json();
+        answer.textContent = data.response || data.error;
+      } catch (err) {
+        answer.textContent = "Could not reach Ollama: " + err.message;
+      }
+    }
+  </script>
+</body>
+</html>
