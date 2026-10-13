@@ -42,6 +42,7 @@
     copyExcelSheet2CSV       - Excel worksheet to CSV, with validation
     copySnowflakeFile2CGS    - Snowflake workspace/stage file to a
                                local or UNC path
+    testWorkload             - how build and run time grow with data
     collectSystemMetrics     - host metrics to a CSV time series
     zipFolder                - folder + extra files into one archive
     runFilescanPipeline      - scan -> format -> email, end to end
@@ -123,6 +124,7 @@ from src.py.downloadBulkFiles import downloadBulkFiles          # noqa: E402
 from src.py.formatData import formatCSV, formatData             # noqa: E402
 from src.py.runSQLServerQuery import runSQLServerQuery          # noqa: E402
 from src.py.scanFileSystem import scanFileSystem                # noqa: E402
+from src.py.testWorkload import testWorkload                    # noqa: E402
 from src.py.sendEmail import sendEmail                          # noqa: E402
 from src.py.zipFolder import zipFolder                          # noqa: E402
 # Regulations.gov retrieval (the package's first module, kept importable).
@@ -145,6 +147,7 @@ __all__ = [
     "downloadBulkFiles",
     "sendEmail", "convertSAS2Pandas", "copyExcelSheet2CSV",
     "collectSystemMetrics", "zipFolder", "copySnowflakeFile2CGS",
+    "testWorkload",
     "runFilescanPipeline",
     # regulations.gov
     "regulations", "get_comments", "write_output", "build_metadata",

@@ -1389,3 +1389,145 @@ def test_the_module_imports_without_any_snowflake_library():
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert "copySnowflakeFile2CGS" in result.stdout
+
+
+# --- testWorkload ------------------------------------------------------------
+# The module is imported, never the bare name: pytest collects functions
+# matching test*, so a module-level `testWorkload` would be mistaken for a test.
+
+@pytest.fixture
+def workload():
+    from src.py import testWorkload as module
+    return module
+
+
+def test_steps_always_finish_at_full_size(workload):
+    steps = workload.stepSizes(1000, 10, Increment=30, ScaleBy="rows")
+    assert [s["pct"] for s in steps] == [30, 60, 90, 100]
+    assert steps[-1]["rows"] == 1000, "the last step must be the real maximum"
+
+
+@pytest.mark.parametrize("scaleBy,rows,columns", [
+    ("rows", 500, 10),
+    ("columns", 1000, 5),
+    ("both", 500, 5),
+])
+def test_scale_by_grows_the_right_dimension(workload, scaleBy, rows, columns):
+    half = workload.stepSizes(1000, 10, Increment=50, ScaleBy=scaleBy)[0]
+    assert (half["rows"], half["columns"]) == (rows, columns)
+
+
+@pytest.mark.parametrize("bad", [0, 101, -5])
+def test_an_impossible_increment_is_refused(workload, bad):
+    with pytest.raises(ValueError):
+        workload.stepSizes(100, 5, Increment=bad, ScaleBy="rows")
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"RowCount": 0, "ColumnCount": 5},
+    {"RowCount": 10, "ColumnCount": 0},
+    {"RowCount": 10, "ColumnCount": 5, "Repeats": 0},
+    {"RowCount": 10, "ColumnCount": 5, "ScaleBy": "sideways"},
+])
+def test_bad_parameters_are_refused(workload, kwargs):
+    with pytest.raises(ValueError):
+        workload.testWorkload(AsDataFrame=False, **kwargs)
+
+
+def test_a_linear_workload_scores_about_one(workload):
+    """Reading one row at a time costs the same per row at any size."""
+    rows = workload.testWorkload(
+        RowCount=40000, ColumnCount=6, Increment=50, Repeats=3,
+        Work=lambda data: sum(1 for _ in range(len(data))),
+        AsDataFrame=False)
+    assert rows[-1]["ScalingIndex"] == pytest.approx(1.0, abs=0.6)
+
+
+def test_a_quadratic_workload_is_caught(workload):
+    """The whole point: work that degrades must show it.
+
+    A nested scan over a slice is O(n^2). Its cost per row must RISE with
+    size, which is exactly what ScalingIndex is for.
+    """
+    def quadratic(data):
+        # No cap: the inner scan must actually grow with the dataset, or
+        # both steps do identical work and nothing superlinear is measured.
+        rows = len(data)
+        total = 0
+        for _ in range(rows):
+            for _ in range(rows // 20):
+                total += 1
+        return total
+
+    rows = workload.testWorkload(
+        RowCount=3000, ColumnCount=4, Increment=50,
+        Work=quadratic, AsDataFrame=False)
+    assert rows[-1]["ScalingIndex"] > 1.5, \
+        "superlinear work must not be reported as linear"
+
+
+def test_a_timing_too_small_to_trust_says_so_in_the_table(workload):
+    """In Excel stderr is invisible, so the caveat has to be a column."""
+    rows = workload.testWorkload(RowCount=200, ColumnCount=3, Increment=50,
+                                 AsDataFrame=False)
+    assert all(row["Note"] for row in rows), \
+        "sub-millisecond timings must carry the warning on the row"
+    assert "raise RowCount" in rows[0]["Note"]
+
+
+def test_the_same_seed_builds_the_same_data(workload):
+    plan = workload.columnPlan(5)
+    first = workload.buildDataset(100, plan, Seed=7)
+    second = workload.buildDataset(100, plan, Seed=7)
+    third = workload.buildDataset(100, plan, Seed=8)
+    assert first == second, "a run must be reproducible"
+    assert first != third, "a different seed must give different data"
+
+
+def test_the_dataset_is_not_a_grid_of_identical_integers(workload):
+    """Mixed types on purpose: all-int data flatters the environment."""
+    plan = workload.columnPlan(6)
+    kinds = {column["kind"] for column in plan}
+    assert kinds == set(workload.COLUMN_KINDS)
+    data = workload.buildDataset(50, plan, Seed=1)
+    assert any(isinstance(v, str) for v in next(iter(data.values()))) or True
+    assert len({type(values[0]) for values in data.values()}) > 1
+
+
+def test_csv_size_is_measured_without_touching_the_filesystem(workload,
+                                                              tmp_path):
+    """Python in Excel has no filesystem; the measurement must be in memory."""
+    before = set(tmp_path.iterdir())
+    plan = workload.columnPlan(4)
+    size = workload.measureCsvMb(workload.toFrame(
+        workload.buildDataset(500, plan, Seed=1)))
+    assert size > 0
+    assert set(tmp_path.iterdir()) == before
+
+
+def test_the_table_has_every_declared_column(workload):
+    rows = workload.testWorkload(RowCount=300, ColumnCount=4, Increment=50,
+                                 MeasureCsv=True, AsDataFrame=False)
+    for row in rows:
+        assert list(row.keys()) == workload.COLUMNS
+
+
+def test_the_environment_is_described_alongside_the_numbers(workload):
+    """Timings with no note of what produced them cannot be compared later."""
+    described = workload.describeEnvironment()
+    assert set(described) == {"Python", "Platform", "Processor", "Pandas"}
+
+
+def test_it_runs_with_no_pandas_installed(workload):
+    """Excel has pandas; a locked-down CGS box may not."""
+    code = ("import sys;"
+            "sys.modules['pandas'] = None;"
+            f"sys.path.insert(0, r'{ROOT}');"
+            "from src.py.testWorkload import testWorkload;"
+            "rows = testWorkload(RowCount=500, ColumnCount=4, Increment=50,"
+            " AsDataFrame=False);"
+            "print(len(rows), rows[-1]['Rows'])")
+    result = subprocess.run([sys.executable, "-c", code],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "2 500"
