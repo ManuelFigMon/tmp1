@@ -1,0 +1,72 @@
+# Ollama + the Chat GUI behind nginx.
+#   docker compose up -d                                  -> GUI on http://localhost:8080
+#   docker compose --profile anythingllm up -d            -> also AnythingLLM on http://localhost:3001
+#   docker compose --profile openwebui up -d              -> also Open WebUI on http://localhost:3000
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"          # optional: expose the raw API on the host
+    volumes:
+      - ollama:/root/.ollama   # downloaded models persist here
+    restart: unless-stopped
+    # Uncomment for NVIDIA GPU acceleration (requires nvidia-container-toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  gui:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  # Optional middleware #1: AnythingLLM (workspaces, RAG over your documents, API keys)
+  anythingllm:
+    profiles: ["anythingllm"]
+    image: mintplexlabs/anythingllm:latest
+    ports:
+      - "3001:3001"
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      STORAGE_DIR: /app/server/storage
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_PATH: http://ollama:11434
+      OLLAMA_MODEL_PREF: llama3.2
+      OLLAMA_MODEL_TOKEN_LIMIT: "4096"
+      EMBEDDING_ENGINE: native
+      VECTOR_DB: lancedb
+    volumes:
+      - anythingllm:/app/server/storage
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  # Optional middleware #2: Open WebUI (multi-user auth, chat history, API keys)
+  openwebui:
+    profiles: ["openwebui"]
+    image: ghcr.io/open-webui/open-webui:main
+    ports:
+      - "3000:8080"
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    volumes:
+      - openwebui:/app/backend/data
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  anythingllm:
+  openwebui:
