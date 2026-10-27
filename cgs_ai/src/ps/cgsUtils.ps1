@@ -27,7 +27,8 @@ $script:CgsVersion = '1.0beta'
 #   2  Assert-CgsWritable split into Test-CgsWritable + Resolve-CgsWritableTarget
 #   3  Write-CgsXlsx added -- native multi-sheet .xlsx, no ImportExcel needed
 #   4  Read-CgsXlsxSheet added -- native .xlsx reading, for formatData
-$script:CgsUtilsApi = 4
+#   5  logging moved off [Console]::Error, which was invisible in ISE
+$script:CgsUtilsApi = 5
 
 function Get-CgsUtilsBanner {
     <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
@@ -88,12 +89,25 @@ function Get-CgsConfig {
 }
 
 function Write-CgsLog {
-    <# .SYNOPSIS Write a timestamped line to stderr, matching the Python format.
+    <# .SYNOPSIS Write a timestamped line, matching the Python log format.
        .PARAMETER Level   INFO, WARNING or ERROR.
-       .PARAMETER Message Text to log. #>
+       .PARAMETER Message Text to log.
+       .NOTES  Write-Host, NOT [Console]::Error.WriteLine.
+
+               [Console]::Error writes straight to the operating system's
+               stderr handle, going around the PowerShell host. In a normal
+               console window that looks the same -- but in PowerShell ISE,
+               and in some editor-hosted terminals, there is no console
+               handle and every message VANISHED. The script did its work
+               and appeared to do nothing at all.
+
+               Write-Host reaches every host, and is still captured by
+               '> log 2>&1', which the SAS wrapper depends on. No colour:
+               PowerShell 7 emits ANSI escape codes for coloured Write-Host
+               output, which would litter that log file. #>
     param([string] $Level, [string] $Message)
     $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-    [Console]::Error.WriteLine(('{0} {1,-7} {2}' -f $stamp, $Level, $Message))
+    Write-Host ('{0} {1,-7} {2}' -f $stamp, $Level, $Message)
 }
 function Write-CgsInfo  { param([string] $Message) Write-CgsLog 'INFO'    $Message }
 function Write-CgsWarn  { param([string] $Message) Write-CgsLog 'WARNING' $Message }

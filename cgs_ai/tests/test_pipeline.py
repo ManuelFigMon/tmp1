@@ -62,7 +62,7 @@ def test_importing_cgs_ai_needs_no_third_party_package():
             "import cgs_ai; print(cgs_ai.__version__)")
     result = subprocess.run([sys.executable, "-c", code],
                             capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert "1.0beta" in result.stdout
 
 
@@ -626,10 +626,17 @@ needsPwsh = pytest.mark.skipif(PWSH is None, reason="PowerShell is not installed
 
 
 def runPwsh(script, *args):
-    """Run a src/ps script. Returns: CompletedProcess."""
-    return subprocess.run([PWSH, "-NoProfile", "-File", str(PS_DIR / script),
-                           *[str(a) for a in args]],
-                          capture_output=True, text=True, timeout=180)
+    """Run a src/ps script. Returns: CompletedProcess with .output added.
+
+    .output is stdout and stderr joined. Which stream a log line lands on
+    is a host detail -- it moved once already, when [Console]::Error turned
+    out to be invisible in PowerShell ISE -- and no test should depend on it.
+    """
+    result = subprocess.run([PWSH, "-NoProfile", "-File", str(PS_DIR / script),
+                             *[str(a) for a in args]],
+                            capture_output=True, text=True, timeout=180)
+    result.output = (result.stdout or "") + (result.stderr or "")
+    return result
 
 
 @needsPwsh
@@ -644,7 +651,7 @@ def test_powershell_scanner_matches_python_row_for_row(tmp_path):
                      "-input_folder_root", tmp_path, "-extract_keyword", "accdb;mdb",
                      "-file_extensions", "sas", "-metric_profile", "access_db",
                      "-output_file_path", psOut)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert psOut.is_file(), "an .xlsx was requested; a pair of CSVs is a bug"
 
     columns = ["Libref", "Keyword", "DefinitionLine", "UsageCount", "UsageLines"]
@@ -677,8 +684,8 @@ def test_powershell_formatdata_keeps_every_row_of_a_worksheet(tmp_path):
     result = runPwsh("formatData.ps1", "-InputPath", source,
                      "-InputSheet", "Metrics", "-OutputExcelPath", out,
                      "-FormatType", "corporate")
-    assert result.returncode == 0, result.stderr
-    assert "formatted 38 row(s) x 2 column(s)" in result.stderr, result.stderr
+    assert result.returncode == 0, result.output
+    assert "formatted 38 row(s) x 2 column(s)" in result.output, result.output
     # Row 1 is the banner, row 2 the headers, so 38 data rows means 40 rows.
     written = readSheet(str(out), headerRow=2)
     assert len(written) == 38
@@ -694,7 +701,7 @@ def test_powershell_formatcsv_shim_still_forwards(tmp_path):
     out = tmp_path / "o.xlsx"
     result = runPwsh("formatCSV.ps1", "-InputCsvPath", csvPath,
                      "-OutputExcelPath", out)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert out.is_file()
 
 
@@ -703,8 +710,8 @@ def test_powershell_sendemail_validates_before_it_connects():
     """No SMTP server here, so check the config errors, which come first."""
     result = runPwsh("sendEmail.ps1", "-From", "a@b.com", "-Subject", "s",
                      "-Body", "b")
-    assert result.returncode == 2, result.stderr
-    assert "'To' is missing" in result.stderr
+    assert result.returncode == 2, result.output
+    assert "'To' is missing" in result.output
 
 
 # --- the tutorial's own code must run ----------------------------------------
@@ -745,7 +752,7 @@ def test_the_tutorial_snippet_prints_what_the_tutorial_says(tmp_path):
         "print(result)\n", encoding="utf-8")
     result = subprocess.run([sys.executable, str(script)],
                             capture_output=True, text=True, cwd=str(tmp_path))
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert result.stdout.splitlines() == ["Hello, World!", "Hello, Alice!"]
 
 
@@ -1387,7 +1394,7 @@ def test_the_module_imports_without_any_snowflake_library():
             "print(cgs_ai.copySnowflakeFile2CGS.__name__)")
     result = subprocess.run([sys.executable, "-c", code],
                             capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert "copySnowflakeFile2CGS" in result.stdout
 
 
@@ -1535,7 +1542,7 @@ def test_it_runs_with_no_pandas_installed(workload):
             "print(len(rows), rows[-1]['Rows'])")
     result = subprocess.run([sys.executable, "-c", code],
                             capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert result.stdout.strip() == "2 500"
 
 
@@ -1583,9 +1590,9 @@ def test_formatexcel_renders_without_office_installed(tmp_path, extension):
                      "-SheetName", "Consolidated Data",
                      "-Columns", "Task Name,Bucket,Priority,Notes",
                      "-OutputPath", out)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert out.is_file() and out.stat().st_size > 0
-    assert "4 column(s)" in result.stderr
+    assert "4 column(s)" in result.output
 
 
 @needsPwsh
@@ -1601,8 +1608,8 @@ def test_formatexcel_accepts_a_comma_list_from_the_command_line(tmp_path):
                      "-SheetName", "Consolidated Data",
                      "-Columns", "Task Name,Bucket,Priority",
                      "-OutputPath", out)
-    assert result.returncode == 0, result.stderr
-    assert "keeping 3 column(s)" in result.stderr
+    assert result.returncode == 0, result.output
+    assert "keeping 3 column(s)" in result.output
 
 
 @needsPwsh
@@ -1612,7 +1619,7 @@ def test_formatexcel_keeps_the_requested_column_order(tmp_path):
     result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
                      "-SheetName", "Consolidated Data",
                      "-Columns", "Notes,Task Name", "-OutputPath", out)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     html = out.read_text(encoding="utf-8")
     assert html.index("<th>Notes</th>") < html.index("<th>Task Name</th>"), \
         "columns must appear in the order asked for, not sheet order"
@@ -1626,8 +1633,8 @@ def test_formatexcel_names_the_real_columns_when_one_is_wrong(tmp_path):
                      "-Columns", "Task Name;Widget",
                      "-OutputPath", tmp_path / "r.docx")
     assert result.returncode == 3
-    assert "Widget" in result.stderr
-    assert "the sheet has" in result.stderr, \
+    assert "Widget" in result.output
+    assert "the sheet has" in result.output, \
         "an unknown column must list the columns that DO exist"
 
 
@@ -1641,7 +1648,7 @@ def test_formatexcel_refuses_a_pdf_when_word_is_absent(tmp_path):
     result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
                      "-SheetName", "Consolidated Data", "-OutputPath", out)
     assert result.returncode == 3
-    assert "FIX 1" in result.stderr and "FIX 3" in result.stderr
+    assert "FIX 1" in result.output and "FIX 3" in result.output
     assert not out.exists(), "nothing should be written when the format fails"
 
 
@@ -1654,9 +1661,9 @@ def test_formatexcel_falls_back_only_when_told_to(tmp_path):
                      "-SheetName", "Consolidated Data",
                      "-OutputPath", tmp_path / "r.pdf",
                      "-OnWordMissing", "html")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.output
     assert (tmp_path / "r.html").is_file()
-    assert "instead of a PDF" in result.stderr, "the swap must be announced"
+    assert "instead of a PDF" in result.output, "the swap must be announced"
 
 
 @needsPwsh
@@ -1687,7 +1694,7 @@ def test_formatexcel_refuses_unknown_options(tmp_path, bad, code):
                      "Consolidated Data", "-OutputPath", tmp_path / "r.docx",
                      *bad)
     assert result.returncode == code
-    assert "expected" in result.stderr
+    assert "expected" in result.output
 
 
 @needsPwsh
