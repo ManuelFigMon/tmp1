@@ -388,6 +388,53 @@
 %mend downloadBulkFiles;
 
 
+%macro formatExcel(
+    ExcelPath     =,               /* REQUIRED; source .xlsx              */
+    SheetName     =,               /* REQUIRED; worksheet to format       */
+    OutputPath    =,               /* REQUIRED; .docx | .pdf | .html      */
+    Columns       =,               /* semicolon-delimited; blank = all    */
+    format_name   = corporate,     /* corporate|corporatev2|plain|minimal */
+    Title         =,
+    Subtitle      =,
+    HeaderRow     =,               /* 1-based; blank = detect             */
+    OnWordMissing =,               /* fail | html | docx                  */
+    MaxCellLength =,               /* 0 = never shorten a cell            */
+    engine        = ps,
+    debug         = 0
+);
+/* Turn one worksheet into a formatted status report for management.
+
+   THE OUTPUT EXTENSION PICKS THE RENDERER:
+     .docx  Word       -- native, needs no Office on the server
+     .html  web page   -- native, prints to PDF from any browser
+     .pdf   PDF        -- NEEDS MICROSOFT WORD installed, because
+                          PowerShell cannot write a PDF on its own
+
+   With no Word, a .pdf request STOPS and says so. Set OnWordMissing=html
+   to accept a web page instead; the swap is then your decision, not a
+   surprise in the output folder.
+
+   Columns are selected BY NAME and rendered in the order given, so an
+   upstream export that gains a column cannot shift the report sideways.
+
+   Use in claims processing: publish a weekly governance or issue-log
+   status pack from the tracking workbook, with no manual formatting.   */
+  %cgsResetArgs;
+  %cgsAddArg(name=-ExcelPath,     value=%superq(ExcelPath));
+  %cgsAddArg(name=-SheetName,     value=%superq(SheetName));
+  %cgsAddArg(name=-OutputPath,    value=%superq(OutputPath));
+  %cgsAddArg(name=-Columns,       value=%superq(Columns));
+  %cgsAddArg(name=-format_name,   value=&format_name);
+  %cgsAddArg(name=-Title,         value=%superq(Title));
+  %cgsAddArg(name=-Subtitle,      value=%superq(Subtitle));
+  %cgsAddArg(name=-HeaderRow,     value=%superq(HeaderRow));
+  %cgsAddArg(name=-OnWordMissing, value=%superq(OnWordMissing));
+  %cgsAddArg(name=-MaxCellLength, value=%superq(MaxCellLength));
+  %cgsRun(engine=&engine, script=formatExcel.ps1,
+          taskname=cgsfmtx, debug=&debug);
+%mend formatExcel;
+
+
 %macro sendEmail(
     To         =,                  /* REQUIRED; semicolon-delimited       */
     From       =,                  /* REQUIRED                            */

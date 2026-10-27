@@ -1459,9 +1459,15 @@ def test_a_quadratic_workload_is_caught(workload):
                 total += 1
         return total
 
+    # Sized so BOTH steps clear the noise floor. At a few thousand rows this
+    # finished in milliseconds on a fast container, and the index was then
+    # measuring scheduler jitter rather than scaling.
     rows = workload.testWorkload(
-        RowCount=3000, ColumnCount=4, Increment=50,
+        RowCount=20000, ColumnCount=4, Increment=50,
         Work=quadratic, AsDataFrame=False)
+    assert all(not row["Note"] for row in rows), (
+        "the test is sized too small to measure anything: "
+        f"{[row['WorkSeconds'] for row in rows]}")
     assert rows[-1]["ScalingIndex"] > 1.5, \
         "superlinear work must not be reported as linear"
 
@@ -1531,3 +1537,171 @@ def test_it_runs_with_no_pandas_installed(workload):
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "2 500"
+
+
+# --- formatExcel (PowerShell) ------------------------------------------------
+
+FORMAT_EXCEL = PS_DIR / "formatExcel.ps1"
+
+
+def _governanceWorkbook(tmp_path):
+    """A workbook shaped like the Planner export formatExcel was built for."""
+    from src.utils.xlsx import writeWorkbook
+    columns = ["Task ID", "Task Name", "Bucket", "Priority", "Due date",
+               "Start date", "Checklist Items", "Notes"]
+    rows = [{"Task ID": f"ID{n:03d}", "Task Name": f"Task {n}",
+             "Bucket": "BACKLOG", "Priority": "Medium", "Due date": "",
+             "Start date": "", "Checklist Items": "",
+             "Notes": "x" * 400} for n in range(1, 6)]
+    target = tmp_path / "gov.xlsx"
+    writeWorkbook([{"name": "Consolidated Data", "columns": columns,
+                    "rows": rows}], str(target))
+    return target
+
+
+def test_formatexcel_exists_and_defaults_format_name_to_corporate():
+    text = FORMAT_EXCEL.read_text(encoding="utf-8")
+    assert "$format_name   = 'corporate'" in text, \
+        "format_name must default to corporate"
+    for style in ("corporate", "corporatev2", "plain", "minimal"):
+        assert f"'{style}'" in text
+
+
+def test_formatexcel_picks_the_renderer_from_the_output_extension():
+    text = FORMAT_EXCEL.read_text(encoding="utf-8")
+    for extension in ("'.docx'", "'.pdf'", "'.html'"):
+        assert extension in text
+
+
+@needsPwsh
+@pytest.mark.parametrize("extension", ["docx", "html"])
+def test_formatexcel_renders_without_office_installed(tmp_path, extension):
+    """docx and html must need nothing beyond .NET -- no Word, no add-in."""
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / f"report.{extension}"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-Columns", "Task Name,Bucket,Priority,Notes",
+                     "-OutputPath", out)
+    assert result.returncode == 0, result.stderr
+    assert out.is_file() and out.stat().st_size > 0
+    assert "4 column(s)" in result.stderr
+
+
+@needsPwsh
+def test_formatexcel_accepts_a_comma_list_from_the_command_line(tmp_path):
+    """In -File mode every argument is a string, so 'a','b' arrives as "a,b".
+
+    Without the split this produced "column(s) not found" naming columns
+    that were plainly in the sheet.
+    """
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "r.html"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-Columns", "Task Name,Bucket,Priority",
+                     "-OutputPath", out)
+    assert result.returncode == 0, result.stderr
+    assert "keeping 3 column(s)" in result.stderr
+
+
+@needsPwsh
+def test_formatexcel_keeps_the_requested_column_order(tmp_path):
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "r.html"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-Columns", "Notes,Task Name", "-OutputPath", out)
+    assert result.returncode == 0, result.stderr
+    html = out.read_text(encoding="utf-8")
+    assert html.index("<th>Notes</th>") < html.index("<th>Task Name</th>"), \
+        "columns must appear in the order asked for, not sheet order"
+
+
+@needsPwsh
+def test_formatexcel_names_the_real_columns_when_one_is_wrong(tmp_path):
+    source = _governanceWorkbook(tmp_path)
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-Columns", "Task Name;Widget",
+                     "-OutputPath", tmp_path / "r.docx")
+    assert result.returncode == 3
+    assert "Widget" in result.stderr
+    assert "the sheet has" in result.stderr, \
+        "an unknown column must list the columns that DO exist"
+
+
+@needsPwsh
+def test_formatexcel_refuses_a_pdf_when_word_is_absent(tmp_path):
+    """Handing back a different file type silently is not acceptable."""
+    if platform.system() == "Windows":
+        pytest.skip("Word may genuinely be present on Windows")
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "r.pdf"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data", "-OutputPath", out)
+    assert result.returncode == 3
+    assert "FIX 1" in result.stderr and "FIX 3" in result.stderr
+    assert not out.exists(), "nothing should be written when the format fails"
+
+
+@needsPwsh
+def test_formatexcel_falls_back_only_when_told_to(tmp_path):
+    if platform.system() == "Windows":
+        pytest.skip("Word may genuinely be present on Windows")
+    source = _governanceWorkbook(tmp_path)
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-OutputPath", tmp_path / "r.pdf",
+                     "-OnWordMissing", "html")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "r.html").is_file()
+    assert "instead of a PDF" in result.stderr, "the swap must be announced"
+
+
+@needsPwsh
+def test_formatexcel_truncation_is_off_by_default_and_marked_when_on(tmp_path):
+    source = _governanceWorkbook(tmp_path)
+    full = tmp_path / "full.html"
+    cut = tmp_path / "cut.html"
+    runPwsh("formatExcel.ps1", "-ExcelPath", source, "-SheetName",
+            "Consolidated Data", "-Columns", "Notes", "-OutputPath", full)
+    runPwsh("formatExcel.ps1", "-ExcelPath", source, "-SheetName",
+            "Consolidated Data", "-Columns", "Notes", "-OutputPath", cut,
+            "-MaxCellLength", "50")
+    assert "x" * 400 in full.read_text(encoding="utf-8"), \
+        "nothing may be hidden unless asked for"
+    shortened = cut.read_text(encoding="utf-8")
+    assert "x" * 400 not in shortened
+    assert "…" in shortened, "a cut must be visible to the reader"
+
+
+@needsPwsh
+@pytest.mark.parametrize("bad,code", [
+    (["-format_name", "fancy"], 2),
+    (["-OnWordMissing", "maybe"], 2),
+])
+def test_formatexcel_refuses_unknown_options(tmp_path, bad, code):
+    source = _governanceWorkbook(tmp_path)
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source, "-SheetName",
+                     "Consolidated Data", "-OutputPath", tmp_path / "r.docx",
+                     *bad)
+    assert result.returncode == code
+    assert "expected" in result.stderr
+
+
+@needsPwsh
+def test_formatexcel_output_opens_in_a_word_processor(tmp_path):
+    """The .docx is hand-written OOXML; proof it opens is a real reader."""
+    if shutil.which("libreoffice") is None:
+        pytest.skip("LibreOffice is not installed")
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "r.docx"
+    assert runPwsh("formatExcel.ps1", "-ExcelPath", source, "-SheetName",
+                   "Consolidated Data", "-Columns", "Task Name,Bucket",
+                   "-OutputPath", out).returncode == 0
+    converted = subprocess.run(
+        ["libreoffice", "--headless", "--convert-to", "pdf",
+         "--outdir", str(tmp_path), str(out)],
+        capture_output=True, text=True, timeout=300)
+    assert (tmp_path / "r.pdf").is_file(), converted.stdout + converted.stderr
