@@ -36,6 +36,7 @@
     runSQLServerQuery        - SQL Server query via Integrated Security
     formatData               - CSV or Excel to styled Excel (SAS ODS look)
     formatCSV                - deprecated alias for formatData
+    formatExcel              - a worksheet to a Word/PDF/HTML report
     downloadBulkFiles        - bulk HTTP download from a CSV link column
     sendEmail                - SMTP alert to one or many recipients
     convertSAS2Pandas        - sas7bdat to pandas DataFrame
@@ -122,6 +123,7 @@ from src.py.copyExcelSheet2CSV import copyExcelSheet2CSV        # noqa: E402
 from src.py.copySnowflakeFile2CGS import copySnowflakeFile2CGS  # noqa: E402
 from src.py.downloadBulkFiles import downloadBulkFiles          # noqa: E402
 from src.py.formatData import formatCSV, formatData             # noqa: E402
+from src.py.formatExcel import formatExcel                      # noqa: E402
 from src.py.runSQLServerQuery import runSQLServerQuery          # noqa: E402
 from src.py.scanFileSystem import scanFileSystem                # noqa: E402
 from src.py.testWorkload import testWorkload                    # noqa: E402
@@ -144,6 +146,7 @@ __all__ = [
     "basic_hello", "personalized_hello", "detailed_hello",
     # toolkit
     "scanFileSystem", "runSQLServerQuery", "formatData", "formatCSV",
+    "formatExcel",
     "downloadBulkFiles",
     "sendEmail", "convertSAS2Pandas", "copyExcelSheet2CSV",
     "collectSystemMetrics", "zipFolder", "copySnowflakeFile2CGS",

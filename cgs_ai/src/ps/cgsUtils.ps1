@@ -28,7 +28,8 @@ $script:CgsVersion = '1.0beta'
 #   3  Write-CgsXlsx added -- native multi-sheet .xlsx, no ImportExcel needed
 #   4  Read-CgsXlsxSheet added -- native .xlsx reading, for formatData
 #   5  logging moved off [Console]::Error, which was invisible in ISE
-$script:CgsUtilsApi = 5
+#   6  cell text line endings normalised to LF, per the XML spec
+$script:CgsUtilsApi = 6
 
 function Get-CgsUtilsBanner {
     <# .SYNOPSIS One line describing the cgsUtils.ps1 that actually loaded.
@@ -605,7 +606,12 @@ function Read-CgsXlsxGrid {
                 $valueNode = $cellNode.GetElementsByTagName('v', $script:XlsxMainNs)
                 if ($valueNode.Count -gt 0) { $text = $valueNode[0].InnerText }
             }
-            $cells.Add($text)
+            # Normalise line endings inside a cell. The XML specification
+            # requires a parser to fold a literal CRLF or CR in text content
+            # down to LF; .NET's XmlDocument does not do it when loading from
+            # a string, so a cell with an embedded newline kept its CR and
+            # this reader disagreed with the Python twin byte for byte.
+            $cells.Add($text.Replace("`r`n", "`n").Replace("`r", "`n"))
         }
         $grid.Add($cells.ToArray())
     }

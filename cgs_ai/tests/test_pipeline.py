@@ -779,6 +779,7 @@ def test_the_contents_page_lists_every_section_once():
 PS_DIR = ROOT / "src" / "ps"
 PY_DIR = ROOT / "src" / "py"
 FUNCTIONS = ["scanFileSystem", "runSQLServerQuery", "formatData",
+             "formatExcel",
              "downloadBulkFiles", "sendEmail", "convertSAS2Pandas",
              "copyExcelSheet2CSV", "collectSystemMetrics", "zipFolder"]
 
@@ -1752,3 +1753,112 @@ def test_formatexcel_makes_a_pdf_with_libreoffice_when_word_is_absent(tmp_path):
     assert "LibreOffice" in result.output
     assert not (tmp_path / "report.docx").exists(), \
         "the staging .docx must be cleaned up, not left beside the PDF"
+
+
+# --- formatExcel: the two engines must agree ---------------------------------
+
+def _runBothEngines(tmp_path, extension, columns="Task Name,Bucket,Priority,Notes"):
+    """Render the same workbook with both engines. Returns: (psPath, pyPath)."""
+    from src.py.formatExcel import formatExcel as pyFormatExcel
+    source = _governanceWorkbook(tmp_path)
+    psPath = tmp_path / f"ps.{extension}"
+    pyPath = tmp_path / f"py.{extension}"
+    shared = dict(SheetName="Consolidated Data", Columns=columns,
+                  Title="Governance", Subtitle="fixed", MaxCellLength=220)
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", shared["SheetName"],
+                     "-Columns", shared["Columns"], "-OutputPath", psPath,
+                     "-Title", shared["Title"], "-Subtitle", shared["Subtitle"],
+                     "-MaxCellLength", str(shared["MaxCellLength"]))
+    assert result.returncode == 0, result.output
+    pyFormatExcel(ExcelPath=str(source), OutputPath=str(pyPath), **shared)
+    return psPath, pyPath
+
+
+@needsPwsh
+def test_the_two_engines_write_byte_identical_html(tmp_path):
+    """The strongest parity check available: compare the files themselves."""
+    psPath, pyPath = _runBothEngines(tmp_path, "html")
+    assert psPath.read_bytes() == pyPath.read_bytes(), \
+        "the PowerShell and Python reports differ byte for byte"
+
+
+@needsPwsh
+def test_the_two_engines_write_an_identical_word_document(tmp_path):
+    """Every OOXML part must match, column widths included.
+
+    document.xml carries the computed widths, so this also pins the
+    rounding: PowerShell's [int] rounds half to even and Python's int()
+    truncates, which would put every column one twip apart.
+    """
+    psPath, pyPath = _runBothEngines(tmp_path, "docx")
+    import zipfile
+    for name in ("word/document.xml", "word/styles.xml",
+                 "[Content_Types].xml", "_rels/.rels",
+                 "word/_rels/document.xml.rels"):
+        fromPs = zipfile.ZipFile(psPath).read(name)
+        fromPy = zipfile.ZipFile(pyPath).read(name)
+        assert fromPs == fromPy, f"{name} differs between the engines"
+
+
+def test_powershell_rounding_is_mirrored_not_truncated():
+    from src.py.formatExcel import psInt
+    # .NET rounds half to EVEN, which is what Python's round() does and
+    # int() does not.
+    assert (psInt(2.5), psInt(3.5), psInt(3.4), psInt(3.6)) == (2, 4, 3, 4)
+    assert int(2.6) == 2 and psInt(2.6) == 3, "int() would truncate"
+
+
+def test_cell_line_endings_are_normalised_to_lf(tmp_path):
+    """A literal CRLF inside a cell must fold to LF, per the XML spec.
+
+    An Excel cell with an embedded newline stores a literal CRLF. .NET's
+    XmlDocument kept the CR when loading from a string, so the PowerShell
+    reader disagreed with Python until it was normalised.
+    """
+    from src.utils.xlsx import writeWorkbook, readSheet
+    target = tmp_path / "wrapped.xlsx"
+    writeWorkbook([{"name": "S", "columns": ["Note"],
+                    "rows": [{"Note": "first\r\nsecond\rthird"}]}], str(target))
+    value = readSheet(str(target), sheet="S")[0]["Note"]
+    assert "\r" not in value
+    assert value == "first\nsecond\nthird"
+
+
+@pytest.mark.parametrize("engineSource", ["ps", "py"])
+def test_both_engines_offer_the_same_formats_and_options(engineSource):
+    text = (FORMAT_EXCEL if engineSource == "ps"
+            else ROOT / "src" / "py" / "formatExcel.py").read_text(encoding="utf-8")
+    for token in ("corporate", "corporatev2", "plain", "minimal",
+                  ".docx", ".pdf", ".html", "LibreOffice",
+                  "OnWordMissing", "MaxCellLength", "format_name"):
+        assert token in text, f"{engineSource} is missing {token}"
+
+
+def test_python_formatexcel_rejects_the_same_things(tmp_path):
+    from src.py.formatExcel import formatExcel as pyFormatExcel
+    source = _governanceWorkbook(tmp_path)
+    base = dict(ExcelPath=str(source), SheetName="Consolidated Data",
+                OutputPath=str(tmp_path / "o.docx"))
+    with pytest.raises(ValueError, match="format_name"):
+        pyFormatExcel(**{**base, "format_name": "fancy"})
+    with pytest.raises(ValueError, match="OnWordMissing"):
+        pyFormatExcel(**{**base, "OnWordMissing": "maybe"})
+    with pytest.raises(ValueError, match="extension"):
+        pyFormatExcel(**{**base, "OutputPath": str(tmp_path / "o.pptx")})
+    with pytest.raises(FileNotFoundError):
+        pyFormatExcel(**{**base, "ExcelPath": str(tmp_path / "nope.xlsx")})
+    with pytest.raises(KeyError) as caught:
+        pyFormatExcel(**{**base, "Columns": "Task Name,Widget"})
+    assert "the sheet has" in str(caught.value)
+
+
+def test_python_formatexcel_returns_what_it_did(tmp_path):
+    from src.py.formatExcel import formatExcel as pyFormatExcel
+    source = _governanceWorkbook(tmp_path)
+    result = pyFormatExcel(ExcelPath=str(source), SheetName="Consolidated Data",
+                           Columns=["Notes", "Task Name"],
+                           OutputPath=str(tmp_path / "o.html"))
+    assert result["RowCount"] == 5
+    assert result["Columns"] == ["Notes", "Task Name"], "order is preserved"
+    assert result["Renderer"] == "html"
