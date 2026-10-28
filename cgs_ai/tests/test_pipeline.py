@@ -1862,3 +1862,71 @@ def test_python_formatexcel_returns_what_it_did(tmp_path):
     assert result["RowCount"] == 5
     assert result["Columns"] == ["Notes", "Task Name"], "order is preserved"
     assert result["Renderer"] == "html"
+
+
+# --- formatExcel.py must not need a COM package ------------------------------
+
+def test_formatexcel_imports_no_com_package():
+    """pywin32 is not installed on a CGS desktop and must not be needed.
+
+    Word is still supported -- it is reached through a short PowerShell
+    script, because PowerShell ships with Windows and has COM built in.
+    """
+    source = (ROOT / "src" / "py" / "formatExcel.py").read_text(encoding="utf-8")
+    for line in source.splitlines():
+        stripped = line.strip()
+        assert not stripped.startswith(("import win32", "from win32",
+                                        "import pywin32", "from pywin32")), \
+            f"a COM package is imported: {stripped}"
+    assert "New-Object -ComObject Word.Application" in source, \
+        "Word support must survive, driven through PowerShell"
+
+
+def test_formatexcel_works_with_every_optional_package_blocked(tmp_path):
+    """Import and render with win32com, pywin32 and pandas unavailable."""
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "blocked.html"
+    code = ("import sys;"
+            "blocked=('win32com','win32com.client','pywin32','pandas',"
+            "'numpy','openpyxl');"
+            "[sys.modules.__setitem__(m, None) for m in blocked];"
+            f"sys.path.insert(0, r'{ROOT}');"
+            "from src.py.formatExcel import formatExcel;"
+            f"r = formatExcel(ExcelPath=r'{source}',"
+            " SheetName='Consolidated Data', Columns='Task Name,Bucket',"
+            f" OutputPath=r'{out}');"
+            "print(r['RowCount'], r['Renderer'])")
+    result = subprocess.run([sys.executable, "-c", code],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "5 html"
+    assert out.is_file()
+
+
+def test_the_word_path_quotes_paths_safely():
+    """An apostrophe in a folder name must not break out of the script."""
+    from src.py import formatExcel as module
+    captured = {}
+
+    def fake(script, timeout=600):
+        captured["script"] = script
+        raise RuntimeError("not actually running Word")
+
+    realRunner = module.runPowerShellScript
+    module.runPowerShellScript = fake
+    try:
+        with pytest.raises(RuntimeError):
+            module.convertDocxToPdfWithWord("/tmp/O'Brien/report.docx",
+                                            "/tmp/O'Brien/report.pdf")
+    finally:
+        module.runPowerShellScript = realRunner
+    # PowerShell escapes a single quote by doubling it inside a '...' string.
+    assert "O''Brien" in captured["script"]
+    assert "O'Brien'" not in captured["script"], "the quoting leaks"
+
+
+@needsPwsh
+def test_the_powershell_bridge_runs():
+    from src.py.formatExcel import runPowerShellScript
+    result = runPowerShellScript("Write-Output 'bridge works'\n", timeout=120)
+    assert "bridge works" in result.stdout

@@ -16,11 +16,14 @@
 
     .pdf IS THE EXCEPTION. Python cannot write a PDF from the standard
     library, so the module drives a converter: Microsoft Word through COM
-    (pywin32, Windows only) when it is there, otherwise LibreOffice in
-    headless mode, which needs no licence and is often present where Word
-    is not. Where NEITHER is installed it does NOT quietly hand back a
-    different file -- it raises, naming the alternatives. Pass
-    OnWordMissing="html" or "docx" to opt in to a fallback deliberately.
+    when it is there, otherwise LibreOffice in headless mode, which needs
+    no licence and is often present where Word is not. NEITHER NEEDS A
+    THIRD-PARTY PYTHON PACKAGE -- Word is reached through a short
+    PowerShell script, because PowerShell ships with Windows and has COM
+    built in, so there is no pywin32 to install. Where NEITHER converter
+    is installed it does NOT quietly hand back a different file -- it
+    raises, naming the alternatives. Pass OnWordMissing="html" or "docx"
+    to opt in to a fallback deliberately.
 
   Description:
     PYTHON TWIN of src/ps/formatExcel.ps1 -- same function name, same
@@ -72,6 +75,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -464,23 +468,73 @@ def newHtmlReport(rows: Sequence[Dict[str, Any]], names: Sequence[str],
     return str(destination)
 
 
+def findPowerShell() -> Optional[str]:
+    """Locate a PowerShell executable.
+
+    Parameters: none.
+    Returns: str the executable path, or None.
+    """
+    for name in ("pwsh", "powershell"):
+        found = shutil.which(name)
+        if found:
+            return found
+    return None
+
+
+def runPowerShellScript(script: str, timeout: int = 600) -> subprocess.CompletedProcess:
+    """Run a short PowerShell script from a temporary file.
+
+    Parameters: script (str) - the PowerShell source; timeout (int).
+    Returns: the CompletedProcess.
+    Raises: RuntimeError - PowerShell itself is not installed.
+
+    A FILE rather than -Command: the paths this passes contain spaces and
+    backslashes, and quoting them through a command line is where that
+    goes wrong. ExecutionPolicy Bypass because a locked-down CGS machine
+    refuses an unsigned script otherwise, and this one is generated here
+    rather than downloaded.
+    """
+    executable = findPowerShell()
+    if executable is None:
+        raise RuntimeError("PowerShell was not found on this machine")
+    handle = tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False,
+                                         encoding="utf-8")
+    try:
+        handle.write(script)
+        handle.close()
+        return subprocess.run(
+            [executable, "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-File", handle.name],
+            capture_output=True, text=True, timeout=timeout, check=False)
+    finally:
+        os.unlink(handle.name)
+
+
 def wordAvailable() -> bool:
     """Is Microsoft Word installed and reachable through COM?
 
     Parameters: none. Returns: bool.
 
-    COM automation is Windows-only and needs pywin32, so this is False
-    everywhere else without trying.
+    NO PYTHON COM MODULE IS USED. An earlier version imported win32com,
+    which meant pywin32 had to be installed before this module would even
+    consider Word. PowerShell ships with Windows and has COM built in, so
+    Word is reached through a short PowerShell script instead -- the same
+    automation the .ps1 twin performs, and nothing extra to install.
+
+    COM is Windows-only, so this is False everywhere else without trying.
     """
     if platform.system() != "Windows":
         return False
     try:
-        import win32com.client
-        word = win32com.client.Dispatch("Word.Application")
-        word.Quit()
-        return True
-    except Exception:                       # noqa: BLE001 - absence, not error
+        probe = runPowerShellScript(
+            "try {\n"
+            "    $word = New-Object -ComObject Word.Application\n"
+            "    $word.Quit()\n"
+            "    Write-Output 'WORD_PRESENT'\n"
+            "} catch { Write-Output 'WORD_ABSENT' }\n", timeout=120)
+    except (RuntimeError, OSError, subprocess.SubprocessError):
         return False
+    return "WORD_PRESENT" in (probe.stdout or "")
 
 
 def findLibreOffice() -> Optional[str]:
@@ -514,20 +568,34 @@ def convertDocxToPdfWithWord(docxPath: str, pdfPath: str) -> str:
     wdFormatPDF = 17. Word is quit in a finally block: an instance left
     running holds the file open and accumulates invisible WINWORD.EXE
     processes on a server.
+
+    Driven through PowerShell rather than a Python COM module, so nothing
+    has to be pip-installed for this path to work. Paths are embedded as
+    single-quoted PowerShell strings with any apostrophe doubled, which is
+    that language's own escape and leaves no room for a path to break out.
     """
-    import win32com.client
-    word = win32com.client.Dispatch("Word.Application")
-    word.Visible = False
-    word.DisplayAlerts = 0
-    document = None
-    try:
-        document = word.Documents.Open(os.path.abspath(docxPath),
-                                       False, True)   # read-only
-        document.SaveAs(os.path.abspath(pdfPath), 17)
-    finally:
-        if document is not None:
-            document.Close(False)
-        word.Quit()
+    def quote(value: str) -> str:
+        return "'" + os.path.abspath(value).replace("'", "''") + "'"
+
+    result = runPowerShellScript(
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$source = {quote(docxPath)}\n"
+        f"$target = {quote(pdfPath)}\n"
+        "$word = New-Object -ComObject Word.Application\n"
+        "$word.Visible = $false\n"
+        "$word.DisplayAlerts = 0\n"
+        "$document = $null\n"
+        "try {\n"
+        "    $document = $word.Documents.Open($source, $false, $true)\n"
+        "    $document.SaveAs([ref] $target, [ref] 17)\n"
+        "} finally {\n"
+        "    if ($document) { $document.Close([ref] $false) }\n"
+        "    $word.Quit()\n"
+        "}\n")
+    if not os.path.isfile(pdfPath):
+        raise RuntimeError(
+            f"Word did not produce a PDF from {docxPath}.\n"
+            f"  {(result.stderr or result.stdout or '').strip()}")
     return pdfPath
 
 
