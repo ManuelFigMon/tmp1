@@ -728,8 +728,81 @@ def test_the_greetings_the_tutorial_teaches_exist_in_the_lite_build():
         run_name="cgs_ai_lite")
     assert lite["doBasicHello"]() == "Hello, World!"
     assert lite["doPersonalizedHello"]("Alice") == "Hello, Alice!"
-    for name in ("doBasicHello", "doPersonalizedHello"):
+    for name in ("doBasicHello", "doPersonalizedHello", "doDetailedHello"):
         assert name in lite["__all__"]
+
+
+def test_the_lite_build_keeps_every_function_it_ever_published():
+    """Nothing may be dropped from the lite build as it grows.
+
+    It is ONE file published to a share, and anybody's notebook may already
+    call any name in it. Adding to it is free; removing from it breaks code
+    nobody here can see. This list only ever gets longer.
+    """
+    import runpy
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    published = ("doBasicHello", "doPersonalizedHello", "doDetailedHello",
+                 "formatData", "formatCSV", "sendEmail", "surveySelect",
+                 "testWorkload")
+    for name in published:
+        assert callable(lite.get(name)), f"{name} is gone from the lite build"
+        assert name in lite["__all__"], f"{name} is missing from __all__"
+
+
+def test_the_detailed_greeting_returns_a_structure_not_a_sentence():
+    """doDetailedHello's styles, and what an unknown style does."""
+    import runpy
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    detailed = lite["doDetailedHello"]
+    assert detailed()["message"].startswith("Hello, World!")
+    assert detailed("formal")["message"].startswith("Greetings, World.")
+    assert detailed("pirate")["message"].startswith("Ahoy, World!")
+    # Case-insensitive, and an unknown style falls back rather than raising --
+    # but style_used still echoes what was ASKED for, so the typo is visible.
+    assert detailed("FORMAL")["message"] == detailed("formal")["message"]
+    assert detailed("nonsense") == {"message": detailed()["message"],
+                                    "style_used": "nonsense"}
+
+
+def test_the_lite_sample_is_reproducible_and_one_based():
+    """surveySelect must give the same rows twice, and renumber from 1.
+
+    An auditable sample is one somebody can reproduce months later; that is
+    the only reason the seed is a published constant rather than random.
+    """
+    import runpy
+    pandas = pytest.importorskip("pandas")
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    surveySelect = lite["surveySelect"]
+    claims = pandas.DataFrame({"Claim_ID": [f"CLM{i}" for i in range(40)],
+                               "Allowed_Amount": range(40)})
+    first = surveySelect(data=claims, n=10)
+    assert list(first.index) == list(range(1, 11))
+    assert first.equals(surveySelect(data=claims, n=10))
+    assert not first.equals(surveySelect(data=claims, n=10, seed=20261028))
+    with pytest.raises(ValueError, match="only 40 rows"):
+        surveySelect(data=claims, n=41)
+
+
+def test_the_lite_workload_table_has_the_columns_the_workbook_reads():
+    """The Test_Scaling tab reads ScalingIndex and Note by name."""
+    import runpy
+    lite = runpy.run_path(
+        str(ROOT / "src" / "py" / "lite" / "cgs_ai" / "__init__.py"),
+        run_name="cgs_ai_lite")
+    rows = lite["testWorkload"](RowCount=2000, ColumnCount=6, Increment=50,
+                                AsDataFrame=False, Label="test")
+    assert [row["StepPct"] for row in rows] == [50, 100]
+    for row in rows:
+        assert row["Label"] == "test"
+        assert set(lite["WORKLOAD_COLUMNS"]) == set(row)
+    assert rows[0]["ScalingIndex"] == 1.0      # the first step IS the baseline
 
 
 def test_the_tutorial_snippet_prints_what_the_tutorial_says(tmp_path):
