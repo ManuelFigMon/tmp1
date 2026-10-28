@@ -1,0 +1,1401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMQ — Hexbin Plot v1.0</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+            padding-bottom: 36px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 { font-size: 16px; margin-bottom: 0; font-weight: 600; }
+        .header p { font-size: 11px; opacity: 0.95; margin-top: 3px; }
+
+        .top-nav {
+            position: absolute;
+            top: 15px; right: 70px;
+            display: flex; gap: 15px; align-items: center;
+        }
+
+        .top-nav a {
+            color: white; text-decoration: none; font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 3px; transition: background 0.2s;
+        }
+
+        .top-nav a:hover { background: rgba(255,255,255,0.15); }
+
+        #nav-welcome {
+            color: #d4f5d4; font-size: 11px; font-weight: 700;
+            padding: 5px 10px; display: none;
+        }
+
+        .sas-footer {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd; background: #f8f8f8;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 12px; color: #666; z-index: 50;
+        }
+
+        .sas-footer .session-indicator { display: flex; align-items: center; gap: 0.4rem; }
+
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes sasPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+        #footer-signout { color: #cc0000; text-decoration: none; display: none; }
+        #footer-signout:hover { text-decoration: underline; }
+
+        .hamburger-container { position: absolute; top: 15px; right: 20px; }
+
+        .hamburger {
+            width: 30px; height: 30px; background: transparent; border: none;
+            cursor: pointer; padding: 5px; display: flex; flex-direction: column;
+            justify-content: center; gap: 4px; border-radius: 3px; transition: background 0.2s;
+        }
+
+        .hamburger:hover { background: rgba(255,255,255,0.15); }
+        .hamburger span { display: block; width: 20px; height: 2px; background: white; transition: all 0.3s; }
+        .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px, 5px); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px, -5px); }
+
+        .dropdown-menu {
+            position: absolute; top: 50px; right: 20px;
+            background: white; border: 1px solid #c0c0c0;
+            border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 200px; display: none; z-index: 1000;
+        }
+
+        .dropdown-menu.active { display: block; }
+
+        .dropdown-menu a {
+            display: block; padding: 12px 20px; color: #333;
+            text-decoration: none; font-size: 11px; font-weight: 600;
+            border-bottom: 1px solid #f0f0f0; transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child { border-bottom: none; }
+        .dropdown-menu a:hover { background: #f8f8f8; }
+
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 2000;
+            justify-content: center; align-items: center;
+        }
+
+        .modal-overlay.active { display: flex; }
+
+        .modal-content {
+            background: white; border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            max-width: 560px; width: 90%; max-height: 80vh; overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7; color: white; padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        .modal-header h2 { font-size: 14px; font-weight: 600; }
+
+        .modal-close {
+            background: transparent; border: none; color: white;
+            font-size: 24px; cursor: pointer; width: 30px; height: 30px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 3px; transition: background 0.2s;
+        }
+
+        .modal-close:hover { background: rgba(255,255,255,0.15); }
+
+        .modal-body { padding: 20px; font-size: 12px; line-height: 1.6; color: #333; }
+        .modal-body p { margin-bottom: 12px; }
+        .modal-body ul { margin: 0 0 12px 18px; }
+        .modal-body li { margin-bottom: 4px; }
+        .modal-body a { color: #4a7ba7; text-decoration: none; font-weight: 600; }
+        .modal-body a:hover { text-decoration: underline; }
+        .modal-body h3 { font-size: 12px; font-weight: 700; color: #4a7ba7; margin: 14px 0 6px; }
+
+        #reportToolbar {
+            display: none; background: #f0f4f8; border-bottom: 1px solid #c8d8e8;
+            padding: 6px 16px; align-items: center; gap: 10px; font-size: 11px;
+        }
+
+        #reportToolbar.visible { display: flex; }
+
+        .loading-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.85); z-index: 9000;
+            flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+        }
+
+        .loading-overlay.active { display: flex; }
+
+        .loading-spinner {
+            width: 40px; height: 40px; border: 4px solid #c0c0c0;
+            border-top-color: #4a7ba7; border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-text { color: #555; font-size: 13px; }
+
+        /* Layout */
+        .main-content { padding: 0; }
+
+        .content-row { display: flex; align-items: stretch; }
+
+        .input-panel {
+            width: 35%; min-width: 240px; max-width: 340px;
+            border-right: 1px solid #ddd; padding: 16px;
+            background: #fafafa; overflow-y: auto;
+        }
+
+        #vizPanel { flex: 1; padding: 16px; overflow: auto; }
+
+        .section { margin-bottom: 16px; }
+
+        .section-title {
+            font-size: 11px; font-weight: 700; color: #4a7ba7;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            border-bottom: 1px solid #ddd; padding-bottom: 6px; margin-bottom: 10px;
+            display: flex; align-items: center; gap: 6px;
+        }
+
+        .form-group { margin-bottom: 10px; }
+
+        .form-group label {
+            display: block; font-size: 11px; font-weight: 600;
+            color: #555; margin-bottom: 4px;
+        }
+
+        .form-group select, .form-group input[type="text"], .form-group input[type="number"] {
+            width: 100%; padding: 5px 8px; font-size: 11px;
+            border: 1px solid #c0c0c0; border-radius: 3px;
+            background: white; color: #333;
+        }
+
+        .form-group select:focus, .form-group input:focus {
+            outline: none; border-color: #4a7ba7;
+        }
+
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            padding: 6px 14px; font-size: 11px; font-weight: 600;
+            border: none; border-radius: 3px; cursor: pointer;
+            transition: background 0.2s; white-space: nowrap;
+        }
+
+        .btn-primary { background: #4a7ba7; color: white; }
+        .btn-primary:hover { background: #3a6b97; }
+        .btn-secondary { background: #e8e8e8; color: #333; }
+        .btn-secondary:hover { background: #d8d8d8; }
+        .btn-sm { padding: 3px 10px; font-size: 10px; }
+        .btn-danger { background: #c0392b; color: white; }
+        .btn-danger:hover { background: #a93226; }
+
+        .filters-container { background: #f5f5f5; border: 1px solid #e0e0e0; border-radius: 3px; padding: 10px; }
+
+        .filter-row {
+            display: grid; grid-template-columns: 1fr 80px 1fr 24px;
+            gap: 4px; margin-bottom: 6px; align-items: center;
+        }
+
+        .filter-row select, .filter-row input { font-size: 10px; padding: 3px 5px; }
+
+        .filter-remove {
+            background: #e74c3c; color: white; border: none;
+            border-radius: 2px; cursor: pointer; font-size: 12px;
+            width: 20px; height: 20px;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        /* KPI Strip */
+        .kpi-strip {
+            display: flex; gap: 0; border-bottom: 1px solid #ddd;
+            margin-bottom: 14px; background: #4a7ba7;
+        }
+
+        .kpi-item {
+            flex: 1; text-align: center; padding: 10px 8px;
+            border-right: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .kpi-item:last-child { border-right: none; }
+        .kpi-label { font-size: 9px; color: rgba(255,255,255,0.8); text-transform: uppercase; letter-spacing: 0.5px; }
+        .kpi-value { font-size: 18px; font-weight: 700; color: white; line-height: 1.2; }
+        .kpi-value-sm { font-size: 12px; font-weight: 700; color: white; line-height: 1.4; }
+
+        /* Actions */
+        .actions {
+            display: flex; gap: 8px; padding: 12px 16px;
+            border-top: 1px solid #ddd; background: #fafafa;
+        }
+
+        .viz-placeholder {
+            color: #aaa; text-align: center; padding: 30px; font-size: 12px;
+            font-style: italic; border: 1px dashed #ddd;
+        }
+
+        #hexbinContainer { margin-bottom: 12px; overflow-x: auto; }
+        #hexbinContainer svg { width: 100%; height: auto; }
+
+        #chartTooltip {
+            position: fixed; background: rgba(30,30,30,0.92);
+            color: #fff; padding: 8px 12px; border-radius: 4px;
+            font-size: 11px; pointer-events: none; display: none;
+            z-index: 5000; line-height: 1.6; max-width: 240px;
+        }
+
+        /* Info icon */
+        .info-icon {
+            display: inline-flex; align-items: center; justify-content: center;
+            width: 14px; height: 14px; background: #4a7ba7; color: white;
+            border-radius: 50%; font-size: 9px; font-weight: 700;
+            cursor: help; position: relative;
+        }
+
+        .config-row {
+            display: flex; align-items: center; gap: 8px;
+            margin-bottom: 10px; flex-wrap: wrap;
+        }
+
+        .config-row label { margin-bottom: 0; min-width: 130px; }
+        .config-row input[type="range"] { flex: 1; min-width: 80px; }
+
+        .range-val { font-weight: 700; color: #4a7ba7; min-width: 36px; }
+
+        /* Color legend strip */
+        #hexLegend { margin-top: 12px; }
+
+        @media (max-width: 900px) {
+            .content-row { flex-direction: column; }
+            .input-panel { width: 100%; max-width: 100%; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading data...</div>
+    </div>
+
+    <!-- Shared Tooltip -->
+    <div id="chartTooltip"></div>
+
+    <!-- About Modal -->
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMQ — Hexbin Plot</h2>
+                <button class="modal-close" id="closeAboutModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The <strong>Hexbin Plot</strong> groups (X, Y) data points into hexagonal bins and colors each bin by the number of points it contains. This makes it ideal for large datasets where ordinary scatter plots suffer from overplotting.</p>
+                <h3>How it works</h3>
+                <ul>
+                    <li>The plot area is divided into a regular hexagonal grid.</li>
+                    <li>Each data point is assigned to the nearest hex center.</li>
+                    <li>Bins are colored from light blue (few points) to dark blue (many points), using a sequential color scale.</li>
+                    <li>A count legend on the right shows the mapping from color to count.</li>
+                </ul>
+                <h3>Controls</h3>
+                <ul>
+                    <li><strong>X Axis / Y Axis:</strong> Choose two numeric columns.</li>
+                    <li><strong>Group Column (optional):</strong> A character column for labeling the character legend below the plot.</li>
+                    <li><strong>Hex Radius:</strong> Controls the size of each hexagon. Larger = coarser bins; smaller = finer resolution.</li>
+                    <li><strong>Min Count:</strong> Hides bins with fewer than N points to reduce visual noise.</li>
+                    <li><strong>Color Scheme:</strong> Switch between Blues, Greens, and Purples sequential scales.</li>
+                    <li><strong>Show Axes:</strong> Toggle axis lines and tick labels.</li>
+                </ul>
+                <h3>Interpretation</h3>
+                <p>Dark concentrated areas reveal the densest regions of your data. Light or sparse areas indicate fewer observations. Use the Min Count slider to focus on high-density areas.</p>
+                <p>Built with D3.js v7 and vanilla JavaScript — no frameworks required.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help &amp; Support</h2>
+                <button class="modal-close" id="closeHelpModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Select a dataset, choose X and Y numeric columns, then the hexbin plot renders automatically.</p>
+                <p>Use the <strong>Hex Radius</strong> slider to control bin granularity. A radius of 15–25 pixels works well for most datasets.</p>
+                <p>The <strong>Min Count</strong> filter hides low-density bins to reveal structure in dense regions.</p>
+                <p>If you encounter any issues or have suggestions, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMQ — Hexbin Plot v1.0</h1>
+            <p>Hexagonal density bins for visualizing point concentration</p>
+
+            <div class="top-nav">
+                <a id="nav-logon" href="#">Logon</a>
+                <span id="nav-welcome"></span>
+                <a id="nav-about" href="#">About</a>
+                <a id="nav-help" href="#">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn">
+                    <span></span><span></span><span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" id="menuAbout">About</a>
+                    <a href="#" id="menuHelp">Help</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Report Toolbar (visible when authenticated) -->
+        <div id="reportToolbar">
+            <label for="reportNameInput">Report Name:</label>
+            <input type="text" id="reportNameInput" value="Hexbin Plot">
+            <button class="btn btn-primary btn-sm" id="saveReportBtn">Save Report</button>
+            <span id="reportSaveFeedback"></span>
+        </div>
+
+        <div class="main-content">
+            <div class="content-row">
+                <!-- Left: Input Panel -->
+                <div class="input-panel">
+
+                    <!-- Dataset Selection -->
+                    <div class="section">
+                        <h2 class="section-title">Dataset Selection</h2>
+                        <div class="form-group">
+                            <label for="dataset">Choose Dataset:</label>
+                            <select id="dataset">
+                                <option value="">Select a dataset...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Column Selection -->
+                    <div class="section">
+                        <h2 class="section-title">
+                            Column Selection
+                            <span class="info-icon" title="Choose two numeric columns for X and Y axes. Optionally pick a character column for the group legend.">i</span>
+                        </h2>
+                        <div class="form-group">
+                            <label for="xColumn">X Axis (numeric):</label>
+                            <select id="xColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="yColumn">Y Axis (numeric):</label>
+                            <select id="yColumn">
+                                <option value="">— select dataset first —</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="groupColumn">Group Column (optional, character):</label>
+                            <select id="groupColumn">
+                                <option value="">— none —</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="section">
+                        <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                        <div class="filters-container">
+                            <div id="filtersContainer">
+                                <p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>
+                            </div>
+                            <button class="btn btn-secondary" id="addFilterBtn" style="margin-top:10px;">Add Filter</button>
+                        </div>
+                    </div>
+
+                    <!-- Configuration -->
+                    <div class="section">
+                        <h2 class="section-title">Configuration</h2>
+
+                        <div class="form-group">
+                            <label>Hex Radius: <span class="range-val" id="hexRadiusVal">20</span>px</label>
+                            <input type="range" id="hexRadius" min="5" max="50" step="1" value="20" style="width:100%;">
+                        </div>
+
+                        <div class="form-group">
+                            <label>Min Count (hide bins below): <span class="range-val" id="minCountVal">1</span></label>
+                            <input type="range" id="minCount" min="1" max="20" step="1" value="1" style="width:100%;">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="colorScheme">Color Scheme:</label>
+                            <select id="colorScheme">
+                                <option value="Blues">Blues</option>
+                                <option value="Greens">Greens</option>
+                                <option value="Purples">Purples</option>
+                                <option value="Oranges">Oranges</option>
+                                <option value="Reds">Reds</option>
+                            </select>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="showAxes" checked style="width:auto;margin-bottom:0;">
+                            <label for="showAxes" style="margin-bottom:0;font-weight:normal;">Show axes</label>
+                        </div>
+
+                        <div class="config-row" style="margin-bottom:10px;">
+                            <input type="checkbox" id="showGrid" style="width:auto;margin-bottom:0;">
+                            <label for="showGrid" style="margin-bottom:0;font-weight:normal;">Show grid lines</label>
+                        </div>
+                    </div>
+
+                </div><!-- /input-panel -->
+
+                <!-- Right: Visualization Panel -->
+                <div id="vizPanel">
+
+                    <!-- KPI Strip -->
+                    <div class="kpi-strip" id="kpiStrip">
+                        <div class="kpi-item">
+                            <div class="kpi-label">Total Points</div>
+                            <div class="kpi-value" id="kpiTotal">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Hex Bins</div>
+                            <div class="kpi-value" id="kpiBins">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Max Bin Count</div>
+                            <div class="kpi-value" id="kpiMaxCount">—</div>
+                        </div>
+                        <div class="kpi-item">
+                            <div class="kpi-label">Avg Bin Count</div>
+                            <div class="kpi-value-sm" id="kpiAvgCount">—</div>
+                        </div>
+                    </div>
+
+                    <!-- Hexbin Chart -->
+                    <div id="hexbinContainer">
+                        <div class="viz-placeholder">Select a dataset and two numeric columns to render the hexbin plot.</div>
+                    </div>
+
+                    <!-- Group legend (optional) -->
+                    <div id="hexLegend"></div>
+
+                </div><!-- /vizPanel -->
+            </div><!-- /content-row -->
+
+            <!-- Actions Strip -->
+            <div class="actions">
+                <button class="btn btn-primary" id="exportImageBtn">Export Image</button>
+                <button class="btn btn-secondary" id="exportCsvBtn">Export to CSV</button>
+                <button class="btn btn-secondary" id="resetFormBtn">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout">Sign out</a>
+    </footer>
+
+    <script src="scripts/d3.min.js"></script>
+    <script src="scripts/html2canvas.min.js"></script>
+    <script src="scripts/lodash.min.js"></script>
+
+    <script>
+    /* =====================================================================
+       CONFIG / SESSION HELPERS (verbatim from template)
+       ===================================================================== */
+    function getProfileBasePath() {
+        return '../';
+    }
+
+    function showConfigError(msg) {
+        let banner = document.getElementById('config-error-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'config-error-banner';
+            banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+            document.body.insertBefore(banner, document.body.firstChild);
+        }
+        banner.textContent = msg;
+    }
+
+    async function loadConfig() {
+        const base = getProfileBasePath();
+        const tryFetch = async (path) => {
+            let r = await fetch(base + path);
+            if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+            return r.json();
+        };
+        const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+            tryFetch('data_config.json'),
+            tryFetch('datasets.json'),
+            tryFetch('sas_config.json')
+        ]);
+        window.DATA_CONFIG = dataCfg;
+        window.datasets = datasetsCfg;
+        window.SAS_CONFIG = Object.assign({}, sasCfg, {
+            portalUrl: window.location.origin + window.location.pathname
+        });
+    }
+
+    function initDatasetDropdown() {
+        const sel = document.getElementById('dataset');
+        if (!sel || !window.datasets) return;
+        sel.innerHTML = '<option value="">Select a dataset...</option>';
+        Object.keys(window.datasets).forEach(key => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = key;
+            sel.appendChild(opt);
+        });
+    }
+
+    /* =====================================================================
+       DATA FUNCTIONS (verbatim from template)
+       ===================================================================== */
+    function getDataSourceURL(dataset) {
+        const datasetConfig = window.datasets[dataset];
+        const mapping = window.DATA_CONFIG.Mapping[dataset];
+        if (!mapping) throw new Error('No mapping found for dataset: ' + dataset);
+        if (datasetConfig.dmsrc_type === 'file') {
+            return window.DATA_CONFIG.baseFileURL + mapping;
+        } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+            return null;
+        }
+        throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+    }
+
+    function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+        const dataset = window.datasets[selectedDataset];
+        let sqlQuery = 'SELECT';
+        if (useDistinct) sqlQuery += ' DISTINCT';
+        sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+        sqlQuery += ' FROM ' + (dataset.table || selectedDataset);
+        const whereClauses = filters
+            .filter(f => f.column && f.operator && f.value)
+            .map(f => {
+                const col = f.column;
+                const op = f.operator;
+                const val = f.value;
+                if (op === 'LIKE' || op === 'NOT LIKE') return col + ' ' + op + ' \'%' + val + '%\'';
+                if (op === 'IS NULL' || op === 'IS NOT NULL') return col + ' ' + op;
+                const numVal = parseFloat(val);
+                const useNum = !isNaN(numVal) && String(numVal) === val;
+                return col + ' ' + op + ' ' + (useNum ? val : '\'' + val + '\'');
+            });
+        if (whereClauses.length > 0) sqlQuery += ' WHERE ' + whereClauses.join(' AND ');
+        return sqlQuery;
+    }
+
+    function buildAPIURL(selectedDataset, selectedColumns, filters, useDistinct) {
+        const baseURL = window.DATA_CONFIG.baseAPIURL;
+        if (!baseURL) return null;
+        const sqlQuery = buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct);
+        return baseURL + '?query=' + encodeURIComponent(sqlQuery);
+    }
+
+    async function fetchData(selectedDataset, selectedColumns, filters, useDistinct) {
+        const overlay = document.getElementById('loadingOverlay');
+        overlay.classList.add('active');
+        try {
+            const dataset = window.datasets[selectedDataset];
+            if (!dataset) throw new Error('Unknown dataset: ' + selectedDataset);
+            const apiURL = buildAPIURL(selectedDataset, selectedColumns, filters, useDistinct);
+            if (apiURL) {
+                const r = await fetch(apiURL);
+                if (!r.ok) throw new Error('API error ' + r.status);
+                return await r.json();
+            }
+            const fileURL = getProfileBasePath() + getDataSourceURL(selectedDataset);
+            const r = await fetch(fileURL);
+            if (!r.ok) throw new Error('File not found: ' + fileURL);
+            const contentType = r.headers.get('content-type') || '';
+            if (contentType.includes('json') || fileURL.endsWith('.json')) {
+                return await r.json();
+            }
+            const text = await r.text();
+            const lines = text.trim().split('\n');
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            return lines.slice(1).map(line => {
+                const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+                const obj = {};
+                headers.forEach((h, i) => { obj[h] = vals[i]; });
+                return obj;
+            });
+        } catch (err) {
+            console.error('fetchData error:', err);
+            return null;
+        } finally {
+            overlay.classList.remove('active');
+        }
+    }
+
+    function applyFilters(data, filters) {
+        if (!filters || filters.length === 0) return data;
+        return data.filter(row => {
+            return filters.every(f => {
+                if (!f.column || !f.operator) return true;
+                const val = row[f.column];
+                const fval = f.value;
+                const numVal = parseFloat(val);
+                const numFval = parseFloat(fval);
+                switch (f.operator) {
+                    case '=': return String(val) === String(fval) || numVal === numFval;
+                    case '!=': return String(val) !== String(fval) && numVal !== numFval;
+                    case '>': return numVal > numFval;
+                    case '<': return numVal < numFval;
+                    case '>=': return numVal >= numFval;
+                    case '<=': return numVal <= numFval;
+                    case 'LIKE': return String(val).toLowerCase().includes(String(fval).toLowerCase());
+                    case 'NOT LIKE': return !String(val).toLowerCase().includes(String(fval).toLowerCase());
+                    case 'IS NULL': return val === null || val === undefined || val === '';
+                    case 'IS NOT NULL': return val !== null && val !== undefined && val !== '';
+                    default: return true;
+                }
+            });
+        });
+    }
+
+    /* =====================================================================
+       FILTER UI
+       ===================================================================== */
+    let filterCount = 0;
+
+    function addHexFilter() {
+        filterCount++;
+        const ds = document.getElementById('dataset').value;
+        const allCols = ds && window.datasets[ds] ? (window.datasets[ds].columns || []) : [];
+
+        const container = document.getElementById('filtersContainer');
+        if (container.querySelector('p')) container.innerHTML = '';
+
+        const row = document.createElement('div');
+        row.className = 'filter-row';
+        row.dataset.filterId = filterCount;
+
+        const colSel = document.createElement('select');
+        colSel.className = 'filter-col';
+        colSel.innerHTML = '<option value="">Column...</option>' +
+            allCols.map(c => '<option value="' + c + '">' + c + '</option>').join('');
+
+        const opSel = document.createElement('select');
+        opSel.className = 'filter-op';
+        opSel.innerHTML = ['=','!=','>','<','>=','<=','LIKE','NOT LIKE','IS NULL','IS NOT NULL']
+            .map(o => '<option value="' + o + '">' + o + '</option>').join('');
+
+        const valInput = document.createElement('input');
+        valInput.type = 'text';
+        valInput.className = 'filter-val';
+        valInput.placeholder = 'Value...';
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'filter-remove';
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', function() {
+            row.remove();
+            if (!container.querySelector('.filter-row')) {
+                container.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+            }
+            renderHexbin();
+        });
+
+        colSel.addEventListener('change', renderHexbin);
+        opSel.addEventListener('change', renderHexbin);
+        valInput.addEventListener('input', _.debounce(renderHexbin, 400));
+
+        row.appendChild(colSel);
+        row.appendChild(opSel);
+        row.appendChild(valInput);
+        row.appendChild(removeBtn);
+        container.appendChild(row);
+    }
+
+    function getHexFilters() {
+        return Array.from(document.querySelectorAll('#filtersContainer .filter-row')).map(row => ({
+            column: row.querySelector('.filter-col').value,
+            operator: row.querySelector('.filter-op').value,
+            value: row.querySelector('.filter-val').value
+        }));
+    }
+
+    /* =====================================================================
+       COLUMN POPULATION
+       ===================================================================== */
+    function updateColumns() {
+        const ds = document.getElementById('dataset').value;
+        const xSel = document.getElementById('xColumn');
+        const ySel = document.getElementById('yColumn');
+        const gSel = document.getElementById('groupColumn');
+
+        const empty = '<option value="">— select dataset first —</option>';
+        if (!ds || !window.datasets || !window.datasets[ds]) {
+            xSel.innerHTML = empty;
+            ySel.innerHTML = empty;
+            gSel.innerHTML = '<option value="">— none —</option>';
+            renderHexbin();
+            return;
+        }
+
+        const dsConfig = window.datasets[ds];
+        const allCols = dsConfig.columns || [];
+        const numCols = dsConfig.numericColumns || allCols;
+        const charCols = dsConfig.charColumns || [];
+
+        const numOpts = numCols.map(c => '<option value="' + c + '">' + c + '</option>').join('');
+        const charOpts = charCols.map(c => '<option value="' + c + '">' + c + '</option>').join('');
+
+        xSel.innerHTML = '<option value="">— choose X —</option>' + numOpts;
+        ySel.innerHTML = '<option value="">— choose Y —</option>' + numOpts;
+        gSel.innerHTML = '<option value="">— none —</option>' + charOpts;
+
+        renderHexbin();
+    }
+
+    /* =====================================================================
+       COLOR SCALE
+       ===================================================================== */
+    function getColorInterpolator(scheme) {
+        const map = {
+            'Blues': d3.interpolateBlues,
+            'Greens': d3.interpolateGreens,
+            'Purples': d3.interpolatePurples,
+            'Oranges': d3.interpolateOranges,
+            'Reds': d3.interpolateReds
+        };
+        return map[scheme] || d3.interpolateBlues;
+    }
+
+    /* =====================================================================
+       KPI STRIP
+       ===================================================================== */
+    function renderKPIStrip(total, bins, maxCount, avgCount) {
+        document.getElementById('kpiTotal').textContent = total !== null ? total.toLocaleString() : '—';
+        document.getElementById('kpiBins').textContent = bins !== null ? bins.toLocaleString() : '—';
+        document.getElementById('kpiMaxCount').textContent = maxCount !== null ? maxCount.toLocaleString() : '—';
+        document.getElementById('kpiAvgCount').textContent = avgCount !== null ? avgCount.toFixed(1) : '—';
+    }
+
+    /* =====================================================================
+       HEXBIN RENDER
+       ===================================================================== */
+    let lastHexData = null;
+
+    async function renderHexbin() {
+        const ds = document.getElementById('dataset').value;
+        const xCol = document.getElementById('xColumn').value;
+        const yCol = document.getElementById('yColumn').value;
+
+        const container = document.getElementById('hexbinContainer');
+
+        if (!ds || !xCol || !yCol || xCol === yCol) {
+            d3.select(container).selectAll('*').remove();
+            container.innerHTML = '<div class="viz-placeholder">Select a dataset and two different numeric columns for X and Y to render the hexbin plot.</div>';
+            document.getElementById('hexLegend').innerHTML = '';
+            renderKPIStrip(null, null, null, null);
+            return;
+        }
+
+        const dsConfig = window.datasets[ds];
+        const gCol = document.getElementById('groupColumn').value;
+        const colsToFetch = gCol ? [xCol, yCol, gCol] : [xCol, yCol];
+        const filters = getHexFilters();
+
+        const rawData = await fetchData(ds, colsToFetch, filters, false);
+        if (!rawData) return;
+
+        const filteredData = applyFilters(rawData, filters);
+        lastHexData = filteredData;
+
+        // Parse numerics
+        const points = filteredData.map(row => ({
+            x: parseFloat(row[xCol]),
+            y: parseFloat(row[yCol]),
+            group: gCol ? row[gCol] : null
+        })).filter(p => isFinite(p.x) && isFinite(p.y));
+
+        if (points.length === 0) {
+            container.innerHTML = '<div class="viz-placeholder">No valid numeric data found for the selected columns.</div>';
+            renderKPIStrip(0, 0, 0, 0);
+            return;
+        }
+
+        d3.select(container).selectAll('*').remove();
+
+        const hexRadius = parseInt(document.getElementById('hexRadius').value) || 20;
+        const minCount = parseInt(document.getElementById('minCount').value) || 1;
+        const scheme = document.getElementById('colorScheme').value;
+        const showAxes = document.getElementById('showAxes').checked;
+        const showGrid = document.getElementById('showGrid').checked;
+        const tooltip = document.getElementById('chartTooltip');
+
+        const margin = { top: 20, right: 100, bottom: 55, left: 65 };
+        const W = 700;
+        const H = 480;
+        const innerW = W - margin.left - margin.right;
+        const innerH = H - margin.top - margin.bottom;
+
+        const xExtent = d3.extent(points, p => p.x);
+        const yExtent = d3.extent(points, p => p.y);
+
+        const xPad = (xExtent[1] - xExtent[0]) * 0.05 || 1;
+        const yPad = (yExtent[1] - yExtent[0]) * 0.05 || 1;
+
+        const xScale = d3.scaleLinear()
+            .domain([xExtent[0] - xPad, xExtent[1] + xPad])
+            .range([0, innerW]);
+
+        const yScale = d3.scaleLinear()
+            .domain([yExtent[0] - yPad, yExtent[1] + yPad])
+            .range([innerH, 0]);
+
+        // Build hexbin using D3's built-in hexbin generator
+        const hexbin = d3.hexbin()
+            .x(p => xScale(p.x))
+            .y(p => yScale(p.y))
+            .radius(hexRadius)
+            .extent([[0, 0], [innerW, innerH]]);
+
+        const bins = hexbin(points).filter(b => b.length >= minCount);
+
+        const maxCount = bins.length > 0 ? d3.max(bins, b => b.length) : 1;
+        const avgCount = bins.length > 0 ? d3.mean(bins, b => b.length) : 0;
+
+        renderKPIStrip(points.length, bins.length, maxCount, avgCount);
+
+        const interpolator = getColorInterpolator(scheme);
+        // Use domain [0, maxCount] but clamp min brightness so empty-ish bins are still visible
+        const colorScale = d3.scaleSequential(t => interpolator(0.15 + t * 0.85))
+            .domain([0, maxCount]);
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('viewBox', '0 0 ' + W + ' ' + H)
+            .attr('preserveAspectRatio', 'xMidYMid meet');
+
+        // Clip path to keep hexagons inside axes
+        svg.append('defs').append('clipPath')
+            .attr('id', 'hexClip')
+            .append('rect')
+            .attr('width', innerW)
+            .attr('height', innerH);
+
+        const g = svg.append('g')
+            .attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+        // Background
+        g.append('rect')
+            .attr('width', innerW).attr('height', innerH)
+            .attr('fill', '#f8fbff').attr('stroke', '#ccc').attr('stroke-width', 0.5);
+
+        // Grid lines
+        if (showGrid) {
+            const xTicks = xScale.ticks(6);
+            const yTicks = yScale.ticks(6);
+
+            xTicks.forEach(t => {
+                g.append('line')
+                    .attr('x1', xScale(t)).attr('x2', xScale(t))
+                    .attr('y1', 0).attr('y2', innerH)
+                    .attr('stroke', '#dde').attr('stroke-width', 0.5).attr('stroke-dasharray', '3,3');
+            });
+
+            yTicks.forEach(t => {
+                g.append('line')
+                    .attr('x1', 0).attr('x2', innerW)
+                    .attr('y1', yScale(t)).attr('y2', yScale(t))
+                    .attr('stroke', '#dde').attr('stroke-width', 0.5).attr('stroke-dasharray', '3,3');
+            });
+        }
+
+        // Hexagons
+        const hexG = g.append('g').attr('clip-path', 'url(#hexClip)');
+
+        hexG.selectAll('path')
+            .data(bins)
+            .join('path')
+            .attr('d', hexbin.hexagon())
+            .attr('transform', b => 'translate(' + b.x + ',' + b.y + ')')
+            .attr('fill', b => colorScale(b.length))
+            .attr('stroke', 'white')
+            .attr('stroke-width', 0.5)
+            .on('mousemove', function(event, b) {
+                const xVals = b.map(p => p.x);
+                const yVals = b.map(p => p.y);
+                const xMin = d3.min(xVals), xMax = d3.max(xVals);
+                const yMin = d3.min(yVals), yMax = d3.max(yVals);
+                tooltip.style.display = 'block';
+                tooltip.style.left = (event.clientX + 14) + 'px';
+                tooltip.style.top = (event.clientY - 30) + 'px';
+                tooltip.innerHTML =
+                    '<strong>Count:</strong> ' + b.length + '<br>' +
+                    '<strong>' + xCol + ':</strong> [' + xMin.toFixed(2) + ', ' + xMax.toFixed(2) + ']<br>' +
+                    '<strong>' + yCol + ':</strong> [' + yMin.toFixed(2) + ', ' + yMax.toFixed(2) + ']';
+            })
+            .on('mouseleave', function() { tooltip.style.display = 'none'; });
+
+        // Axes
+        if (showAxes) {
+            const xAxis = d3.axisBottom(xScale).ticks(6).tickSize(4);
+            const yAxis = d3.axisLeft(yScale).ticks(6).tickSize(4);
+
+            g.append('g')
+                .attr('transform', 'translate(0,' + innerH + ')')
+                .call(xAxis)
+                .call(ax => ax.select('.domain').attr('stroke', '#999'))
+                .call(ax => ax.selectAll('text').attr('font-size', '10px').attr('fill', '#555'));
+
+            g.append('g')
+                .call(yAxis)
+                .call(ax => ax.select('.domain').attr('stroke', '#999'))
+                .call(ax => ax.selectAll('text').attr('font-size', '10px').attr('fill', '#555'));
+        }
+
+        // Axis labels
+        g.append('text')
+            .attr('x', innerW / 2).attr('y', innerH + 44)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '12px').attr('fill', '#333').attr('font-weight', '600')
+            .text(xCol);
+
+        g.append('text')
+            .attr('transform', 'rotate(-90)')
+            .attr('x', -innerH / 2).attr('y', -50)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '12px').attr('fill', '#333').attr('font-weight', '600')
+            .text(yCol);
+
+        // Color legend (right side)
+        const legendH = innerH;
+        const legendW = 16;
+        const legendX = innerW + 20;
+        const nGrad = 100;
+
+        const defs2 = svg.select('defs');
+        const gradId = 'hexLegendGrad_' + Date.now();
+        const grad = defs2.append('linearGradient')
+            .attr('id', gradId)
+            .attr('x1', '0%').attr('y1', '100%')
+            .attr('x2', '0%').attr('y2', '0%');
+
+        for (let k = 0; k <= nGrad; k++) {
+            const t = k / nGrad;
+            grad.append('stop')
+                .attr('offset', (t * 100) + '%')
+                .attr('stop-color', interpolator(0.15 + t * 0.85));
+        }
+
+        g.append('rect')
+            .attr('x', legendX).attr('y', 0)
+            .attr('width', legendW).attr('height', legendH)
+            .style('fill', 'url(#' + gradId + ')')
+            .attr('stroke', '#999').attr('stroke-width', 0.5);
+
+        // Legend ticks (5 ticks: 0, 25%, 50%, 75%, 100%)
+        [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+            const count = Math.round(t * maxCount);
+            const ty = legendH * (1 - t);
+            g.append('line')
+                .attr('x1', legendX + legendW).attr('x2', legendX + legendW + 4)
+                .attr('y1', ty).attr('y2', ty)
+                .attr('stroke', '#333').attr('stroke-width', 1);
+            g.append('text')
+                .attr('x', legendX + legendW + 7).attr('y', ty + 4)
+                .attr('font-size', '10px').attr('fill', '#333')
+                .text(count);
+        });
+
+        g.append('text')
+            .attr('x', legendX + legendW / 2).attr('y', -6)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '10px').attr('fill', '#555')
+            .text('Count');
+
+        // Optional group legend
+        renderGroupLegend(points, gCol);
+    }
+
+    /* =====================================================================
+       GROUP LEGEND
+       ===================================================================== */
+    function renderGroupLegend(points, gCol) {
+        const container = document.getElementById('hexLegend');
+        container.innerHTML = '';
+        if (!gCol) return;
+
+        const groups = Array.from(new Set(points.map(p => p.group).filter(g => g !== null && g !== undefined && g !== '')));
+        if (groups.length === 0) return;
+
+        const palette = ['#e41a1c','#377eb8','#4daf4a','#ff7f00','#984ea3','#a65628','#f781bf','#999999'];
+
+        const legend = document.createElement('div');
+        legend.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;padding:8px 4px;font-size:11px;';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'width:100%;font-weight:700;color:#555;margin-bottom:4px;font-size:11px;';
+        title.textContent = 'Group: ' + gCol;
+        legend.appendChild(title);
+
+        groups.slice(0, 12).forEach((g, i) => {
+            const item = document.createElement('div');
+            item.style.cssText = 'display:flex;align-items:center;gap:5px;';
+
+            const swatch = document.createElement('span');
+            swatch.style.cssText = 'display:inline-block;width:12px;height:12px;border-radius:2px;background:' + palette[i % palette.length] + ';flex-shrink:0;';
+
+            const label = document.createElement('span');
+            label.textContent = String(g);
+            label.style.color = '#333';
+
+            item.appendChild(swatch);
+            item.appendChild(label);
+            legend.appendChild(item);
+        });
+
+        if (groups.length > 12) {
+            const more = document.createElement('div');
+            more.style.cssText = 'color:#999;font-style:italic;';
+            more.textContent = '+' + (groups.length - 12) + ' more groups';
+            legend.appendChild(more);
+        }
+
+        container.appendChild(legend);
+    }
+
+    /* =====================================================================
+       SAS SESSION / AUTH (verbatim from template)
+       ===================================================================== */
+    window.session = { authenticated: false, userid: null, loginTime: null };
+
+    function sasGetParam(name) {
+        return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function sasCleanUrl() {
+        history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    function sasRenderLoggedIn() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'none';
+        if (welcome) {
+            welcome.style.display = 'inline';
+            welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+        }
+        document.getElementById('status-dot').classList.add('active');
+        document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+        document.getElementById('footer-signout').style.display = 'inline';
+        document.getElementById('reportToolbar').classList.add('visible');
+    }
+
+    function sasRenderLoggedOut() {
+        const logon = document.getElementById('nav-logon');
+        const welcome = document.getElementById('nav-welcome');
+        if (logon) logon.style.display = 'inline';
+        if (welcome) welcome.style.display = 'none';
+        document.getElementById('status-dot').classList.remove('active');
+        document.getElementById('status-label').textContent = 'No active session';
+        document.getElementById('footer-signout').style.display = 'none';
+        document.getElementById('reportToolbar').classList.remove('visible');
+    }
+
+    function handleLogon(e) {
+        if (e) e.preventDefault();
+        if (!window.SAS_CONFIG) { alert('Configuration not yet loaded.'); return; }
+        const returnUrl = encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        const target = window.SAS_CONFIG.storedProcessUrl +
+                       encodeURIComponent(window.SAS_CONFIG.storedProcessPath) +
+                       '&returnUrl=' + returnUrl;
+        window.location.href = target;
+    }
+
+    function handleSignOut(e) {
+        if (e) e.preventDefault();
+        window.session = { authenticated: false, userid: null, loginTime: null };
+        localStorage.removeItem('sas_session');
+        if (window.SAS_CONFIG) {
+            window.location.href = window.SAS_CONFIG.logoutUrl +
+                                   '?returnUrl=' + encodeURIComponent(window.SAS_CONFIG.portalUrl);
+        } else {
+            sasRenderLoggedOut();
+        }
+    }
+
+    (function sasInit() {
+        const userid = sasGetParam('userid');
+        const sasAuth = sasGetParam('sasAuth');
+        if (userid && sasAuth === '1') {
+            window.session = {
+                authenticated: true,
+                userid: decodeURIComponent(userid),
+                loginTime: new Date().toLocaleTimeString()
+            };
+            localStorage.setItem('sas_session', JSON.stringify(window.session));
+            sasCleanUrl();
+            sasRenderLoggedIn();
+        } else {
+            try {
+                let rawSession = localStorage.getItem('sas_session');
+                if (!rawSession) {
+                    rawSession = sessionStorage.getItem('sas_session');
+                    if (rawSession) localStorage.setItem('sas_session', rawSession);
+                }
+                const stored = rawSession ? JSON.parse(rawSession) : null;
+                if (stored && stored.authenticated && stored.userid) {
+                    window.session = stored;
+                    sasRenderLoggedIn();
+                    return;
+                }
+            } catch (_) {}
+            sasRenderLoggedOut();
+        }
+    })();
+
+    /* =====================================================================
+       REPORT SAVE
+       ===================================================================== */
+    async function saveReport() {
+        const name = document.getElementById('reportNameInput').value.trim();
+        const feedback = document.getElementById('reportSaveFeedback');
+        if (!name) { feedback.textContent = 'Enter a report name'; feedback.style.color = '#cc0000'; return; }
+        if (!window.session || !window.session.authenticated) {
+            feedback.textContent = 'Must be logged in'; feedback.style.color = '#cc0000'; return;
+        }
+        const userid = window.session.userid;
+        const basePath = 'meta/profiles/' + encodeURIComponent(userid) + '/';
+        const reportEntry = {
+            name: name,
+            url: basePath + 'reports/hexbin_plot.html'
+        };
+        try {
+            feedback.textContent = 'Saving...'; feedback.style.color = '#555';
+            let existing = { reports: [] };
+            try {
+                const r = await fetch(basePath + 'reports.json');
+                if (r.ok) existing = await r.json();
+            } catch (_) {}
+            const idx = existing.reports.findIndex(rp => rp.url === reportEntry.url);
+            if (idx >= 0) existing.reports[idx] = reportEntry;
+            else existing.reports.push(reportEntry);
+            const res = await fetch(basePath + 'reports.json', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(existing, null, 2)
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            feedback.textContent = 'Saved'; feedback.style.color = '#2e7d32';
+        } catch (err) {
+            feedback.textContent = err.message; feedback.style.color = '#cc0000';
+        }
+    }
+
+    /* =====================================================================
+       EXPORT / RESET
+       ===================================================================== */
+    function exportImage() {
+        const panel = document.getElementById('vizPanel');
+        html2canvas(panel).then(canvas => {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = 'hexbin_plot_' + ts + '.png';
+            a.click();
+        });
+    }
+
+    function exportCSV() {
+        if (!lastHexData || lastHexData.length === 0) {
+            alert('No data to export. Please render a hexbin plot first.');
+            return;
+        }
+        const xCol = document.getElementById('xColumn').value;
+        const yCol = document.getElementById('yColumn').value;
+        const gCol = document.getElementById('groupColumn').value;
+        const cols = gCol ? [xCol, yCol, gCol] : [xCol, yCol];
+
+        let csv = cols.join(',') + '\n';
+        lastHexData.forEach(row => {
+            csv += cols.map(c => {
+                const v = String(row[c] !== undefined ? row[c] : '');
+                return v.includes(',') || v.includes('"') ? '"' + v.replace(/"/g, '""') + '"' : v;
+            }).join(',') + '\n';
+        });
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'hexbin_data_' + ts + '.csv';
+        a.click();
+    }
+
+    function resetForm() {
+        document.getElementById('dataset').value = '';
+        document.getElementById('xColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('yColumn').innerHTML = '<option value="">— select dataset first —</option>';
+        document.getElementById('groupColumn').innerHTML = '<option value="">— none —</option>';
+        document.getElementById('filtersContainer').innerHTML = '<p style="color:#999;text-align:center;padding:20px;">No filters added yet</p>';
+        document.getElementById('hexRadius').value = '20';
+        document.getElementById('hexRadiusVal').textContent = '20';
+        document.getElementById('minCount').value = '1';
+        document.getElementById('minCountVal').textContent = '1';
+        document.getElementById('colorScheme').value = 'Blues';
+        document.getElementById('showAxes').checked = true;
+        document.getElementById('showGrid').checked = false;
+        filterCount = 0;
+        lastHexData = null;
+        renderKPIStrip(null, null, null, null);
+        const container = document.getElementById('hexbinContainer');
+        container.innerHTML = '<div class="viz-placeholder">Select a dataset and two numeric columns to render the hexbin plot.</div>';
+        document.getElementById('hexLegend').innerHTML = '';
+    }
+
+    /* =====================================================================
+       MODAL HELPERS
+       ===================================================================== */
+    function openModal(id) { document.getElementById(id).classList.add('active'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+    function toggleMenu() {
+        document.getElementById('dropdownMenu').classList.toggle('active');
+        document.getElementById('hamburgerBtn').classList.toggle('active');
+    }
+
+    function closeMenu() {
+        document.getElementById('dropdownMenu').classList.remove('active');
+        document.getElementById('hamburgerBtn').classList.remove('active');
+    }
+
+    /* =====================================================================
+       DOM CONTENT LOADED — wire all events
+       ===================================================================== */
+    document.addEventListener('DOMContentLoaded', async function() {
+        // Load config
+        try {
+            await loadConfig();
+            initDatasetDropdown();
+        } catch (err) {
+            console.error('Config load error:', err);
+            showConfigError('Configuration failed to load. Check console for details.');
+        }
+
+        // Dataset change
+        document.getElementById('dataset').addEventListener('change', updateColumns);
+
+        // Column changes
+        document.getElementById('xColumn').addEventListener('change', renderHexbin);
+        document.getElementById('yColumn').addEventListener('change', renderHexbin);
+        document.getElementById('groupColumn').addEventListener('change', renderHexbin);
+
+        // Filter
+        document.getElementById('addFilterBtn').addEventListener('click', addHexFilter);
+
+        // Config controls
+        document.getElementById('hexRadius').addEventListener('input', function() {
+            document.getElementById('hexRadiusVal').textContent = this.value;
+            renderHexbin();
+        });
+
+        document.getElementById('minCount').addEventListener('input', function() {
+            document.getElementById('minCountVal').textContent = this.value;
+            renderHexbin();
+        });
+
+        document.getElementById('colorScheme').addEventListener('change', renderHexbin);
+        document.getElementById('showAxes').addEventListener('change', renderHexbin);
+        document.getElementById('showGrid').addEventListener('change', renderHexbin);
+
+        // Action buttons
+        document.getElementById('exportImageBtn').addEventListener('click', exportImage);
+        document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+        document.getElementById('resetFormBtn').addEventListener('click', resetForm);
+
+        // Report save
+        document.getElementById('saveReportBtn').addEventListener('click', saveReport);
+
+        // Nav
+        document.getElementById('nav-logon').addEventListener('click', handleLogon);
+        document.getElementById('footer-signout').addEventListener('click', handleSignOut);
+        document.getElementById('nav-about').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); });
+        document.getElementById('nav-help').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); });
+
+        // Hamburger
+        document.getElementById('hamburgerBtn').addEventListener('click', toggleMenu);
+        document.getElementById('menuAbout').addEventListener('click', function(e) { e.preventDefault(); openModal('aboutModal'); closeMenu(); });
+        document.getElementById('menuHelp').addEventListener('click', function(e) { e.preventDefault(); openModal('helpModal'); closeMenu(); });
+
+        // Modal closes
+        document.getElementById('closeAboutModal').addEventListener('click', function() { closeModal('aboutModal'); });
+        document.getElementById('closeHelpModal').addEventListener('click', function() { closeModal('helpModal'); });
+
+        // Click outside to close modal/menu
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(e) {
+                if (e.target === this) this.classList.remove('active');
+            });
+        });
+
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+            }
+        });
+    });
+    </script>
+</body>
+</html>

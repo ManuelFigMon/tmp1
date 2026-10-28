@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SAS Auth + State Test</title>
+  <style>
+    :root {
+      --bg:#0a0e14; --surface:#111720; --surface-2:#182030;
+      --border:rgba(255,255,255,0.07); --border-em:rgba(255,255,255,0.14);
+      --text-pri:#e8ecf2; --text-sec:#7a8899; --text-muted:#46566a;
+      --accent:#1a8af5; --accent-glow:rgba(26,138,245,0.15);
+      --green:#22c55e; --green-dim:rgba(34,197,94,0.12); --red:#ef4444; --gold:#f59e0b;
+      --radius:6px; --radius-lg:10px;
+      --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+      --sans:'IBM Plex Sans',system-ui,-apple-system,Segoe UI,sans-serif;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    body{background:var(--bg);color:var(--text-pri);font-family:var(--sans);font-size:15px;line-height:1.6;min-height:100vh;display:flex;flex-direction:column;}
+    .navbar{display:flex;align-items:center;justify-content:space-between;padding:0 2rem;height:58px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;flex-shrink:0;}
+    .nav-brand{display:flex;align-items:center;gap:0.75rem;}
+    .brand-chip{background:var(--accent);color:#fff;font-family:var(--mono);font-size:0.7rem;font-weight:500;letter-spacing:0.1em;padding:3px 8px;border-radius:3px;text-transform:uppercase;}
+    .brand-name{font-size:0.9rem;font-weight:500;color:var(--text-sec);letter-spacing:0.02em;}
+    .nav-session{display:flex;align-items:center;gap:0.5rem;font-family:var(--mono);font-size:0.72rem;color:var(--text-muted);}
+    .session-dot{width:8px;height:8px;border-radius:50%;background:var(--text-muted);flex-shrink:0;transition:background 0.4s;}
+    .session-dot.active{background:var(--green);box-shadow:0 0 0 3px var(--green-dim);animation:heartbeat 2.4s ease-in-out infinite;}
+    @keyframes heartbeat{0%,100%{box-shadow:0 0 0 3px var(--green-dim);}50%{box-shadow:0 0 0 6px rgba(34,197,94,0.05);}}
+    .nav-user-text{color:var(--text-sec);transition:color 0.3s;}
+    .nav-user-text.known{color:var(--green);}
+    main{flex:1;max-width:860px;width:100%;margin:0 auto;padding:2.5rem 2rem 4rem;}
+    .hero{margin-bottom:2rem;}
+    .hero-eyebrow{font-family:var(--mono);font-size:0.68rem;color:var(--accent);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:0.6rem;}
+    .hero-title{font-size:clamp(1.5rem,4vw,2rem);font-weight:600;line-height:1.2;margin-bottom:0.6rem;}
+    .hero-sub{color:var(--text-sec);font-size:0.92rem;max-width:560px;}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:1.75rem 2rem;margin-bottom:1.5rem;position:relative;overflow:hidden;transition:border-color 0.4s;}
+    .card.authenticated{border-color:rgba(34,197,94,0.3);}
+    .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent) 0%,transparent 100%);transition:background 0.4s;}
+    .card.authenticated::before{background:linear-gradient(90deg,var(--green) 0%,transparent 100%);}
+    #state-logged-out{display:block;} #state-logged-in{display:none;}
+    .logon-prompt{display:flex;align-items:center;gap:1.5rem;flex-wrap:wrap;}
+    .lock-icon{width:48px;height:48px;border:1px solid var(--border-em);border-radius:var(--radius);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+    .logon-copy h2{font-size:1rem;font-weight:500;margin-bottom:0.3rem;}
+    .logon-copy p{font-size:0.85rem;color:var(--text-sec);}
+    .btn{display:inline-flex;align-items:center;gap:0.5rem;padding:0.55rem 1.2rem;border-radius:var(--radius);font-family:var(--sans);font-size:0.85rem;font-weight:500;text-decoration:none;cursor:pointer;border:1px solid transparent;transition:background 0.2s,transform 0.1s,border-color 0.2s,color 0.2s;}
+    .btn:active{transform:scale(0.98);}
+    .btn-accent{background:var(--accent);color:#fff;}
+    .btn-accent:hover{background:#1478d8;}
+    .btn-ghost{background:transparent;border-color:var(--border-em);color:var(--text-sec);}
+    .btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
+    .btn-danger{background:transparent;border-color:var(--border-em);color:var(--text-sec);}
+    .btn-danger:hover{border-color:var(--red);color:var(--red);background:rgba(239,68,68,0.06);}
+    .btn:disabled{opacity:0.4;cursor:not-allowed;}
+    .btn-logon{margin-top:1.1rem;}
+    .welcome-header{display:flex;align-items:flex-start;gap:1.25rem;margin-bottom:1.5rem;}
+    .avatar{width:52px;height:52px;border-radius:50%;background:var(--accent-glow);border:2px solid rgba(26,138,245,0.3);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:1rem;font-weight:500;color:var(--accent);flex-shrink:0;}
+    .welcome-text h2{font-size:1.1rem;font-weight:600;margin-bottom:0.2rem;}
+    .welcome-text p{font-size:0.83rem;color:var(--text-sec);}
+    .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;}
+    .info-cell{background:var(--surface-2);padding:0.8rem 1.05rem;}
+    .info-label{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.3rem;}
+    .info-value{font-family:var(--mono);font-size:0.88rem;color:var(--text-pri);font-weight:500;word-break:break-all;}
+    .info-value.highlight{color:var(--accent);}
+    .card-title{font-size:0.95rem;font-weight:600;margin-bottom:0.25rem;display:flex;align-items:center;gap:0.6rem;}
+    .card-title .badge{font-family:var(--mono);font-size:0.6rem;letter-spacing:0.12em;text-transform:uppercase;padding:2px 7px;border-radius:3px;border:1px solid var(--border-em);color:var(--text-muted);}
+    .card-desc{font-size:0.83rem;color:var(--text-sec);margin-bottom:1.25rem;}
+    .field-label{font-family:var(--mono);font-size:0.62rem;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);margin-bottom:0.4rem;display:block;}
+    select,input[type=text]{width:100%;background:var(--surface-2);border:1px solid var(--border-em);border-radius:var(--radius);color:var(--text-pri);font-family:var(--sans);font-size:0.9rem;padding:0.55rem 0.7rem;}
+    select:focus,input[type=text]:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow);}
+    .row{display:flex;gap:0.6rem;align-items:flex-end;flex-wrap:wrap;margin-bottom:1rem;}
+    .row .grow{flex:1;min-width:160px;}
+    .toolbar{display:flex;gap:0.6rem;flex-wrap:wrap;margin-top:0.4rem;}
+    .store-note{margin-top:1rem;font-family:var(--mono);font-size:0.7rem;color:var(--text-muted);}
+    .store-note .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--gold);margin-right:6px;vertical-align:middle;}
+    .store-note .dot.live{background:var(--green);}
+    .feedback{margin-top:0.9rem;font-size:0.8rem;min-height:1.1em;}
+    .feedback.ok{color:var(--green);} .feedback.err{color:var(--red);} .feedback.info{color:var(--text-sec);}
+    .dirty-flag{color:var(--gold);font-family:var(--mono);font-size:0.7rem;margin-left:0.4rem;}
+    .bottom-bar{margin-top:auto;border-top:1px solid var(--border);background:var(--surface);padding:0.9rem 2rem;}
+    .bottom-inner{max-width:860px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.75rem;}
+    .session-status{display:flex;align-items:center;gap:0.6rem;font-size:0.8rem;}
+    .status-light{width:9px;height:9px;border-radius:50%;background:var(--text-muted);flex-shrink:0;transition:background 0.4s,box-shadow 0.4s;}
+    .status-light.active{background:var(--green);box-shadow:0 0 0 3px var(--green-dim);animation:heartbeat 2.4s ease-in-out infinite;}
+    .status-label{color:var(--text-sec);} .status-label strong{color:var(--text-pri);font-weight:500;}
+    .btn-signout.hidden{display:none;}
+    @keyframes fadein{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    .fade-in{animation:fadein 0.45s ease forwards;}
+    @media (max-width:600px){.info-grid{grid-template-columns:1fr;}.logon-prompt{flex-direction:column;}main{padding:2rem 1.25rem 3rem;}}
+  </style>
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="nav-brand">
+      <span class="brand-chip">SAS</span>
+      <span class="brand-name">Auth + State Test</span>
+    </div>
+    <div class="nav-session">
+      <span class="session-dot inactive" id="navDot"></span>
+      <span class="nav-user-text" id="navUserText">Not signed in</span>
+    </div>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <div class="hero-eyebrow">State Persistence Prototype</div>
+      <h1 class="hero-title">SAS Auth &amp; Data-Driven State</h1>
+      <p class="hero-sub">Authenticate via a SAS Stored Process, then read and write a data-driven dropdown whose values are persisted server-side under <code>meta/profiles/{userid}/data/</code> — not in the browser.</p>
+    </div>
+
+    <!-- Auth card -->
+    <div class="card" id="authCard">
+      <div id="state-logged-out">
+        <div class="logon-prompt">
+          <div class="lock-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text-pri)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <div class="logon-copy">
+            <h2>Authentication required</h2>
+            <p>You are not currently signed in. Authenticate via SAS to load your saved state.</p>
+            <a class="btn btn-accent btn-logon" id="logonLink" href="#">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+              Sign in with SAS
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div id="state-logged-in">
+        <div class="welcome-header">
+          <div class="avatar" id="avatarInitials">?</div>
+          <div class="welcome-text">
+            <h2>Welcome back, <span id="displayName">—</span></h2>
+            <p>Authenticated by SAS Web Auth. Your state folder is <code id="profilePath">—</code>.</p>
+          </div>
+        </div>
+        <div class="info-grid">
+          <div class="info-cell"><div class="info-label">Authenticated User ID</div><div class="info-value highlight" id="infoUserId">—</div></div>
+          <div class="info-cell"><div class="info-label">Auth Method</div><div class="info-value">SAS Web Auth</div></div>
+          <div class="info-cell"><div class="info-label">Login Time</div><div class="info-value" id="infoLoginTime">—</div></div>
+          <div class="info-cell"><div class="info-label">Session Date</div><div class="info-value" id="infoSessionDate">—</div></div>
+        </div>
+      </div>
+    </div><!-- /auth-card -->
+
+    <!-- State manager card (only meaningful when logged in) -->
+    <div class="card" id="stateCard" style="display:none;">
+      <div class="card-title">Data-Driven Dropdown <span class="badge" id="storeBadge">store</span></div>
+      <div class="card-desc">These values come from your server-side datastore. Add an item, save it, sign out, then sign back in — the new item will still be here.</div>
+
+      <div class="row">
+        <div class="grow">
+          <label class="field-label" for="itemSelect">Saved items <span id="dirtyFlag" class="dirty-flag" style="display:none;">• unsaved changes</span></label>
+          <select id="itemSelect" size="6" style="height:auto;"></select>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="grow">
+          <label class="field-label" for="newItemInput">New item value</label>
+          <input type="text" id="newItemInput" placeholder="e.g. Region: Midwest" />
+        </div>
+        <button class="btn btn-ghost" id="addBtn" type="button">Add</button>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn btn-accent" id="saveBtn" type="button">Save to server</button>
+        <button class="btn btn-ghost" id="updateBtn" type="button" title="Replace the selected item with the New item value">Update selected</button>
+        <button class="btn btn-danger" id="deleteBtn" type="button" title="Remove the selected item">Delete selected</button>
+        <button class="btn btn-ghost" id="reloadBtn" type="button" title="Discard unsaved changes and reload from server">Reload</button>
+      </div>
+
+      <div class="feedback info" id="stateFeedback"></div>
+      <div class="store-note"><span class="dot" id="storeDot"></span><span id="storeNote">backend: detecting…</span></div>
+    </div>
+
+  </main>
+
+  <footer class="bottom-bar">
+    <div class="bottom-inner">
+      <div class="session-status">
+        <span class="status-light inactive" id="statusLight"></span>
+        <span class="status-label" id="statusLabel"><strong>Session:</strong> no active session</span>
+      </div>
+      <a class="btn btn-danger btn-signout hidden" id="signOutBtn" href="#">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign out
+      </a>
+    </div>
+  </footer>
+
+  <script>
+  /* ====================================================
+     CONFIG — adjust to match your environment
+     ==================================================== */
+  const CONFIG = {
+    // Full URL of THIS page (used as the returnUrl param for the auth round-trip)
+    portalUrl: 'https://cgssaswebu.a70admed.com/custom/projects/dmq/temp/v3/security/sas_auth_state_test.html',
+
+    // SAS Stored Process Web App base (program name appended, URL-encoded)
+    storedProcessUrl: 'https://cgssaswebu.a70admed.com/SASStoredProcess/do?_action=form,properties,execute,nobanner,newwindow&_program=',
+
+    // Auth redirect stored process (captures &_USERNAME, redirects back here)
+    authProgramPath: '/User Folders/731o/My Folder/sas_auth_state_test_redirect',
+
+    // SAS Logon logout endpoint
+    logoutUrl: 'https://cgssaswebu.a70admed.com/SASLogon/logout'
+  };
+
+  /* State API (server-side datastore). When enabled:true and reachable, the
+     dropdown is read/written through the SAS stored process. When it cannot be
+     reached (e.g. local offline testing), the page transparently falls back to
+     a seed JSON file + browser localStorage so the workflow is still
+     demonstrable. Flip enabled:true once sas_auth_state_test_api is deployed. */
+  const STATE_API = {
+    enabled: true,
+    storedProcessUrl: 'https://cgssaswebu.a70admed.com/SASStoredProcess/do?_action=execute,nobanner&_program=',
+    apiProgramPath: '/User Folders/731o/My Folder/sas_auth_state_test_api'
+  };
+
+  /* Relative path (from this page) to the repo's profile store, used only by the
+     offline-fallback reader to load seed values committed to git. */
+  const LOCAL_SEED_BASE = '../../meta/profiles/';   // -> ../../meta/profiles/{userid}/data/sas_auth_state_test_state.json
+  const STATE_FILE = 'sas_auth_state_test_state.json';
+
+  /* ====================================================
+     SESSION STATE
+     ==================================================== */
+  let session = { authenticated:false, userid:null, loginTime:null, sessionDate:null };
+  let items = [];          // working copy: array of strings
+  let dirty = false;       // unsaved changes flag
+  let backend = 'unknown'; // 'sas' | 'local'
+
+  /* ====================================================
+     UTILITIES
+     ==================================================== */
+  const $ = id => document.getElementById(id);
+  function getParam(n){ return new URLSearchParams(window.location.search).get(n); }
+  function formatTime(d){ return d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:true}); }
+  function formatDate(d){ return d.toLocaleDateString(undefined,{weekday:'short',year:'numeric',month:'short',day:'numeric'}); }
+  function cleanUserId(u){ return String(u||'').replace(/.*[\\\/]/,'').split('@')[0]; }
+  function initials(u){ const n=cleanUserId(u); const p=n.split(/[._-]/); return (p.length>=2?(p[0][0]+p[1][0]):n.substring(0,2)).toUpperCase(); }
+  function displayFriendlyName(u){ const n=cleanUserId(u); return n.charAt(0).toUpperCase()+n.slice(1); }
+  function cleanUrl(){ window.history.replaceState({},document.title,window.location.pathname); }
+  function localKey(uid){ return 'sas_auth_state_test.items.'+uid; }
+  function setFeedback(msg,kind){ const el=$('stateFeedback'); el.textContent=msg; el.className='feedback '+(kind||'info'); }
+  function setDirty(v){ dirty=v; $('dirtyFlag').style.display=v?'inline':'none'; }
+
+  /* ====================================================
+     DATASTORE — SAS API with local fallback
+     ==================================================== */
+  function apiUrl(action, uid, extra){
+    let u = STATE_API.storedProcessUrl + encodeURIComponent(STATE_API.apiProgramPath)
+          + '&action=' + encodeURIComponent(action)
+          + '&userid=' + encodeURIComponent(uid)
+          + '&_=' + Date.now();   // cache-buster
+    if (extra) u += extra;
+    return u;
+  }
+
+  async function storeRead(uid){
+    // 1) Try the SAS API
+    if (STATE_API.enabled){
+      try{
+        const r = await fetch(apiUrl('read', uid), { headers:{'Accept':'application/json'} });
+        if (r.ok){
+          const j = await r.json();
+          backend = 'sas';
+          return Array.isArray(j.items) ? j.items.map(it => typeof it==='string'?it:it.value) : [];
+        }
+      }catch(_){ /* fall through to local */ }
+    }
+    // 2) Offline fallback: browser localStorage overlay, else committed seed file
+    backend = 'local';
+    const ls = localStorage.getItem(localKey(uid));
+    if (ls){ try{ return JSON.parse(ls); }catch(_){ } }
+    try{
+      const r = await fetch(LOCAL_SEED_BASE + encodeURIComponent(uid) + '/data/' + STATE_FILE + '?_=' + Date.now());
+      if (r.ok){
+        const j = await r.json();
+        return Array.isArray(j.items) ? j.items.map(it => typeof it==='string'?it:it.value) : [];
+      }
+    }catch(_){ }
+    return [];
+  }
+
+  async function storeSave(uid, list){
+    const payload = list.map((v,i)=>({ id:i+1, value:v }));
+    // 1) Try the SAS API (items passed as a URL-encoded JSON array)
+    if (STATE_API.enabled){
+      try{
+        const extra = '&items=' + encodeURIComponent(JSON.stringify(payload));
+        const r = await fetch(apiUrl('save', uid, extra), { headers:{'Accept':'application/json'} });
+        if (r.ok){ backend='sas'; return true; }
+      }catch(_){ /* fall through */ }
+    }
+    // 2) Offline fallback
+    backend = 'local';
+    localStorage.setItem(localKey(uid), JSON.stringify(list));
+    return true;
+  }
+
+  function renderBackendNote(){
+    const live = backend === 'sas';
+    $('storeDot').className = 'dot' + (live?' live':'');
+    $('storeBadge').textContent = live ? 'SAS API' : 'local fallback';
+    $('storeNote').textContent = live
+      ? 'backend: SAS stored process — meta/profiles/'+session.userid+'/data/'+STATE_FILE
+      : 'backend: offline fallback (seed file + browser store). Deploy sas_auth_state_test_api to go live.';
+  }
+
+  /* ====================================================
+     DROPDOWN RENDER + CRUD
+     ==================================================== */
+  function renderItems(selectIndex){
+    const sel = $('itemSelect');
+    sel.innerHTML = '';
+    items.forEach((v,i)=>{
+      const o=document.createElement('option');
+      o.value=String(i); o.textContent=v;
+      sel.appendChild(o);
+    });
+    if (selectIndex!=null && selectIndex>=0 && selectIndex<items.length) sel.selectedIndex=selectIndex;
+    renderBackendNote();
+  }
+
+  function addItem(){
+    const inp=$('newItemInput'); const val=inp.value.trim();
+    if(!val){ setFeedback('Enter a value first.','err'); return; }
+    if(items.includes(val)){ setFeedback('That item already exists.','err'); return; }
+    items.push(val); inp.value='';
+    setDirty(true); renderItems(items.length-1);
+    setFeedback('Added "'+val+'". Click "Save to server" to persist.','info');
+  }
+
+  function updateSelected(){
+    const sel=$('itemSelect'); const idx=sel.selectedIndex;
+    const val=$('newItemInput').value.trim();
+    if(idx<0){ setFeedback('Select an item to update.','err'); return; }
+    if(!val){ setFeedback('Enter the replacement value in "New item value".','err'); return; }
+    items[idx]=val; $('newItemInput').value='';
+    setDirty(true); renderItems(idx);
+    setFeedback('Updated item #'+(idx+1)+'. Click "Save to server" to persist.','info');
+  }
+
+  function deleteSelected(){
+    const sel=$('itemSelect'); const idx=sel.selectedIndex;
+    if(idx<0){ setFeedback('Select an item to delete.','err'); return; }
+    const removed=items.splice(idx,1)[0];
+    setDirty(true); renderItems(Math.min(idx,items.length-1));
+    setFeedback('Removed "'+removed+'". Click "Save to server" to persist.','info');
+  }
+
+  async function saveItems(){
+    if(!session.authenticated){ setFeedback('You must be signed in to save.','err'); return; }
+    $('saveBtn').disabled=true;
+    setFeedback('Saving…','info');
+    try{
+      await storeSave(session.userid, items);
+      setDirty(false);
+      renderBackendNote();
+      setFeedback('Saved '+items.length+' item(s) to the '+(backend==='sas'?'SAS datastore':'offline store')+'.','ok');
+    }catch(e){
+      setFeedback('Save failed: '+e.message,'err');
+    }finally{
+      $('saveBtn').disabled=false;
+    }
+  }
+
+  async function loadItems(){
+    setFeedback('Loading saved items…','info');
+    try{
+      items = await storeRead(session.userid);
+      setDirty(false);
+      renderItems(items.length?0:null);
+      setFeedback(items.length?('Loaded '+items.length+' item(s).'):'No saved items yet — add one below.','info');
+    }catch(e){
+      items=[]; renderItems(null);
+      setFeedback('Could not load items: '+e.message,'err');
+    }
+  }
+
+  /* ====================================================
+     RENDER AUTH STATE
+     ==================================================== */
+  function renderAuthenticated(){
+    const { userid, loginTime, sessionDate } = session;
+    $('state-logged-out').style.display='none';
+    $('state-logged-in').style.display='block';
+    $('authCard').classList.add('authenticated');
+    $('stateCard').style.display='block';
+
+    $('infoUserId').textContent=userid;
+    $('infoLoginTime').textContent=loginTime;
+    $('infoSessionDate').textContent=sessionDate;
+    $('displayName').textContent=displayFriendlyName(userid);
+    $('avatarInitials').textContent=initials(userid);
+    $('profilePath').textContent='meta/profiles/'+userid+'/data/';
+
+    $('navDot').classList.replace('inactive','active');
+    const navText=$('navUserText'); navText.textContent=userid; navText.classList.add('known');
+
+    $('statusLight').classList.replace('inactive','active');
+    $('statusLabel').innerHTML='<strong>Session:</strong> active &mdash; signed in as <strong>'+userid+'</strong>';
+    $('signOutBtn').classList.remove('hidden');
+    $('state-logged-in').classList.add('fade-in');
+
+    loadItems();
+  }
+
+  function renderLoggedOut(){
+    $('state-logged-out').style.display='block';
+    $('state-logged-in').style.display='none';
+    $('authCard').classList.remove('authenticated');
+    $('stateCard').style.display='none';
+    $('navDot').classList.replace('active','inactive');
+    $('navUserText').textContent='Not signed in'; $('navUserText').classList.remove('known');
+    $('statusLight').classList.replace('active','inactive');
+    $('statusLabel').innerHTML='<strong>Session:</strong> no active session';
+    $('signOutBtn').classList.add('hidden');
+  }
+
+  /* ====================================================
+     LOGON / SIGN OUT
+     ==================================================== */
+  function handleLogon(e){
+    if(e) e.preventDefault();
+    // returnUrl tells the stored process where to send the user back
+    const target = CONFIG.storedProcessUrl
+                 + encodeURIComponent(CONFIG.authProgramPath)
+                 + '&returnUrl=' + encodeURIComponent(CONFIG.portalUrl);
+    window.location.href = target;
+  }
+
+  function handleSignOut(e){
+    if(e) e.preventDefault();
+    if(dirty && !confirm('You have unsaved changes. Sign out anyway?')) return;
+    session={ authenticated:false, userid:null, loginTime:null, sessionDate:null };
+    sessionStorage.removeItem('sas_auth_state_test_session');
+    const returnUrl=encodeURIComponent(CONFIG.portalUrl);
+    // Best-effort SAS logout; if offline, just re-render logged out
+    try{ window.location.href=CONFIG.logoutUrl+'?returnUrl='+returnUrl; }
+    catch(_){ renderLoggedOut(); }
+  }
+
+  /* ====================================================
+     INIT
+     ==================================================== */
+  (function init(){
+    $('logonLink').addEventListener('click', handleLogon);
+    $('signOutBtn').addEventListener('click', handleSignOut);
+    $('addBtn').addEventListener('click', addItem);
+    $('updateBtn').addEventListener('click', updateSelected);
+    $('deleteBtn').addEventListener('click', deleteSelected);
+    $('saveBtn').addEventListener('click', saveItems);
+    $('reloadBtn').addEventListener('click', function(){
+      if(dirty && !confirm('Discard unsaved changes and reload from server?')) return;
+      loadItems();
+    });
+    $('newItemInput').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); addItem(); } });
+
+    const userid=getParam('userid');
+    const sasAuth=getParam('sasAuth');
+    if(userid && sasAuth==='1'){
+      const loginRaw=getParam('loginTime'); const now=new Date();
+      let loginTime=formatTime(now), sessionDate=formatDate(now);
+      if(loginRaw){
+        try{
+          const decoded=decodeURIComponent(loginRaw);
+          const m=decoded.match(/(\d{2})(\w{3})(\d{4}):(\d{2}):(\d{2}):(\d{2})/);
+          if(m){
+            const mo={JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};
+            const d=new Date(+m[3], mo[m[2].toUpperCase()]??now.getMonth(), +m[1], +m[4], +m[5], +m[6]);
+            if(!isNaN(d)){ loginTime=formatTime(d); sessionDate=formatDate(d); }
+          }
+        }catch(_){}
+      }
+      session={ authenticated:true, userid:cleanUserId(decodeURIComponent(userid)), loginTime, sessionDate };
+      sessionStorage.setItem('sas_auth_state_test_session', JSON.stringify(session));
+      cleanUrl();
+      renderAuthenticated();
+    } else {
+      const stored=sessionStorage.getItem('sas_auth_state_test_session');
+      if(stored){
+        try{
+          const p=JSON.parse(stored);
+          if(p.authenticated && p.userid){ session=p; renderAuthenticated(); return; }
+        }catch(_){}
+      }
+      renderLoggedOut();
+    }
+  })();
+  </script>
+</body>
+</html>
