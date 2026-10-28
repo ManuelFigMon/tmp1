@@ -14,12 +14,13 @@
     with Read-CgsXlsxSheet from cgsUtils.ps1, which needs no add-in, and the
     Word document is written as OOXML directly.
 
-    .pdf IS THE EXCEPTION. PowerShell cannot write a PDF on its own. This
-    script produces one by driving Microsoft Word through COM, so a .pdf
-    target needs Word installed on the machine running the script. Where
-    Word is absent the script does NOT quietly hand you a different file --
-    it stops and names the two alternatives. Pass -OnWordMissing html or
-    -OnWordMissing docx to opt in to a fallback deliberately.
+    .pdf IS THE EXCEPTION. PowerShell cannot write a PDF on its own, so the
+    script drives a converter: Microsoft Word through COM when it is there,
+    otherwise LibreOffice in headless mode, which needs no licence and is
+    often present where Word is not. Where NEITHER is installed the script
+    does NOT quietly hand you a different file -- it stops and names the
+    alternatives. Pass -OnWordMissing html or -OnWordMissing docx to opt in
+    to a fallback deliberately.
 
   Description:
     Reads the sheet, keeps only the columns asked for and in that order,
@@ -37,7 +38,7 @@
     -OutputPath  (REQUIRED) destination. Its EXTENSION picks the renderer:
                    .docx -> Word          (native, no Office needed)
                    .html -> web page      (native, prints to PDF anywhere)
-                   .pdf  -> PDF           (needs Word installed)
+                   .pdf  -> PDF           (needs Word or LibreOffice)
     -Columns     (optional) names to keep, in order. Empty = every column.
     -format_name (optional, default "corporate")
                    corporate | corporatev2 | plain | minimal
@@ -45,7 +46,8 @@
     -Subtitle    (optional) second line; defaults to sheet and row count.
     -HeaderRow   (optional, default 0 = detect) 1-based header row.
     -OnWordMissing (optional, default "fail") fail | html | docx -- what to
-                   do when a .pdf is asked for and Word is not installed.
+                   do when a .pdf is asked for and NO converter (Word or
+                   LibreOffice) is installed.
     -MaxCellLength (optional, default 0 = never shorten) cut long free-text
                    cells to this many characters, marked with an ellipsis.
                    Useful for a Notes column that would otherwise run to
@@ -54,6 +56,8 @@
 
   Change Log:
     v1.0beta - First release. docx/html native, pdf via Word COM.
+    v1.1beta - PDF also via LibreOffice when Word is absent, so a server
+               without Office can still produce the PDF itself.
 =====================================================================
 #>
 [CmdletBinding()]
@@ -83,7 +87,7 @@ $script:FormatStyles = @{
     'minimal'     = @{ Banner='FFFFFF'; Header='FFFFFF'; Stripe='FFFFFF'; HeaderFont='000000'; BannerFont='000000' }
 }
 $script:StripedFormats = @('corporate', 'corporatev2')
-$script:Version = '1.0beta'
+$script:Version = '1.1beta'
 
 # Landscape Letter in twentieths of a point. Seven columns of task text do
 # not fit portrait, and a report nobody can read is not a report.
@@ -407,6 +411,48 @@ function Test-WordAvailable {
     } catch { return $false }
 }
 
+function Find-LibreOffice {
+    <# .SYNOPSIS Locate the LibreOffice command line, if it is installed.
+       .OUTPUTS [string] the executable path, or $null.
+       .NOTES  LibreOffice converts a .docx to PDF with no Word and no
+               licence. It is worth looking for: on a locked-down server
+               Word is often absent while LibreOffice is not. #>
+    foreach ($name in 'soffice', 'libreoffice') {
+        $found = Get-Command $name -ErrorAction SilentlyContinue
+        if ($found) { return $found.Source }
+    }
+    foreach ($candidate in
+             "$env:ProgramFiles\LibreOffice\program\soffice.exe",
+             "${env:ProgramFiles(x86)}\LibreOffice\program\soffice.exe") {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) { return $candidate }
+    }
+    return $null
+}
+
+function Convert-DocxToPdfWithLibreOffice {
+    <# .SYNOPSIS Save a .docx as .pdf using LibreOffice in headless mode.
+       .OUTPUTS [string] the .pdf path.
+       .NOTES  LibreOffice always names its output after the INPUT file and
+               drops it in --outdir, so when the caller asked for a
+               different name the result is renamed afterwards. #>
+    param([string] $Executable, [string] $DocxPath, [string] $PdfPath)
+    $outputDirectory = Split-Path -Parent $PdfPath
+    if (-not $outputDirectory) { $outputDirectory = '.' }
+    $arguments = @('--headless', '--convert-to', 'pdf', '--outdir',
+                   $outputDirectory, $DocxPath)
+    & $Executable @arguments | Out-Null
+    $produced = Join-Path $outputDirectory (
+        [System.IO.Path]::GetFileNameWithoutExtension($DocxPath) + '.pdf')
+    if (-not (Test-Path -LiteralPath $produced)) {
+        throw "LibreOffice did not produce a PDF from $DocxPath"
+    }
+    if ($produced -ne $PdfPath) {
+        if (Test-Path -LiteralPath $PdfPath) { Remove-Item -LiteralPath $PdfPath -Force }
+        Move-Item -LiteralPath $produced -Destination $PdfPath
+    }
+    return $PdfPath
+}
+
 function Convert-DocxToPdf {
     <# .SYNOPSIS Save a .docx as .pdf by driving Word through COM.
        .OUTPUTS [string] the .pdf path.
@@ -489,18 +535,22 @@ function Invoke-Main {
                 -Path $OutputPath -MaxLength $MaxCellLength
         }
         '.pdf' {
-            if (-not (Test-WordAvailable)) {
+            $libreOffice = $null
+            $haveWord = Test-WordAvailable
+            if (-not $haveWord) { $libreOffice = Find-LibreOffice }
+            if (-not $haveWord -and -not $libreOffice) {
                 $alternative = [System.IO.Path]::ChangeExtension($OutputPath,
                     $(if ($OnWordMissing -eq 'docx') { '.docx' } else { '.html' }))
                 if ($OnWordMissing -eq 'fail') {
-                    Write-CgsError "cannot produce a PDF: Microsoft Word is not available on this machine."
-                    Write-CgsError "  WHY: PowerShell cannot write a PDF by itself. This script makes one by driving Word through COM, and Word is not installed here."
+                    Write-CgsError "cannot produce a PDF: neither Microsoft Word nor LibreOffice is available on this machine."
+                    Write-CgsError "  WHY: PowerShell cannot write a PDF by itself. This script makes one by driving Word or LibreOffice, and neither is installed here."
                     Write-CgsError "  FIX 1: run this on a machine with Word installed."
-                    Write-CgsError "  FIX 2: ask for .html instead and print it to PDF from any browser -- no software needed."
-                    Write-CgsError "  FIX 3: re-run with -OnWordMissing html (or docx) to accept that file instead of a PDF."
+                    Write-CgsError "  FIX 2: install LibreOffice, which converts the same file with no licence needed."
+                    Write-CgsError "  FIX 3: ask for .html instead and print it to PDF from any browser -- no software needed."
+                    Write-CgsError "  FIX 4: re-run with -OnWordMissing html (or docx) to accept that file instead of a PDF."
                     return 3
                 }
-                Write-CgsWarn "Word is not available; -OnWordMissing $OnWordMissing was set, so writing $alternative instead of a PDF"
+                Write-CgsWarn "no PDF converter found; -OnWordMissing $OnWordMissing was set, so writing $alternative instead of a PDF"
                 if ($OnWordMissing -eq 'docx') {
                     $written = New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                         -Style $style -Striped $striped -Title $banner -Subtitle $second `
@@ -511,12 +561,19 @@ function Invoke-Main {
                         -MaxLength $MaxCellLength
                 }
             } else {
-                # Word reads a .docx, so build one first, then convert it.
+                # Both converters read a .docx, so build one first.
                 $staging = [System.IO.Path]::ChangeExtension($OutputPath, '.docx')
                 [void](New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                     -Style $style -Striped $striped -Title $banner -Subtitle $second `
                     -Path $staging -MaxLength $MaxCellLength)
-                $written = Convert-DocxToPdf -DocxPath $staging -PdfPath $OutputPath
+                if ($haveWord) {
+                    Write-CgsInfo "converting to PDF with Microsoft Word"
+                    $written = Convert-DocxToPdf -DocxPath $staging -PdfPath $OutputPath
+                } else {
+                    Write-CgsInfo "Word not found; converting to PDF with LibreOffice ($libreOffice)"
+                    $written = Convert-DocxToPdfWithLibreOffice -Executable $libreOffice `
+                        -DocxPath $staging -PdfPath $OutputPath
+                }
                 Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
             }
         }

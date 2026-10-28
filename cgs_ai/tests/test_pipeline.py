@@ -1638,11 +1638,27 @@ def test_formatexcel_names_the_real_columns_when_one_is_wrong(tmp_path):
         "an unknown column must list the columns that DO exist"
 
 
-@needsPwsh
-def test_formatexcel_refuses_a_pdf_when_word_is_absent(tmp_path):
-    """Handing back a different file type silently is not acceptable."""
+def _noPdfConverter():
+    """True when neither Word nor LibreOffice could convert a .docx here."""
     if platform.system() == "Windows":
-        pytest.skip("Word may genuinely be present on Windows")
+        return False          # Word may well be installed
+    return (shutil.which("soffice") is None
+            and shutil.which("libreoffice") is None)
+
+
+def test_formatexcel_names_every_way_out_when_no_converter_exists():
+    """Checked in the source, so it holds on machines that DO have one."""
+    text = FORMAT_EXCEL.read_text(encoding="utf-8")
+    for fix in ("FIX 1", "FIX 2", "FIX 3", "FIX 4"):
+        assert fix in text
+    assert "LibreOffice" in text, "the licence-free option must be offered"
+
+
+@needsPwsh
+def test_formatexcel_refuses_a_pdf_when_nothing_can_convert_one(tmp_path):
+    """Handing back a different file type silently is not acceptable."""
+    if not _noPdfConverter():
+        pytest.skip("a PDF converter is installed, so there is nothing to refuse")
     source = _governanceWorkbook(tmp_path)
     out = tmp_path / "r.pdf"
     result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
@@ -1654,8 +1670,8 @@ def test_formatexcel_refuses_a_pdf_when_word_is_absent(tmp_path):
 
 @needsPwsh
 def test_formatexcel_falls_back_only_when_told_to(tmp_path):
-    if platform.system() == "Windows":
-        pytest.skip("Word may genuinely be present on Windows")
+    if not _noPdfConverter():
+        pytest.skip("a PDF converter is installed, so no fallback is needed")
     source = _governanceWorkbook(tmp_path)
     result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
                      "-SheetName", "Consolidated Data",
@@ -1712,3 +1728,27 @@ def test_formatexcel_output_opens_in_a_word_processor(tmp_path):
          "--outdir", str(tmp_path), str(out)],
         capture_output=True, text=True, timeout=300)
     assert (tmp_path / "r.pdf").is_file(), converted.stdout + converted.stderr
+
+
+@needsPwsh
+def test_formatexcel_makes_a_pdf_with_libreoffice_when_word_is_absent(tmp_path):
+    """A server with no Office should still produce the PDF itself.
+
+    This gap was found by delivering a report: the script refused the .pdf,
+    and the conversion had to be done by hand afterwards. LibreOffice needs
+    no licence and is often present where Word is not.
+    """
+    if shutil.which("soffice") is None and shutil.which("libreoffice") is None:
+        pytest.skip("LibreOffice is not installed")
+    source = _governanceWorkbook(tmp_path)
+    out = tmp_path / "report.pdf"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-Columns", "Task Name,Bucket,Priority",
+                     "-OutputPath", out)
+    assert result.returncode == 0, result.output
+    assert out.is_file() and out.stat().st_size > 1000
+    assert out.read_bytes()[:5] == b"%PDF-", "the file must really be a PDF"
+    assert "LibreOffice" in result.output
+    assert not (tmp_path / "report.docx").exists(), \
+        "the staging .docx must be cleaned up, not left beside the PDF"
