@@ -2003,3 +2003,76 @@ def test_the_powershell_bridge_runs():
     from src.py.formatExcel import runPowerShellScript
     result = runPowerShellScript("Write-Output 'bridge works'\n", timeout=120)
     assert "bridge works" in result.stdout
+
+
+# --- the Claims_Data_BIG repair ----------------------------------------------
+
+def test_the_claims_data_columns_cannot_be_an_excel_table():
+    """Why Claims_Data_BIG is a plain range and not a table.
+
+    Excel requires a table's column names to be unique IGNORING CASE. The
+    Metadata data dictionary legitimately carries both Allowed_Amount and
+    allowed_amount, and both Claim_Type and claim_type -- two variables under
+    two naming conventions. Made into a table, Excel silently renames the
+    second of each pair (it chose allowed_amount2 and claim_type3) and raises
+    "Repaired Records: Table ... (Table)" on open.
+
+    This test exists so that anyone tempted to turn the sheet back into a
+    table finds out here rather than from a repair prompt.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bigbuilder", ROOT / "src" / "utils" /
+        "build_claims_pipelines_workbook.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    columns = module.BIG_COLUMNS
+    assert len(set(columns)) == len(columns), "names must be literally unique"
+    folded = [name.lower() for name in columns]
+    collisions = {name for name in folded if folded.count(name) > 1}
+    assert collisions == {"allowed_amount", "claim_type"}, (
+        "if this set changed, re-check whether a table is viable again")
+
+
+def test_the_lifecycle_diagram_closes_the_loop():
+    """Six steps, six arrows, and the last one points back at the first."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "v15builder", ROOT / "src" / "utils" / "build_claims_pipelines_v15.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.LIFECYCLE_STEPS[0] == "Data"
+    assert module.LIFECYCLE_STEPS[-1] == "Linear Regression"
+    drawing = module.lifecycleAnchorXml(56)
+    assert drawing.count('prst="ellipse"') == len(module.LIFECYCLE_STEPS)
+    # One arrow per step, including the one from the last step back to the
+    # first -- a lifecycle that does not close is just a list.
+    assert drawing.count("straightConnector1") == len(module.LIFECYCLE_STEPS)
+    assert drawing.count("tailEnd") == len(module.LIFECYCLE_STEPS)
+    for step in module.LIFECYCLE_STEPS:
+        assert f"<a:t>{step}</a:t>" in drawing
+
+
+def test_the_workbook_sheets_call_cgs_ai_rather_than_copying_it():
+    """Every =PY() script the v1.5 builder writes calls the package.
+
+    The point of the CGI_AI and Test_Scaling rewrite is that the sheet stops
+    carrying its own copy of the code. A script that defines a function
+    instead of calling cgs_ai.something() has quietly undone that.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "v15builder2", ROOT / "src" / "utils" / "build_claims_pipelines_v15.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert "import cgs_ai" in module.IMPORT_SNIPPET
+    assert "cgs_ai.testWorkload(" in module.SCALE_CALL
+    assert "def " not in module.SCALE_CALL, "the sheet must not redefine it"
+    for snippet in (module.CGI_BASIC_TEXT, module.CGI_PERSONAL_TEXT,
+                    module.CGI_DETAILED_TEXT, module.CGI_SURVEY_TEXT,
+                    module.CGI_SURVEY_SEED_TEXT):
+        assert "cgs_ai." in snippet
+        assert "def " not in snippet
