@@ -2076,3 +2076,98 @@ def test_the_workbook_sheets_call_cgs_ai_rather_than_copying_it():
                     module.CGI_SURVEY_SEED_TEXT):
         assert "cgs_ai." in snippet
         assert "def " not in snippet
+
+
+# --- loading the package from a worksheet ------------------------------------
+
+def _testsBuilder():
+    """Import build_tests_workbook.py as a module. Returns: the module."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "testsbuilder", ROOT / "src" / "utils" / "build_tests_workbook.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_package_survives_a_round_trip_through_a_worksheet():
+    """One line per row must reconstruct the file byte for byte.
+
+    The worksheet IS the source once it is loaded this way, so a round trip
+    that loses a character loses it from the running package.
+    """
+    import re
+    module = _testsBuilder()
+    source = (ROOT / "src" / "py" / "lite" / "cgs_ai"
+              / "__init__.py").read_text(encoding="utf-8")
+    lines = source.splitlines()
+
+    sheet = module.buildInitSheet(lines, 0)
+    # Pull column A back out of the XML the same way Excel would read it.
+    recovered = {}
+    for match in re.finditer(
+            r'<c r="A(\d+)"[^>]*t="inlineStr"><is><t[^>]*>(.*?)</t>', sheet,
+            re.S):
+        recovered[int(match.group(1))] = (
+            match.group(2).replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&amp;", "&"))
+    rebuilt = "\n".join(recovered.get(n, "") for n in range(1, len(lines) + 1))
+    assert rebuilt == source.rstrip("\n")
+
+
+def test_no_line_of_the_package_can_outgrow_an_excel_cell():
+    """The whole reason for one line per row: 37,732 > 32,767."""
+    module = _testsBuilder()
+    source = (ROOT / "src" / "py" / "lite" / "cgs_ai"
+              / "__init__.py").read_text(encoding="utf-8")
+    assert len(source) > module.build.__globals__.get("EXCEL_LIMIT", 32767), (
+        "if the package ever fits in one cell this design is still fine, but "
+        "the README on the TESTS workbook says it does not -- update it")
+    assert max(len(line) for line in source.splitlines()) < 32767
+
+
+def test_the_loader_keeps_interior_blank_lines():
+    """dropna() may trim the tail; it must not flatten the docstrings.
+
+    Dropping interior blanks executes perfectly well and silently removes
+    every paragraph break inside a \"\"\"...\"\"\". That is a quality bug no
+    test would otherwise catch, so the loader's shape is pinned here.
+    """
+    module = _testsBuilder()
+    loader = module.LOADER_CODE
+    assert 'if pd.isna(value) else str(value)' in loader, (
+        "blank rows must become empty strings, not vanish")
+    assert ".dropna()" in loader, "the empty tail still has to be trimmed"
+    # dropna's result is used to find the last row, never joined directly.
+    assert "join" not in loader.split(".dropna()")[1].split("\n")[0]
+
+
+def test_the_init_sheet_comes_before_every_test_sheet():
+    """Tab order IS calculation order for =PY() cells.
+
+    Excel runs them row-major within a sheet, then sheet by sheet left to
+    right. The dependency is a shared namespace, which Excel cannot see, so
+    nothing reorders it for you: __init__ to the right of a TEST sheet means
+    that test raises ModuleNotFoundError.
+    """
+    import re
+    module = _testsBuilder()
+    order = [name for name, _ in [("README", "rId1"), ("__init__", "rId2"),
+                                  ("Claims_Data", "rId3"), ("TEST1", "rId4"),
+                                  ("TEST2", "rId5"), ("TEST3", "rId6")]]
+    workbook = module.buildWorkbookXml([(n, f"rId{i + 1}")
+                                        for i, n in enumerate(order)])
+    names = re.findall(r'<sheet name="([^"]+)"', workbook)
+    assert names.index("__init__") < min(names.index(t["name"])
+                                         for t in module.TESTS)
+    assert 'fullCalcOnLoad="1"' in workbook
+
+
+def test_every_test_sheet_calls_the_package_rather_than_redefining_it():
+    """A TEST that carries its own copy of a function tests nothing."""
+    module = _testsBuilder()
+    for test in module.TESTS:
+        assert "import cgs_ai" in test["code"], test["name"]
+        assert "cgs_ai." in test["code"], test["name"]
+        assert "def " not in test["code"], (
+            f"{test['name']} defines a function instead of calling one")
