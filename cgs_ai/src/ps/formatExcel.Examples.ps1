@@ -82,3 +82,67 @@ $Fields = @("Task Name", "Bucket", "Priority", "Due date", "Start date",
 # calls it -- every argument arrives as one string, so a list needs a
 # delimiter. Commas work too; semicolon is the convention used by every
 # other list parameter in this toolkit.
+
+# --- Example 8: drop rows you do not want in the report ------------------
+# -ExcludeWhere names a column and the value(s) to DROP. Named for what it
+# does: in Excel "filter to BACKLOG" means KEEP it, so a parameter called
+# -Filter would eventually be read as the opposite of what was meant.
+#
+# .\formatExcel.ps1 -ExcelPath $Source -SheetName $Sheet -Columns $Fields `
+#     -OutputPath "C:\reports\governance.pdf" `
+#     -Title "Data Analytics Infrastructure and Governance" `
+#     -ExcludeWhere "Bucket=BACKLOG"
+
+# --- Example 9: several values, and several columns ----------------------
+# A PIPE separates values for one column; a SEMICOLON separates clauses.
+# A row is dropped when it matches ANY clause, which is what "filter out
+# the backlog and the low priority items" means when said out loud.
+#
+# -ExcludeWhere "Bucket=BACKLOG|TODO (Up next)"
+# -ExcludeWhere "Bucket=BACKLOG;Priority=Low"
+#
+# An EMPTY value selects the blank cells -- "drop the rows nobody
+# categorised" is a real thing to ask for:
+# -ExcludeWhere "Bucket="
+
+# --- Example 10: keep only what you want, the inverse --------------------
+# -IncludeWhere keeps ONLY matching rows. When both are given, Include runs
+# first and Exclude then trims what is left.
+#
+# .\formatExcel.ps1 -ExcelPath $Source -SheetName $Sheet -Columns $Fields `
+#     -OutputPath "C:\reports\closed-items.pdf" `
+#     -IncludeWhere "Bucket=DONE|UNDER REVIEW"
+
+# --- Example 11: sort the report -----------------------------------------
+# "Column", "Column ASC" or "Column DESC"; several keys with a semicolon,
+# applied left to right. Blanks sort LAST in both directions -- a DESC
+# column that opens with twenty empty cells is not usefully sorted.
+#
+# -SortBy "Due date DESC"
+# -SortBy "Bucket; Task Name"            # Bucket, then Task Name within it
+# -SortBy "Bucket DESC; Due date"
+#
+# The filter and the sort both run BEFORE columns are chosen, so either may
+# name a column the report does not display:
+# -Columns "Task Name;Priority" -SortBy "Bucket; Due date DESC"
+
+# --- Example 12: the full status report -----------------------------------
+# What produced Data_Analytics_Governance_KANBAN_10_30_2026.pdf.
+#
+# .\formatExcel.ps1 `
+#     -ExcelPath "C:\reports\Data Analytics Infrastructure and Governance - KANBAN_10_30_2026.xlsx" `
+#     -SheetName "Consolidated Data" `
+#     -Columns "Task Name;Bucket;Priority;Created Date;Labels;Notes" `
+#     -OutputPath "C:\reports\Data_Analytics_Governance_KANBAN_10_30_2026.pdf" `
+#     -format_name corporate `
+#     -Title "Data Analytics Infrastructure and Governance" `
+#     -Subtitle "KANBAN status report  |  30 October 2026" `
+#     -ExcludeWhere "Bucket=BACKLOG" `
+#     -SortBy "Bucket; Task Name" `
+#     -MaxCellLength 180
+#
+# The report states the filter on its own banner:
+#   "Showing 21 of 26 rows.  Excluded: Bucket = BACKLOG  Sorted by: ..."
+# That line is automatic and not optional. A status report that silently
+# omits rows misleads whoever reads it, and nothing else in the PDF would
+# reveal it.
