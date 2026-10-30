@@ -44,6 +44,13 @@
                    corporate | corporatev2 | plain | minimal
     -Title       (optional) banner text; defaults to the workbook name.
     -Subtitle    (optional) second line; defaults to sheet and row count.
+    -ExcludeWhere (optional) drop rows matching "Column=Value". Several
+                 values with | and several clauses with ;, e.g.
+                 "Bucket=BACKLOG|TODO (Up next)".
+    -IncludeWhere (optional) the inverse: keep ONLY matching rows. Applied
+                 first when both are given.
+    -SortBy      (optional) "Column", "Column ASC" or "Column DESC";
+                 several keys with ;. Blanks sort last in both directions.
     -HeaderRow   (optional, default 0 = detect) 1-based header row.
     -OnWordMissing (optional, default "fail") fail | html | docx -- what to
                    do when a .pdf is asked for and NO converter (Word or
@@ -71,7 +78,10 @@ param(
     [string]   $Subtitle      = '',
     [int]      $HeaderRow     = 0,
     [string]   $OnWordMissing = 'fail',
-    [int]      $MaxCellLength = 0
+    [int]      $MaxCellLength = 0,
+    [string]   $ExcludeWhere  = '',
+    [string]   $IncludeWhere  = '',
+    [string]   $SortBy        = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -103,6 +113,257 @@ function ConvertTo-HtmlText {
     if ($null -eq $Value) { return '' }
     return ([string]$Value).Replace('&','&amp;').Replace('<','&lt;').
         Replace('>','&gt;').Replace('"','&quot;')
+}
+
+function Resolve-ReportColumn {
+    <# .SYNOPSIS Match a column name against the sheet's, forgiving case.
+       .OUTPUTS [string] the sheet's own spelling of the column.
+       .NOTES  Exact match first, then case-insensitive. Values are already
+               matched case-insensitively, so having "bucket=BACKLOG" fail
+               on the column while "Bucket=backlog" works would be a
+               distinction nobody can predict. #>
+    param([string] $Name, [string[]] $Available)
+    $wanted = $Name.Trim()
+    if ($Available -ccontains $wanted) { return $wanted }
+    $match = @($Available | Where-Object { $_ -ieq $wanted })
+    if ($match.Count -gt 0) { return $match[0] }
+    throw ("column '{0}' is not in this sheet`r`n  the sheet has: {1}" -f
+           $Name, ($Available -join ', '))
+}
+
+function ConvertTo-FilterClauses {
+    <# .SYNOPSIS Parse "Column=Value|Value;Column=Value" into clauses.
+       .OUTPUTS [object[]] of @{ Column; Values }.
+       .NOTES  Split on the FIRST '=' only. A value may legitimately
+               contain one, and "Notes=a=b" has to mean the column Notes
+               and the value "a=b", not a parse error. #>
+    param([object] $Spec)
+    $clauses = @()
+    foreach ($clause in (ConvertTo-CgsList $Spec)) {
+        $at = $clause.IndexOf('=')
+        if ($at -lt 0) {
+            # The parentheses are load-bearing: -f binds TIGHTER than +,
+            # so without them the format would apply to the last fragment
+            # alone and '{0}' in the first would reach the user literally.
+            throw (("filter clause '{0}' has no '='. Write it as " +
+                    "Column=Value, several values as Column=One|Two, and " +
+                    "several clauses as Column=One;Other=Two.") -f $clause)
+        }
+        # An empty value is kept on purpose: "Bucket=" means the rows where
+        # Bucket is blank, which is a real thing to ask for.
+        $clauses += @{
+            Column = $clause.Substring(0, $at).Trim()
+            Values = @($clause.Substring($at + 1).Split('|') |
+                       ForEach-Object { $_.Trim() })
+        }
+    }
+    return , $clauses
+}
+
+function Test-RowMatchesClauses {
+    <# .SYNOPSIS Does this row match ANY clause?
+       .OUTPUTS [bool]
+       .NOTES  ANY, not ALL: "filter out BACKLOG and DONE" means drop both,
+               which is what anyone saying it out loud intends.
+
+               Matching is trimmed and case-insensitive, and EXACT rather
+               than substring. Substring would make Status=DONE quietly
+               drop "NOT DONE" as well, and a status report that removes
+               the wrong rows is worse than one that fails. #>
+    param($Row, [object[]] $Clauses)
+    foreach ($clause in $Clauses) {
+        $cell = ''
+        if ($null -ne $Row.($clause.Column)) {
+            $cell = ([string] $Row.($clause.Column)).Trim()
+        }
+        foreach ($value in $clause.Values) {
+            if ($cell -ieq $value) { return $true }
+        }
+    }
+    return $false
+}
+
+function Select-ReportRows {
+    <# .SYNOPSIS Keep or drop rows by column value.
+       .OUTPUTS [hashtable] @{ Rows; Note }.
+       .NOTES  THIS RUNS BEFORE COLUMN SELECTION, deliberately. A
+               management report may well show Task Name and Due date but
+               not Bucket -- and still need to filter on Bucket. Filtering
+               after column selection would fail on the most ordinary
+               request there is.
+
+               A missing column THROWS rather than matching nothing. A typo
+               that silently matches nothing ships an unfiltered report
+               that its author believes is filtered, which is the failure
+               mode worth being loud about. #>
+    param([object[]] $Rows, [object] $ExcludeWhere, [object] $IncludeWhere)
+    $exclude = ConvertTo-FilterClauses $ExcludeWhere
+    $include = ConvertTo-FilterClauses $IncludeWhere
+    if ($exclude.Count -eq 0 -and $include.Count -eq 0) {
+        return @{ Rows = $Rows; Note = '' }
+    }
+    if ($Rows.Count -eq 0) { return @{ Rows = $Rows; Note = '' } }
+
+    $available = @($Rows[0].PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($clause in ($exclude + $include)) {
+        $clause.Column = Resolve-ReportColumn -Name $clause.Column -Available $available
+    }
+
+    $kept = $Rows
+    if ($include.Count -gt 0) {
+        $kept = @($kept | Where-Object { Test-RowMatchesClauses -Row $_ -Clauses $include })
+    }
+    if ($exclude.Count -gt 0) {
+        $kept = @($kept | Where-Object { -not (Test-RowMatchesClauses -Row $_ -Clauses $exclude) })
+    }
+
+    if ($kept.Count -eq 0) {
+        throw (("the filter removed every row, so there is nothing to report.`r`n" +
+                "  rows before filtering: {0}`r`n" +
+                "  check the spelling and the case of the values you asked for.") -f $Rows.Count)
+    }
+
+    $parts = @()
+    foreach ($pair in @(@('Excluded', $exclude), @('Included', $include))) {
+        foreach ($clause in $pair[1]) {
+            $parts += ("{0}: {1} = {2}" -f $pair[0], $clause.Column,
+                       ($clause.Values -join ' or '))
+        }
+    }
+    $note = ("Showing {0} of {1} rows.  {2}" -f $kept.Count, $Rows.Count,
+             ($parts -join '  '))
+    return @{ Rows = $kept; Note = $note }
+}
+
+function ConvertTo-SortKeys {
+    <# .SYNOPSIS Parse "Column DESC; Other Column" into sort keys.
+       .OUTPUTS [object[]] of @{ Column; Descending }.
+       .NOTES  Space-separated rather than "Column=DESC", because '='
+               already means "equals this value" in -ExcludeWhere and
+               reusing it for a direction would make two parameters that
+               look alike behave differently.
+
+               The split is on the LAST whitespace, and only when that last
+               word is ASC or DESC. That is what lets "Due date" stay one
+               column name while "Due date DESC" becomes a column and a
+               direction. #>
+    param([object] $Spec)
+    $keys = @()
+    foreach ($clause in (ConvertTo-CgsList $Spec)) {
+        $text = $clause.Trim()
+        $descending = $false
+        $at = $text.LastIndexOfAny(@(' ', "`t"))
+        if ($at -gt 0) {
+            $tail = $text.Substring($at + 1).ToUpperInvariant()
+            if ($tail -eq 'ASC' -or $tail -eq 'DESC') {
+                $descending = ($tail -eq 'DESC')
+                $text = $text.Substring(0, $at).Trim()
+            }
+        }
+        if (-not $text) {
+            throw (("sort clause '{0}' names a direction but no column. " +
+                    "Write it as ""Column"", ""Column ASC"" or ""Column DESC"".") -f $clause)
+        }
+        $keys += @{ Column = $text; Descending = $descending }
+    }
+    return , $keys
+}
+
+function Get-SortRank {
+    <# .SYNOPSIS Build a sort key that survives a column of mixed types.
+       .OUTPUTS [hashtable] @{ Rank; Number; Text }.
+       .NOTES  A worksheet column happily holds 3, "3", "" and "Urgent" at
+               once, and comparing a number to a string is not reliable.
+               Ranking first keeps the comparison inside one type: numbers
+               (0), then text (1), then blanks.
+
+               Blanks rank LAST in both directions, which is why the rank
+               depends on $Descending: the whole list is reversed for a
+               DESC sort, so a blank has to start in front to finish at the
+               back. A report whose DESC column opens with twenty empty
+               cells is not sorted in any useful sense. #>
+    param($Value, [bool] $Descending)
+    $text = ''
+    if ($null -ne $Value) { $text = ([string] $Value).Trim() }
+    if ($text -eq '') {
+        return @{ Rank = $(if ($Descending) { -1 } else { 2 }); Number = [double] 0; Text = '' }
+    }
+    [double] $number = 0
+    if ([double]::TryParse($text, [ref] $number)) {
+        return @{ Rank = 0; Number = $number; Text = '' }
+    }
+    return @{ Rank = 1; Number = [double] 0; Text = $text.ToLowerInvariant() }
+}
+
+function Sort-ReportRows {
+    <# .SYNOPSIS Sort rows by one or more columns.
+       .OUTPUTS [hashtable] @{ Rows; Note }.
+       .NOTES  Keys are applied LAST FIRST, and each pass is stable, so
+               rows that tie on the first key stay ordered by the second --
+               which is what "sort by Bucket then Due date" means, and what
+               one pass over a composite key would get wrong.
+
+               NOT Sort-Object. Sort-Object compares strings the way the
+               CURRENT CULTURE does, which treats punctuation as lower
+               weight: it puts "CS_CGS01" before "CS0483966", while Python
+               -- and the .py twin -- compare by code point and put
+               "CS0483966" first. Two engines that are meant to produce
+               byte-identical documents cannot disagree about row order, so
+               this sorts with an explicit ORDINAL comparison instead.
+
+               The comparison also carries the original position and falls
+               back to it on a tie, which makes the sort stable whatever
+               algorithm Array.Sort picks -- introsort is not stable on its
+               own. Ties keep their original order in BOTH directions, the
+               same as Python's reverse=True.
+
+               Like the filter, this runs before column selection, so you
+               can sort on a column the report does not display. #>
+    param([object[]] $Rows, [object] $SortBy)
+    $keys = ConvertTo-SortKeys $SortBy
+    if ($keys.Count -eq 0 -or $Rows.Count -eq 0) {
+        return @{ Rows = $Rows; Note = '' }
+    }
+
+    $available = @($Rows[0].PSObject.Properties | ForEach-Object { $_.Name })
+    foreach ($key in $keys) {
+        $key.Column = Resolve-ReportColumn -Name $key.Column -Available $available
+    }
+
+    $ordered = $Rows
+    for ($index = $keys.Count - 1; $index -ge 0; $index--) {
+        $key = $keys[$index]
+        $descending = [bool] $key.Descending
+
+        $decorated = New-Object 'System.Collections.Generic.List[object]'
+        for ($position = 0; $position -lt $ordered.Count; $position++) {
+            $rank = Get-SortRank -Value $ordered[$position].($key.Column) -Descending $descending
+            [void] $decorated.Add([pscustomobject] @{
+                Rank = [int] $rank.Rank; Number = [double] $rank.Number
+                Text = [string] $rank.Text; Position = $position
+                Row  = $ordered[$position] })
+        }
+
+        $comparison = [System.Comparison[object]] {
+            param($a, $b)
+            $result = 0
+            if ($a.Rank -ne $b.Rank)           { $result = $a.Rank.CompareTo($b.Rank) }
+            elseif ($a.Number -ne $b.Number)   { $result = $a.Number.CompareTo($b.Number) }
+            else { $result = [string]::CompareOrdinal($a.Text, $b.Text) }
+            if ($result -ne 0) {
+                if ($descending) { return -$result }
+                return $result
+            }
+            return $a.Position.CompareTo($b.Position)
+        }.GetNewClosure()
+
+        $decorated.Sort($comparison)
+        $ordered = @($decorated | ForEach-Object { $_.Row })
+    }
+
+    $labels = @($keys | ForEach-Object {
+        "{0} {1}" -f $_.Column, $(if ($_.Descending) { 'DESC' } else { 'ASC' }) })
+    return @{ Rows = $ordered; Note = ("Sorted by: {0}" -f ($labels -join ', ')) }
 }
 
 function Select-ReportColumns {
@@ -231,7 +492,8 @@ function New-DocxBytes {
                Word refuses the file when they are out of order. #>
     param([object[]] $Rows, [string[]] $Names, [int[]] $Widths,
           [hashtable] $Style, [bool] $Striped, [string] $Title,
-          [string] $Subtitle, [string] $Path, [int] $MaxLength = 0)
+          [string] $Subtitle, [string] $Path, [int] $MaxLength = 0,
+          [string] $Note = '')
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -250,6 +512,14 @@ function New-DocxBytes {
     if ($Subtitle) {
         [void] $sb.Append('<w:p><w:pPr><w:spacing w:before="40" w:after="0"/></w:pPr><w:r><w:rPr><w:sz w:val="19"/><w:color w:val="' + $Style.BannerFont + '"/></w:rPr>')
         [void] $sb.Append('<w:t xml:space="preserve">' + (ConvertTo-CgsXmlText $Subtitle) + '</w:t></w:r></w:p>')
+    }
+    # The filter line is its OWN paragraph, not a newline glued onto the
+    # subtitle: a newline inside a <w:t> is collapsed to a space by Word,
+    # so the note would silently run on and read as one sentence.
+    if ($Note) {
+        [void] $sb.Append('<w:p><w:pPr><w:spacing w:before="60" w:after="0"/></w:pPr>')
+        [void] $sb.Append('<w:r><w:rPr><w:i/><w:sz w:val="17"/><w:color w:val="' + $Style.BannerFont + '"/></w:rPr>')
+        [void] $sb.Append('<w:t xml:space="preserve">' + (ConvertTo-CgsXmlText $Note) + '</w:t></w:r></w:p>')
     }
     [void] $sb.Append('</w:tc></w:tr></w:tbl>')
     [void] $sb.Append('<w:p><w:pPr><w:spacing w:after="160"/></w:pPr></w:p>')
@@ -359,14 +629,14 @@ function New-HtmlReport {
                fallback when Word is not installed. #>
     param([object[]] $Rows, [string[]] $Names, [hashtable] $Style,
           [bool] $Striped, [string] $Title, [string] $Subtitle, [string] $Path,
-          [int] $MaxLength = 0)
+          [int] $MaxLength = 0, [string] $Note = '')
     $stripe = if ($Striped) { $Style.Stripe } else { 'FFFFFF' }
     $html = New-Object System.Text.StringBuilder
     [void] $html.Append('<!doctype html><html><head><meta charset="utf-8">')
     [void] $html.Append('<title>' + (ConvertTo-HtmlText $Title) + '</title><style>')
     [void] $html.Append('body{font-family:Calibri,''Segoe UI'',Arial,sans-serif;margin:24px;color:#1F2937}')
     [void] $html.Append('.banner{background:#' + $Style.Banner + ';color:#' + $Style.BannerFont + ';padding:14px 18px;border-radius:3px}')
-    [void] $html.Append('.banner h1{margin:0;font-size:20pt}.banner p{margin:4px 0 0;font-size:10pt;opacity:.9}')
+    [void] $html.Append('.banner h1{margin:0;font-size:20pt}.banner p{margin:4px 0 0;font-size:10pt;opacity:.9}.banner p.filter{font-style:italic;font-size:9pt;opacity:.95}')
     [void] $html.Append('table{border-collapse:collapse;width:100%;margin-top:16px;font-size:9.5pt}')
     [void] $html.Append('th{background:#' + $Style.Header + ';color:#' + $Style.HeaderFont + ';text-align:left;padding:7px 8px;border:1px solid #BFBFBF}')
     [void] $html.Append('td{padding:6px 8px;border:1px solid #BFBFBF;vertical-align:top}')
@@ -375,6 +645,7 @@ function New-HtmlReport {
     [void] $html.Append('</style></head><body>')
     [void] $html.Append('<div class="banner"><h1>' + (ConvertTo-HtmlText $Title) + '</h1>')
     if ($Subtitle) { [void] $html.Append('<p>' + (ConvertTo-HtmlText $Subtitle) + '</p>') }
+    if ($Note) { [void] $html.Append('<p class="filter">' + (ConvertTo-HtmlText $Note) + '</p>') }
     [void] $html.Append('</div><table><thead><tr>')
     foreach ($name in $Names) { [void] $html.Append('<th>' + (ConvertTo-HtmlText $name) + '</th>') }
     [void] $html.Append('</tr></thead><tbody>')
@@ -502,6 +773,21 @@ function Invoke-Main {
     if ($null -eq $rows) { $rows = @() }
     Write-CgsInfo ("read {0} row(s) from sheet '{1}'" -f $rows.Count, $SheetName)
 
+    # Filter and sort BEFORE choosing columns, so either can name a column
+    # the report does not display.
+    $before   = $rows.Count
+    $filtered = Select-ReportRows -Rows $rows -ExcludeWhere $ExcludeWhere -IncludeWhere $IncludeWhere
+    $rows     = $filtered.Rows
+    $note     = $filtered.Note
+    if ($note) { Write-CgsInfo $note }
+
+    $sorted   = Sort-ReportRows -Rows $rows -SortBy $SortBy
+    $rows     = $sorted.Rows
+    if ($sorted.Note) {
+        Write-CgsInfo $sorted.Note
+        $note = if ($note) { "$note  " + $sorted.Note } else { $sorted.Note }
+    }
+
     $names = Select-ReportColumns -Rows $rows -Wanted $Columns
     Write-CgsInfo ("keeping {0} column(s): {1}" -f $names.Count, ($names -join ', '))
 
@@ -527,12 +813,12 @@ function Invoke-Main {
         { $_ -in '.html', '.htm' } {
             $written = New-HtmlReport -Rows $rows -Names $names -Style $style `
                 -Striped $striped -Title $banner -Subtitle $second -Path $OutputPath `
-                -MaxLength $MaxCellLength
+                -MaxLength $MaxCellLength -Note $note
         }
         '.docx' {
             $written = New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                 -Style $style -Striped $striped -Title $banner -Subtitle $second `
-                -Path $OutputPath -MaxLength $MaxCellLength
+                -Path $OutputPath -MaxLength $MaxCellLength -Note $note
         }
         '.pdf' {
             $libreOffice = $null
@@ -554,18 +840,18 @@ function Invoke-Main {
                 if ($OnWordMissing -eq 'docx') {
                     $written = New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                         -Style $style -Striped $striped -Title $banner -Subtitle $second `
-                        -Path $alternative -MaxLength $MaxCellLength
+                        -Path $alternative -MaxLength $MaxCellLength -Note $note
                 } else {
                     $written = New-HtmlReport -Rows $rows -Names $names -Style $style `
                         -Striped $striped -Title $banner -Subtitle $second -Path $alternative `
-                        -MaxLength $MaxCellLength
+                        -MaxLength $MaxCellLength -Note $note
                 }
             } else {
                 # Both converters read a .docx, so build one first.
                 $staging = [System.IO.Path]::ChangeExtension($OutputPath, '.docx')
                 [void](New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                     -Style $style -Striped $striped -Title $banner -Subtitle $second `
-                    -Path $staging -MaxLength $MaxCellLength)
+                    -Path $staging -MaxLength $MaxCellLength -Note $note)
                 if ($haveWord) {
                     Write-CgsInfo "converting to PDF with Microsoft Word"
                     $written = Convert-DocxToPdf -DocxPath $staging -PdfPath $OutputPath

@@ -1630,10 +1630,19 @@ def _governanceWorkbook(tmp_path):
     from src.utils.xlsx import writeWorkbook
     columns = ["Task ID", "Task Name", "Bucket", "Priority", "Due date",
                "Start date", "Checklist Items", "Notes"]
-    rows = [{"Task ID": f"ID{n:03d}", "Task Name": f"Task {n}",
-             "Bucket": "BACKLOG", "Priority": "Medium", "Due date": "",
+    # Varied buckets so a filter has something to remove without emptying
+    # the sheet, and task names that pin the ordinal sort: under a culture
+    # comparison "CS_A" sorts before "CS0", under an ordinal one it does
+    # not, and the two engines must agree.
+    buckets = ["BACKLOG", "DONE", "DOING (In progress)", "DONE", "BACKLOG",
+               "UNDER REVIEW"]
+    taskNames = ["CS_A task", "CS0 task", "CS1 task", "CS_B task",
+                 "CS2 task", "CS_C task"]
+    rows = [{"Task ID": f"ID{n:03d}", "Task Name": taskNames[n - 1],
+             "Bucket": buckets[n - 1], "Priority": "Medium",
+             "Due date": "" if n % 2 else f"2026-01-{n:02d}",
              "Start date": "", "Checklist Items": "",
-             "Notes": "x" * 400} for n in range(1, 6)]
+             "Notes": "x" * 400} for n in range(1, 7)]
     target = tmp_path / "gov.xlsx"
     writeWorkbook([{"name": "Consolidated Data", "columns": columns,
                     "rows": rows}], str(target))
@@ -1830,19 +1839,24 @@ def test_formatexcel_makes_a_pdf_with_libreoffice_when_word_is_absent(tmp_path):
 
 # --- formatExcel: the two engines must agree ---------------------------------
 
-def _runBothEngines(tmp_path, extension, columns="Task Name,Bucket,Priority,Notes"):
+def _runBothEngines(tmp_path, extension, columns="Task Name,Bucket,Priority,Notes",
+                    excludeWhere="", includeWhere="", sortBy=""):
     """Render the same workbook with both engines. Returns: (psPath, pyPath)."""
     from src.py.formatExcel import formatExcel as pyFormatExcel
     source = _governanceWorkbook(tmp_path)
     psPath = tmp_path / f"ps.{extension}"
     pyPath = tmp_path / f"py.{extension}"
     shared = dict(SheetName="Consolidated Data", Columns=columns,
-                  Title="Governance", Subtitle="fixed", MaxCellLength=220)
+                  Title="Governance", Subtitle="fixed", MaxCellLength=220,
+                  ExcludeWhere=excludeWhere, IncludeWhere=includeWhere,
+                  SortBy=sortBy)
     result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
                      "-SheetName", shared["SheetName"],
                      "-Columns", shared["Columns"], "-OutputPath", psPath,
                      "-Title", shared["Title"], "-Subtitle", shared["Subtitle"],
-                     "-MaxCellLength", str(shared["MaxCellLength"]))
+                     "-MaxCellLength", str(shared["MaxCellLength"]),
+                     "-ExcludeWhere", excludeWhere,
+                     "-IncludeWhere", includeWhere, "-SortBy", sortBy)
     assert result.returncode == 0, result.output
     pyFormatExcel(ExcelPath=str(source), OutputPath=str(pyPath), **shared)
     return psPath, pyPath
@@ -1932,7 +1946,7 @@ def test_python_formatexcel_returns_what_it_did(tmp_path):
     result = pyFormatExcel(ExcelPath=str(source), SheetName="Consolidated Data",
                            Columns=["Notes", "Task Name"],
                            OutputPath=str(tmp_path / "o.html"))
-    assert result["RowCount"] == 5
+    assert result["RowCount"] == 6
     assert result["Columns"] == ["Notes", "Task Name"], "order is preserved"
     assert result["Renderer"] == "html"
 
@@ -1972,7 +1986,7 @@ def test_formatexcel_works_with_every_optional_package_blocked(tmp_path):
     result = subprocess.run([sys.executable, "-c", code],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "5 html"
+    assert result.stdout.strip() == "6 html"
     assert out.is_file()
 
 
@@ -2171,3 +2185,161 @@ def test_every_test_sheet_calls_the_package_rather_than_redefining_it():
         assert "cgs_ai." in test["code"], test["name"]
         assert "def " not in test["code"], (
             f"{test['name']} defines a function instead of calling one")
+
+
+# --- -ExcludeWhere / -IncludeWhere / -SortBy ---------------------------------
+
+def _kanbanRows():
+    """A small sheet with the shapes the filter and sort have to survive."""
+    return [
+        {"Task": "a", "Bucket": "BACKLOG", "Due": "2026-01-02", "Size": "10"},
+        {"Task": "b", "Bucket": "DONE", "Due": "", "Size": "2"},
+        {"Task": "c", "Bucket": "done", "Due": "2026-01-01", "Size": "-5"},
+        {"Task": "d", "Bucket": "TODO (Up next)", "Due": "", "Size": "big"},
+        {"Task": "e", "Bucket": "", "Due": "2026-01-03", "Size": "10"},
+    ]
+
+
+def test_the_filter_parser_handles_the_awkward_shapes():
+    """Pipes, semicolons, an '=' in the value, and an empty value."""
+    from src.py.formatExcel import parseFilterClauses
+    assert parseFilterClauses("Bucket=BACKLOG") == [
+        {"column": "Bucket", "values": ["BACKLOG"]}]
+    assert parseFilterClauses("Bucket=BACKLOG|TODO (Up next)") == [
+        {"column": "Bucket", "values": ["BACKLOG", "TODO (Up next)"]}]
+    assert parseFilterClauses("Bucket=A;Status=B") == [
+        {"column": "Bucket", "values": ["A"]},
+        {"column": "Status", "values": ["B"]}]
+    # Split on the FIRST '=' only -- a value may legitimately contain one.
+    assert parseFilterClauses("Notes=a=b") == [
+        {"column": "Notes", "values": ["a=b"]}]
+    # An empty value means "the blank cells", which is a real thing to ask.
+    assert parseFilterClauses("Bucket=") == [
+        {"column": "Bucket", "values": [""]}]
+    assert parseFilterClauses("") == []
+    with pytest.raises(ValueError, match="no '='"):
+        parseFilterClauses("Bucket")
+
+
+def test_the_filter_matches_exactly_not_by_substring():
+    """Status=DONE must not also drop NOT DONE.
+
+    Substring matching is the tempting shortcut and it removes the wrong
+    rows, which is worse than failing: nothing in the output reveals it.
+    """
+    from src.py.formatExcel import applyRowFilters
+    rows = [{"Bucket": "DONE"}, {"Bucket": "NOT DONE"}, {"Bucket": "DONE-ish"}]
+    kept, _ = applyRowFilters(rows, excludeWhere="Bucket=DONE")
+    assert [r["Bucket"] for r in kept] == ["NOT DONE", "DONE-ish"]
+
+
+def test_the_filter_ignores_case_and_padding_on_both_sides():
+    """'bucket =  backlog ' must behave as 'Bucket=BACKLOG'."""
+    from src.py.formatExcel import applyRowFilters
+    rows = _kanbanRows()
+    kept, note = applyRowFilters(rows, excludeWhere="bucket =  backlog ")
+    assert len(kept) == 4
+    # Case-insensitive on VALUES too: DONE and done are one bucket.
+    kept, _ = applyRowFilters(rows, excludeWhere="Bucket=DONE")
+    assert [r["Task"] for r in kept] == ["a", "d", "e"]
+    # An empty value selects the blank cells.
+    kept, _ = applyRowFilters(rows, excludeWhere="Bucket=")
+    assert [r["Task"] for r in kept] == ["a", "b", "c", "d"]
+
+
+def test_include_and_exclude_and_their_guards():
+    """IncludeWhere keeps; a typo and an empty result both raise."""
+    from src.py.formatExcel import applyRowFilters
+    rows = _kanbanRows()
+    kept, note = applyRowFilters(rows, includeWhere="Bucket=DONE")
+    assert [r["Task"] for r in kept] == ["b", "c"]
+    assert "Showing 2 of 5 rows" in note and "Included: Bucket = DONE" in note
+
+    with pytest.raises(KeyError, match="not in this sheet"):
+        applyRowFilters(rows, excludeWhere="Buckett=DONE")
+    # A filter that empties the sheet is a bug, not an output.
+    with pytest.raises(ValueError, match="removed every row"):
+        applyRowFilters(rows, includeWhere="Bucket=NOPE")
+
+
+def test_the_sort_puts_blanks_last_in_both_directions():
+    """A DESC column that opens with blanks is not usefully sorted."""
+    from src.py.formatExcel import applySort
+    rows = _kanbanRows()
+    for spec, expected in (("Due ASC", ["c", "a", "e"]),
+                           ("Due DESC", ["e", "a", "c"])):
+        ordered, _ = applySort(rows, spec)
+        dates = [r["Task"] for r in ordered if r["Due"]]
+        blanks = [r["Task"] for r in ordered if not r["Due"]]
+        assert dates == expected, spec
+        assert [r["Task"] for r in ordered][-len(blanks):] == blanks, spec
+
+
+def test_the_sort_survives_a_column_of_mixed_types():
+    """3, "3", "" and "Urgent" in one column must not raise."""
+    from src.py.formatExcel import applySort
+    ordered, _ = applySort(_kanbanRows(), "Size")
+    # Numbers first and in numeric order (-5 before 2 before 10), then text,
+    # then blanks. A plain string sort would put "-5" after "10".
+    assert [r["Size"] for r in ordered] == ["-5", "2", "10", "10", "big"]
+
+
+def test_the_sort_is_stable_across_keys():
+    """Sort by Bucket then Task: ties on Bucket stay ordered by Task."""
+    from src.py.formatExcel import applySort
+    rows = [{"B": "x", "T": "3"}, {"B": "y", "T": "1"},
+            {"B": "x", "T": "1"}, {"B": "y", "T": "2"}]
+    ordered, note = applySort(rows, "B; T DESC")
+    assert [(r["B"], r["T"]) for r in ordered] == [
+        ("x", "3"), ("x", "1"), ("y", "2"), ("y", "1")]
+    assert note == "Sorted by: B ASC, T DESC"
+
+
+def test_the_sort_parser_keeps_spaces_in_column_names():
+    """'Due date' is a column; 'Due date DESC' is a column and a direction."""
+    from src.py.formatExcel import parseSortKeys
+    assert parseSortKeys("Due date") == [
+        {"column": "Due date", "descending": False}]
+    assert parseSortKeys("Due date DESC") == [
+        {"column": "Due date", "descending": True}]
+    assert parseSortKeys("Due date desc") == [
+        {"column": "Due date", "descending": True}]
+    assert parseSortKeys("") == []
+
+
+def test_the_filter_can_name_a_column_the_report_does_not_show():
+    """Filtering must run before column selection.
+
+    A management report may show Task and Due but not Bucket, and still
+    need to filter on Bucket. The other order fails on the most ordinary
+    request there is.
+    """
+    from src.py.formatExcel import applyRowFilters, selectReportColumns
+    rows, _ = applyRowFilters(_kanbanRows(), excludeWhere="Bucket=BACKLOG")
+    assert selectReportColumns(rows, "Task;Due") == ["Task", "Due"]
+    assert len(rows) == 4
+
+
+@needsPwsh
+def test_both_engines_agree_once_a_filter_and_a_sort_are_applied(tmp_path):
+    """Row ORDER has to match too, not just formatting.
+
+    PowerShell's Sort-Object compares strings the way the current culture
+    does and puts "CS_A" before "CS0"; Python compares by code point and
+    does the opposite. That divergence produced two different documents
+    from the same inputs until the .ps1 was changed to sort ordinally.
+    """
+    psPath, pyPath = _runBothEngines(
+        tmp_path, "html", excludeWhere="Bucket=BACKLOG",
+        sortBy="Bucket; Task Name DESC")
+    assert psPath.read_bytes() == pyPath.read_bytes()
+    assert "Excluded: Bucket = BACKLOG" in psPath.read_text(encoding="utf-8")
+
+
+@needsPwsh
+def test_the_report_says_on_its_face_that_rows_were_removed(tmp_path):
+    """A status report that silently omits rows misleads its reader."""
+    psPath, _ = _runBothEngines(tmp_path, "html", excludeWhere="Bucket=BACKLOG")
+    text = psPath.read_text(encoding="utf-8")
+    assert 'class="filter"' in text
+    assert "Showing" in text and "of" in text and "rows" in text

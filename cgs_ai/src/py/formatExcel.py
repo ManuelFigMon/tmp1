@@ -78,7 +78,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _HERE = Path(__file__).resolve()
 if str(_HERE.parent.parent.parent) not in sys.path:
@@ -172,6 +172,246 @@ def asColumnList(value: Any) -> List[str]:
     items = list(value) if isinstance(value, (list, tuple, set)) else \
         str(value).split(";")
     return [str(item).strip() for item in items if str(item).strip()]
+
+
+def parseFilterClauses(spec: Any) -> List[Dict[str, Any]]:
+    """Parse "Column=Value|Value;Column=Value" into clauses.
+
+    Parameters:
+        spec - the -ExcludeWhere / -IncludeWhere string, or empty.
+    Returns:
+        list of {"column": str, "values": list[str]}; [] when nothing was
+        asked for.
+    Raises:
+        ValueError - a clause has no '=' at all.
+
+    Split on the FIRST '=' only. A value may legitimately contain one, and a
+    clause like "Notes=a=b" has to mean the column Notes and the value "a=b",
+    not a parse error.
+    """
+    clauses: List[Dict[str, Any]] = []
+    for clause in asColumnList(spec):
+        if "=" not in clause:
+            raise ValueError(
+                f"filter clause '{clause}' has no '='. Write it as "
+                f"Column=Value, several values as Column=One|Two, and "
+                f"several clauses as Column=One;Other=Two.")
+        column, _, values = clause.partition("=")
+        clauses.append({
+            "column": column.strip(),
+            # An empty value is kept on purpose: "Bucket=" means the rows
+            # where Bucket is blank, which is a real thing to ask for.
+            "values": [value.strip() for value in values.split("|")],
+        })
+    return clauses
+
+
+def resolveColumn(name: str, available: Sequence[str]) -> str:
+    """Match a column name against the sheet's, forgiving case and spacing.
+
+    Parameters: name (str); available (sequence[str]) - the sheet's columns.
+    Returns: the sheet's own spelling of the column.
+    Raises: KeyError - no column matches; the message lists the real ones.
+
+    Exact match first, then case-insensitive. Values are already matched
+    case-insensitively, so having "bucket=BACKLOG" fail on the column while
+    "Bucket=backlog" works would be a distinction nobody can predict.
+    """
+    wanted = str(name).strip()
+    if wanted in available:
+        return wanted
+    folded = {column.casefold(): column for column in available}
+    if wanted.casefold() in folded:
+        return folded[wanted.casefold()]
+    raise KeyError(
+        f"column '{name}' is not in this sheet\n"
+        f"  the sheet has: {', '.join(available)}")
+
+
+def rowMatchesClauses(row: Dict[str, Any],
+                      clauses: Sequence[Dict[str, Any]]) -> bool:
+    """Does this row match ANY clause?
+
+    Parameters: row (dict); clauses - from parseFilterClauses().
+    Returns: bool.
+
+    ANY, not ALL: "filter out BACKLOG and DONE" means drop both, which is
+    what anyone saying it out loud intends.
+
+    Matching is trimmed and case-folded, and EXACT rather than substring.
+    Substring would make Status=DONE quietly drop "NOT DONE" as well, and a
+    status report that removes the wrong rows is worse than one that fails.
+    """
+    for clause in clauses:
+        cell = str(row.get(clause["column"], "") or "").strip().casefold()
+        if any(cell == value.casefold() for value in clause["values"]):
+            return True
+    return False
+
+
+def applyRowFilters(rows: Sequence[Dict[str, Any]], excludeWhere: Any = "",
+                    includeWhere: Any = "") -> Tuple[List[Dict[str, Any]], str]:
+    """Keep or drop rows by column value.
+
+    Parameters:
+        rows (sequence)    - from readSheet, BEFORE column selection.
+        excludeWhere       - "Column=Value|Value;..." rows to drop.
+        includeWhere       - "Column=Value|Value;..." rows to keep.
+    Returns:
+        (kept rows, a one-line note describing what happened; "" if no
+        filter was asked for).
+    Raises:
+        KeyError   - a filter names a column the sheet does not have.
+        ValueError - a clause is malformed, or the filter emptied the sheet.
+
+    THIS RUNS BEFORE COLUMN SELECTION, deliberately. A management report may
+    well show Task Name and Due date but not Bucket -- and still need to
+    filter on Bucket. Filtering after column selection would fail on the
+    most ordinary request there is.
+
+    A missing column RAISES rather than matching nothing. A typo that
+    silently matches nothing ships an unfiltered report that its author
+    believes is filtered, which is the failure mode worth being loud about.
+    """
+    excludeClauses = parseFilterClauses(excludeWhere)
+    includeClauses = parseFilterClauses(includeWhere)
+    if not excludeClauses and not includeClauses:
+        return list(rows), ""
+    if not rows:
+        return [], ""
+
+    available = list(rows[0].keys())
+    for clause in excludeClauses + includeClauses:
+        clause["column"] = resolveColumn(clause["column"], available)
+
+    kept = list(rows)
+    if includeClauses:
+        kept = [row for row in kept if rowMatchesClauses(row, includeClauses)]
+    if excludeClauses:
+        kept = [row for row in kept
+                if not rowMatchesClauses(row, excludeClauses)]
+
+    if not kept:
+        raise ValueError(
+            "the filter removed every row, so there is nothing to report.\n"
+            f"  rows before filtering: {len(rows)}\n"
+            "  check the spelling and the case of the values you asked for.")
+
+    parts = []
+    for label, clauses in (("Excluded", excludeClauses),
+                           ("Included", includeClauses)):
+        for clause in clauses:
+            parts.append(f"{label}: {clause['column']} = "
+                         f"{' or '.join(clause['values'])}")
+    note = (f"Showing {len(kept)} of {len(rows)} rows.  "
+            + "  ".join(parts))
+    return kept, note
+
+
+#: Directions -SortBy accepts, after the column name.
+SORT_DIRECTIONS = ("ASC", "DESC")
+
+
+def parseSortKeys(spec: Any) -> List[Dict[str, Any]]:
+    """Parse "Column DESC; Other Column" into sort keys.
+
+    Parameters:
+        spec - the -SortBy string, or empty.
+    Returns:
+        list of {"column": str, "descending": bool}; [] when nothing was
+        asked for. The direction is optional and defaults to ASC.
+    Raises:
+        ValueError - a clause names a direction and nothing else.
+
+    Space-separated rather than "Column=DESC", because '=' already means
+    "equals this value" in -ExcludeWhere and reusing it for a direction
+    would make two parameters that look alike behave differently.
+
+    The split is on the LAST whitespace, and only when that last word is ASC
+    or DESC. That is what lets "Due date" stay one column name while "Due
+    date DESC" becomes a column and a direction.
+    """
+    keys: List[Dict[str, Any]] = []
+    for clause in asColumnList(spec):
+        text = clause.strip()
+        descending = False
+        parts = text.rsplit(None, 1)
+        if len(parts) == 2 and parts[1].upper() in SORT_DIRECTIONS:
+            text, descending = parts[0].strip(), parts[1].upper() == "DESC"
+        if not text:
+            raise ValueError(
+                f"sort clause '{clause}' names a direction but no column. "
+                f"Write it as \"Column\", \"Column ASC\" or \"Column DESC\".")
+        keys.append({"column": text, "descending": descending})
+    return keys
+
+
+def sortRank(value: Any, descending: bool) -> Tuple[int, float, str]:
+    """Build a sort key that survives a column of mixed types.
+
+    Parameters: value - the cell; descending (bool).
+    Returns: (rank, number, text).
+
+    A worksheet column happily holds 3, "3", "" and "Urgent" at once, and
+    comparing a float to a str raises. Ranking first keeps the comparison
+    inside one type: numbers (0), then text (1), then blanks.
+
+    Blanks rank LAST in both directions, which is why the rank depends on
+    `descending`: the whole list is reversed for a DESC sort, so a blank has
+    to start in front to finish at the back. A report whose DESC column
+    opens with twenty empty cells is not sorted in any useful sense.
+    """
+    text = "" if value is None else str(value).strip()
+    if text == "":
+        return (-1 if descending else 2, 0.0, "")
+    try:
+        return (0, float(text), "")
+    except ValueError:
+        # lower(), not casefold(): the .ps1 twin uses .NET's
+        # ToLowerInvariant, and casefold folds a few characters
+        # (sharp s to ss) that ToLowerInvariant leaves alone.
+        return (1, 0.0, text.lower())
+
+
+def applySort(rows: Sequence[Dict[str, Any]], sortBy: Any = "") -> \
+        Tuple[List[Dict[str, Any]], str]:
+    """Sort rows by one or more columns.
+
+    Parameters:
+        rows (sequence) - from readSheet, BEFORE column selection.
+        sortBy          - "Column DESC; Other Column", or empty.
+    Returns:
+        (sorted rows, a note describing the order; "" if no sort was asked).
+    Raises:
+        KeyError   - a sort column is not in the sheet.
+        ValueError - a clause is malformed.
+
+    Keys are applied LAST FIRST. Python's sort is stable, so sorting by the
+    last key and then the first leaves rows that tie on the first key still
+    ordered by the second -- which is what "sort by Bucket then Due date"
+    means, and what one pass over a composite key would get wrong.
+
+    Like the filter, this runs before column selection, so you can sort on a
+    column the report does not display.
+    """
+    keys = parseSortKeys(sortBy)
+    if not keys or not rows:
+        return list(rows), ""
+
+    available = list(rows[0].keys())
+    for key in keys:
+        key["column"] = resolveColumn(key["column"], available)
+
+    ordered = list(rows)
+    for key in reversed(keys):
+        ordered.sort(key=lambda row, k=key: sortRank(row.get(k["column"], ""),
+                                                     k["descending"]),
+                     reverse=key["descending"])
+
+    note = "Sorted by: " + ", ".join(
+        f"{key['column']} {'DESC' if key['descending'] else 'ASC'}"
+        for key in keys)
+    return ordered, note
 
 
 def selectReportColumns(rows: Sequence[Dict[str, Any]],
@@ -280,11 +520,16 @@ def limitCellText(value: Any, maxLength: int) -> str:
 def buildDocumentXml(rows: Sequence[Dict[str, Any]], names: Sequence[str],
                      widths: Sequence[int], style: Dict[str, str],
                      striped: bool, title: str, subtitle: str,
-                     maxLength: int = 0) -> str:
+                     maxLength: int = 0, note: str = "") -> str:
     """Build word/document.xml.
 
     Parameters: as newDocx.
     Returns: str the document part.
+
+    `note` is the filter line. It is a SEPARATE parameter rather than a
+    newline glued onto the subtitle, because a newline inside a <w:t> is
+    collapsed to a space by Word -- the note would silently run on from the
+    subtitle and read as one sentence.
 
     Kept separate from the zipping so a test can diff it against the
     .ps1 twin's output without unpacking two archives.
@@ -308,6 +553,12 @@ def buildDocumentXml(rows: Sequence[Dict[str, Any]], names: Sequence[str],
                      f'<w:r><w:rPr><w:sz w:val="19"/>'
                      f'<w:color w:val="{style["BannerFont"]}"/></w:rPr>')
         parts.append(f'<w:t xml:space="preserve">{escapeXml(subtitle)}'
+                     '</w:t></w:r></w:p>')
+    if note:
+        parts.append('<w:p><w:pPr><w:spacing w:before="60" w:after="0"/></w:pPr>'
+                     f'<w:r><w:rPr><w:i/><w:sz w:val="17"/>'
+                     f'<w:color w:val="{style["BannerFont"]}"/></w:rPr>')
+        parts.append(f'<w:t xml:space="preserve">{escapeXml(note)}'
                      '</w:t></w:r></w:p>')
     parts.append('</w:tc></w:tr></w:tbl>')
     parts.append('<w:p><w:pPr><w:spacing w:after="160"/></w:pPr></w:p>')
@@ -377,13 +628,14 @@ STYLES_XML = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 def newDocx(rows: Sequence[Dict[str, Any]], names: Sequence[str],
             widths: Sequence[int], style: Dict[str, str], striped: bool,
             title: str, subtitle: str, path: str,
-            maxLength: int = 0) -> str:
+            maxLength: int = 0, note: str = "") -> str:
     """Build a .docx as OOXML, with no Word and no add-in.
 
     Parameters:
         rows, names, widths, style, striped, title, subtitle - the content.
         path (str)      - destination .docx.
         maxLength (int) - cut long cells; 0 never does.
+        note (str)      - the filter line shown under the subtitle.
     Returns: str the path written.
     Raises: OSError - the destination cannot be written.
     """
@@ -406,7 +658,7 @@ def newDocx(rows: Sequence[Dict[str, Any]], names: Sequence[str],
         "word/styles.xml": STYLES_XML,
         "word/document.xml": buildDocumentXml(rows, names, widths, style,
                                               striped, title, subtitle,
-                                              maxLength),
+                                              maxLength, note),
     }
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -419,7 +671,8 @@ def newDocx(rows: Sequence[Dict[str, Any]], names: Sequence[str],
 
 def newHtmlReport(rows: Sequence[Dict[str, Any]], names: Sequence[str],
                   style: Dict[str, str], striped: bool, title: str,
-                  subtitle: str, path: str, maxLength: int = 0) -> str:
+                  subtitle: str, path: str, maxLength: int = 0,
+                  note: str = "") -> str:
     """Write the report as a self-contained web page.
 
     Parameters: as newDocx, without widths (the browser lays it out).
@@ -437,7 +690,8 @@ def newHtmlReport(rows: Sequence[Dict[str, Any]], names: Sequence[str],
             f'.banner{{background:#{style["Banner"]};'
             f'color:#{style["BannerFont"]};padding:14px 18px;border-radius:3px}}',
             ".banner h1{margin:0;font-size:20pt}"
-            ".banner p{margin:4px 0 0;font-size:10pt;opacity:.9}",
+            ".banner p{margin:4px 0 0;font-size:10pt;opacity:.9}"
+            ".banner p.filter{font-style:italic;font-size:9pt;opacity:.95}",
             "table{border-collapse:collapse;width:100%;margin-top:16px;"
             "font-size:9.5pt}",
             f'th{{background:#{style["Header"]};color:#{style["HeaderFont"]};'
@@ -450,6 +704,8 @@ def newHtmlReport(rows: Sequence[Dict[str, Any]], names: Sequence[str],
             f'<div class="banner"><h1>{escapeHtml(title)}</h1>']
     if subtitle:
         html.append(f"<p>{escapeHtml(subtitle)}</p>")
+    if note:
+        html.append(f"<p class=\"filter\">{escapeHtml(note)}</p>")
     html.append("</div><table><thead><tr>")
     for name in names:
         html.append(f"<th>{escapeHtml(name)}</th>")
@@ -627,8 +883,9 @@ def convertDocxToPdfWithLibreOffice(executable: str, docxPath: str,
 def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
                 Columns: Any = (), format_name: str = "corporate",
                 Title: str = "", Subtitle: str = "", HeaderRow: int = 0,
-                OnWordMissing: str = "fail",
-                MaxCellLength: int = 0) -> Dict[str, Any]:
+                OnWordMissing: str = "fail", MaxCellLength: int = 0,
+                ExcludeWhere: Any = "", IncludeWhere: Any = "",
+                SortBy: Any = "") -> Dict[str, Any]:
     """Turn one worksheet into a formatted status report.
 
     Parameters:
@@ -644,9 +901,17 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
         OnWordMissing (str) - fail | html | docx, when no PDF converter is
                               installed.
         MaxCellLength (int) - shorten long cells; 0 never does.
+        ExcludeWhere        - drop rows matching "Column=Value"; several
+                              values with | and several clauses with ;.
+                              e.g. "Bucket=BACKLOG|TODO (Up next)".
+        IncludeWhere        - the inverse: keep ONLY matching rows. Applied
+                              first when both are given.
+        SortBy              - "Column", "Column ASC" or "Column DESC";
+                              several keys with ;. Blanks sort last in both
+                              directions.
     Returns:
-        dict with OutputPath, RowCount, ColumnCount, Columns, FormatType
-        and Renderer.
+        dict with OutputPath, RowCount, ColumnCount, Columns, FormatType,
+        Renderer, RowsBeforeFilter and FilterNote.
     Raises:
         ValueError   - a required parameter is missing or an option unknown.
         FileNotFoundError - the workbook is not there.
@@ -682,6 +947,21 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
     rows = readSheet(ExcelPath, sheet=SheetName, headerRow=HeaderRow)
     logInfo(f"read {len(rows)} row(s) from sheet '{SheetName}'")
 
+    # Filter BEFORE choosing columns, so a filter can name a column the
+    # report does not display.
+    before = len(rows)
+    rows, filterNote = applyRowFilters(rows, ExcludeWhere, IncludeWhere)
+    if filterNote:
+        logInfo(filterNote)
+
+    # Sort after filtering and still before column selection, so a sort can
+    # name a column the report does not display.
+    rows, sortNote = applySort(rows, SortBy)
+    if sortNote:
+        logInfo(sortNote)
+    if sortNote:
+        filterNote = f"{filterNote}  {sortNote}" if filterNote else sortNote
+
     names = selectReportColumns(rows, Columns)
     logInfo(f"keeping {len(names)} column(s): {', '.join(names)}")
 
@@ -690,15 +970,18 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
     banner = Title or Path(ExcelPath).stem
     second = Subtitle or (f"{SheetName}  |  {len(rows)} row(s)  |  generated "
                           f"{__import__('datetime').datetime.now():%d %b %Y %H:%M}")
+    # A report that silently omits rows misleads whoever reads it, and
+    # nothing in the PDF would reveal it, so filterNote goes ON the page --
+    # as its own paragraph, not glued to the subtitle.
     widths = columnWidths(rows, names)
 
     if extension in (".html", ".htm"):
         written = newHtmlReport(rows, names, style, striped, banner, second,
-                                OutputPath, MaxCellLength)
+                                OutputPath, MaxCellLength, filterNote)
         renderer = "html"
     elif extension == ".docx":
         written = newDocx(rows, names, widths, style, striped, banner, second,
-                          OutputPath, MaxCellLength)
+                          OutputPath, MaxCellLength, filterNote)
         renderer = "docx"
     else:
         haveWord = wordAvailable()
@@ -724,17 +1007,19 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
                     f"was set, so writing {alternative} instead of a PDF")
             if OnWordMissing == "docx":
                 written = newDocx(rows, names, widths, style, striped, banner,
-                                  second, alternative, MaxCellLength)
+                                  second, alternative, MaxCellLength,
+                                  filterNote)
                 renderer = "docx-fallback"
             else:
                 written = newHtmlReport(rows, names, style, striped, banner,
-                                        second, alternative, MaxCellLength)
+                                        second, alternative, MaxCellLength,
+                                        filterNote)
                 renderer = "html-fallback"
         else:
             # Both converters read a .docx, so build one first.
             staging = str(Path(OutputPath).with_suffix(".docx"))
             newDocx(rows, names, widths, style, striped, banner, second,
-                    staging, MaxCellLength)
+                    staging, MaxCellLength, filterNote)
             try:
                 if haveWord:
                     logInfo("converting to PDF with Microsoft Word")
@@ -758,7 +1043,9 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
             f"[{format_name}] -> {written} ({size:,} bytes)")
     return {"OutputPath": written, "RowCount": len(rows),
             "ColumnCount": len(names), "Columns": names,
-            "FormatType": format_name, "Renderer": renderer}
+            "FormatType": format_name, "Renderer": renderer,
+            "RowsBeforeFilter": before, "FilterNote": filterNote,
+            "SortNote": sortNote}
 
 
 def buildArgParser() -> argparse.ArgumentParser:
@@ -777,6 +1064,12 @@ def buildArgParser() -> argparse.ArgumentParser:
     parser.add_argument("--on-word-missing", default="fail",
                         choices=list(VALID_ON_WORD_MISSING))
     parser.add_argument("--max-cell-length", type=int, default=0)
+    parser.add_argument("--exclude-where", default="",
+                        help='drop rows, e.g. "Bucket=BACKLOG|TODO (Up next)"')
+    parser.add_argument("--include-where", default="",
+                        help='keep only matching rows, same syntax')
+    parser.add_argument("--sort-by", default="",
+                        help='e.g. "Due date DESC" or "Bucket; Due date DESC"')
     parser.add_argument("--version", action="version",
                         version=f"formatExcel {__version__}")
     return parser
@@ -790,6 +1083,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     OutputPath=args.output_path, Columns=args.columns,
                     format_name=args.format_name, Title=args.title,
                     Subtitle=args.subtitle, HeaderRow=args.header_row,
+                    ExcludeWhere=args.exclude_where,
+                    IncludeWhere=args.include_where, SortBy=args.sort_by,
                     OnWordMissing=args.on_word_missing,
                     MaxCellLength=args.max_cell_length)
     except ValueError as exc:
