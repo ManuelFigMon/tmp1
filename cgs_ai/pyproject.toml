@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cgs_ai"
+version = "0.1.0"
+description = "CGS AI utilities that run inside Snowflake (standard-library only)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "CGS" }]
+keywords = ["snowflake", "regulations.gov", "cms", "public-comments"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Operating System :: OS Independent",
+]
+# No runtime dependencies: stdlib only so it runs in Snowflake's sandbox.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+cgs-ai-regulations = "cgs_ai.regulations:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cgs_ai"]
