@@ -2343,3 +2343,48 @@ def test_the_report_says_on_its_face_that_rows_were_removed(tmp_path):
     text = psPath.read_text(encoding="utf-8")
     assert 'class="filter"' in text
     assert "Showing" in text and "of" in text and "rows" in text
+
+
+# --- -Preflight / --preflight ------------------------------------------------
+
+def test_preflight_reports_without_touching_anything(capsys):
+    """It must need no workbook and write no file."""
+    from src.py.formatExcel import main
+    code = main(["--preflight"])
+    assert code in (0, 3), "0 when a PDF converter exists, 3 when none does"
+    output = capsys.readouterr().err
+    for line in (".xlsx reading", ".docx output", ".html output",
+                 "Microsoft Word", "LibreOffice", "VERDICT"):
+        assert line in output, f"preflight did not report {line!r}"
+
+
+def test_preflight_agrees_with_what_the_renderer_will_actually_do():
+    """The check and the renderer must not be two opinions.
+
+    A hand-written check that drifts from the renderer's own detection
+    would only reveal the disagreement during a real run, which is the
+    worst moment to find out.
+    """
+    from src.py.formatExcel import main, wordAvailable, findLibreOffice
+    canConvert = bool(wordAvailable() or findLibreOffice())
+    assert main(["--preflight"]) == (0 if canConvert else 3)
+
+
+def test_a_real_run_still_demands_its_parameters():
+    """Relaxing argparse for --preflight must not relax the real path."""
+    from src.py.formatExcel import main
+    assert main(["--excel-path", "x.xlsx"]) == 2
+    assert main([]) == 2
+
+
+def test_both_engines_expose_the_same_preflight_switch():
+    """Twins that drift are worse than one engine."""
+    psText = FORMAT_EXCEL.read_text(encoding="utf-8")
+    pyText = (ROOT / "src" / "py" / "formatExcel.py").read_text(encoding="utf-8")
+    assert "[switch]   $Preflight" in psText
+    assert "function Invoke-Preflight" in psText
+    assert '"--preflight"' in pyText
+    assert "def preflight()" in pyText
+    # Both must run the renderer's own detection, not a separate check.
+    assert "Test-WordAvailable" in psText.split("function Invoke-Preflight")[1]
+    assert "wordAvailable()" in pyText.split("def preflight()")[1]

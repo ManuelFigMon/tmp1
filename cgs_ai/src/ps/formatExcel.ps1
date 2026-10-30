@@ -51,6 +51,9 @@
                  first when both are given.
     -SortBy      (optional) "Column", "Column ASC" or "Column DESC";
                  several keys with ;. Blanks sort last in both directions.
+    -Preflight   (optional) report what this machine can produce and stop.
+                 Needs no other parameter. Exit code 0 means PDF works,
+                 3 means only .docx and .html are available.
     -HeaderRow   (optional, default 0 = detect) 1-based header row.
     -OnWordMissing (optional, default "fail") fail | html | docx -- what to
                    do when a .pdf is asked for and NO converter (Word or
@@ -81,7 +84,8 @@ param(
     [int]      $MaxCellLength = 0,
     [string]   $ExcludeWhere  = '',
     [string]   $IncludeWhere  = '',
-    [string]   $SortBy        = ''
+    [string]   $SortBy        = '',
+    [switch]   $Preflight
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -745,8 +749,63 @@ function Convert-DocxToPdf {
     return $PdfPath
 }
 
+function Invoke-Preflight {
+    <# .SYNOPSIS Report what this machine can produce, and change nothing.
+       .OUTPUTS [int] 0 if a PDF can be made, 3 if only .docx and .html can.
+       .NOTES  Runs the SAME Test-WordAvailable and Find-LibreOffice the
+               renderer uses. A separate hand-written check would be a
+               second opinion that can disagree with the first, and the
+               disagreement would only ever surface during a real run.
+
+               Reading only. It opens Word through COM and immediately
+               quits it -- no document, no file, nothing saved. #>
+    Write-CgsInfo "formatExcel $script:Version preflight"
+    Write-CgsInfo (Get-CgsUtilsBanner)
+    Write-CgsInfo ("PowerShell {0} ({1}) on {2}" -f
+                   $PSVersionTable.PSVersion, $PSVersionTable.PSEdition,
+                   [System.Environment]::OSVersion.VersionString)
+
+    Write-CgsInfo ".xlsx reading  : OK (no Excel and no module needed)"
+    Write-CgsInfo ".docx output   : OK (written directly as OOXML)"
+    Write-CgsInfo ".html output   : OK (written directly)"
+
+    $haveWord = Test-WordAvailable
+    if ($haveWord) {
+        Write-CgsInfo "Microsoft Word : FOUND (COM automation answered)"
+    } else {
+        Write-CgsInfo "Microsoft Word : not available"
+    }
+
+    $libreOffice = Find-LibreOffice
+    if ($libreOffice) {
+        Write-CgsInfo "LibreOffice    : FOUND ($libreOffice)"
+    } else {
+        Write-CgsInfo "LibreOffice    : not available"
+    }
+
+    if ($haveWord -or $libreOffice) {
+        $using = if ($haveWord) { 'Microsoft Word' } else { 'LibreOffice' }
+        Write-CgsInfo ".pdf output    : OK -- will convert with $using"
+        Write-CgsInfo "VERDICT: this machine can produce .pdf, .docx and .html."
+        return 0
+    }
+
+    Write-CgsWarn ".pdf output    : NOT AVAILABLE on this machine"
+    Write-CgsWarn "VERDICT: .docx and .html will work; .pdf will not."
+    Write-CgsWarn "  WHY: PowerShell cannot write a PDF by itself. This script makes one by driving Word or LibreOffice, and neither answered."
+    Write-CgsWarn "  FIX 1: run this on a machine with Word installed."
+    Write-CgsWarn "  FIX 2: install LibreOffice, which converts the same file with no licence needed."
+    Write-CgsWarn "  FIX 3: ask for .html instead and print it to PDF from any browser -- no software needed."
+    Write-CgsWarn "  FIX 4: re-run with -OnWordMissing html (or docx) to accept that file instead of a PDF."
+    return 3
+}
+
 function Invoke-Main {
     <# .SYNOPSIS Read, select, render. .OUTPUTS [int] exit code. #>
+    # Before the required-parameter checks: -Preflight is asked on its own,
+    # by somebody who does not yet have a workbook path to hand.
+    if ($Preflight) { return (Invoke-Preflight) }
+
     if (-not $ExcelPath)  { Write-CgsError "required parameter 'ExcelPath' is missing or empty";  return 2 }
     if (-not $SheetName)  { Write-CgsError "required parameter 'SheetName' is missing or empty";  return 2 }
     if (-not $OutputPath) { Write-CgsError "required parameter 'OutputPath' is missing or empty"; return 2 }

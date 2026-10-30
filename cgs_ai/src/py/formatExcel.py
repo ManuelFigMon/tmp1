@@ -1048,14 +1048,62 @@ def formatExcel(ExcelPath: str, SheetName: str, OutputPath: str,
             "SortNote": sortNote}
 
 
+def preflight() -> int:
+    """Report what this machine can produce, and change nothing.
+
+    Parameters: none.
+    Returns: int - 0 if a PDF can be made, 3 if only .docx and .html can.
+
+    Runs the SAME wordAvailable() and findLibreOffice() the renderer uses. A
+    separate hand-written check would be a second opinion that can disagree
+    with the first, and the disagreement would only ever surface during a
+    real run.
+    """
+    logInfo(f"formatExcel {__version__} preflight")
+    logInfo(f"Python {platform.python_version()} on {platform.platform()}")
+    logInfo(".xlsx reading  : OK (no Excel and no module needed)")
+    logInfo(".docx output   : OK (written directly as OOXML)")
+    logInfo(".html output   : OK (written directly)")
+
+    haveWord = wordAvailable()
+    logInfo("Microsoft Word : "
+            + ("FOUND (COM automation answered)" if haveWord
+               else "not available"))
+    libreOffice = findLibreOffice()
+    logInfo("LibreOffice    : "
+            + (f"FOUND ({libreOffice})" if libreOffice else "not available"))
+
+    if haveWord or libreOffice:
+        using = "Microsoft Word" if haveWord else "LibreOffice"
+        logInfo(f".pdf output    : OK -- will convert with {using}")
+        logInfo("VERDICT: this machine can produce .pdf, .docx and .html.")
+        return 0
+
+    logWarn(".pdf output    : NOT AVAILABLE on this machine")
+    logWarn("VERDICT: .docx and .html will work; .pdf will not.")
+    logWarn("  WHY: Python cannot write a PDF from the standard library. "
+            "This module makes one by driving Word or LibreOffice, and "
+            "neither answered.")
+    logWarn("  FIX 1: run this on a machine with Word installed.")
+    logWarn("  FIX 2: install LibreOffice, which converts the same file "
+            "with no licence needed.")
+    logWarn("  FIX 3: ask for .html instead and print it to PDF from any "
+            "browser -- no software needed.")
+    logWarn("  FIX 4: pass OnWordMissing='html' (or 'docx') to accept that "
+            "file instead of a PDF.")
+    return 3
+
+
 def buildArgParser() -> argparse.ArgumentParser:
     """Build the command-line parser. Parameters: none."""
     parser = argparse.ArgumentParser(
         prog="formatExcel.py",
         description="Turn one worksheet into a formatted status report.")
-    parser.add_argument("--excel-path", required=True)
-    parser.add_argument("--sheet-name", required=True)
-    parser.add_argument("--output-path", required=True)
+    parser.add_argument("--excel-path", default="")
+    # Not required=True: --preflight is asked on its own, and argparse
+    # would reject the call before main() ever sees the flag.
+    parser.add_argument("--sheet-name", default="")
+    parser.add_argument("--output-path", default="")
     parser.add_argument("--columns", default="")
     parser.add_argument("--format-name", default="corporate")
     parser.add_argument("--title", default="")
@@ -1070,6 +1118,8 @@ def buildArgParser() -> argparse.ArgumentParser:
                         help='keep only matching rows, same syntax')
     parser.add_argument("--sort-by", default="",
                         help='e.g. "Due date DESC" or "Bucket; Due date DESC"')
+    parser.add_argument("--preflight", action="store_true",
+                        help="report what this machine can produce and stop")
     parser.add_argument("--version", action="version",
                         version=f"formatExcel {__version__}")
     return parser
@@ -1078,6 +1128,14 @@ def buildArgParser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI entry point. Parameters: argv (sequence[str]). Returns: exit code."""
     args = buildArgParser().parse_args(argv)
+    # Before the required-parameter checks: --preflight is asked on its own,
+    # by somebody who does not yet have a workbook path to hand.
+    if args.preflight:
+        return preflight()
+    if not args.excel_path or not args.sheet_name or not args.output_path:
+        logWarn("--excel-path, --sheet-name and --output-path are required "
+                "unless you pass --preflight")
+        return EXIT_CONFIG_ERROR
     try:
         formatExcel(ExcelPath=args.excel_path, SheetName=args.sheet_name,
                     OutputPath=args.output_path, Columns=args.columns,
