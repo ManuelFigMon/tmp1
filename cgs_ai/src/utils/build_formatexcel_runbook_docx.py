@@ -142,15 +142,21 @@ def buildBody() -> str:
     parts.append(para("b) Open PowerShell in that folder.", spaceAfter=80))
     parts.extend(code("cd C:\\code\\python\\cgs_ai\\src\\ps"))
     parts.append(para(
-        "c) Allow the script to run, once per window. Downloaded .ps1 files "
-        "are blocked by default. -Scope Process lasts only for this session, "
-        "changes nothing permanently, and needs no admin rights.",
+        "c) Unblock the files. DO THIS FIRST -- a file copied from "
+        "SharePoint, Teams, email or a browser carries a hidden "
+        "\"downloaded from the internet\" mark, and that mark alone is "
+        "what most policies block. Once per copy, not per session, and it "
+        "needs no admin rights. Re-copying a file re-marks it, so do this "
+        "again every time you replace one.", spaceAfter=80))
+    parts.extend(code("Get-ChildItem .\\*.ps1 | Unblock-File"))
+    parts.append(para(
+        "d) Only if it still will not run: allow the script for this window. "
+        "-Scope Process lasts only for this session and changes nothing "
+        "permanently. On a managed machine this reports that Group Policy "
+        "overrides it -- which is fine, and not a failure, when the "
+        "effective policy is already RemoteSigned. Step c is the fix there.",
         spaceAfter=80))
     parts.extend(code("Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process"))
-    parts.append(para(
-        "d) Unblock the files if they came from SharePoint or email -- once, "
-        "not per session.", spaceAfter=80))
-    parts.extend(code("Unblock-File .\\formatExcel.ps1, .\\cgsUtils.ps1"))
     parts.append(para(
         "Missing cgsUtils.ps1 produces an error that blames the folder "
         "rather than the file -- see \"When it goes wrong\".", spaceAfter=160))
@@ -165,8 +171,11 @@ def buildBody() -> str:
         "everything below them -- including -Scope Process and "
         "powershell -ExecutionPolicy Bypass.", spaceAfter=80))
     for line in (
-        "RemoteSigned wins -- the file is marked as downloaded. "
-        "Unblock-File alone fixes it.",
+        "RemoteSigned wins, from any scope including Group Policy -- local "
+        "unsigned scripts are allowed, so the block is the downloaded mark "
+        "and nothing else. Unblock-File alone fixes it, and you do not need "
+        "Set-ExecutionPolicy at all. Check the mark with: "
+        "Get-Item .\\formatExcel.ps1 -Stream Zone.Identifier",
         "AllSigned wins in CurrentUser or LocalMachine -- "
         "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process fixes it for that window.",
         "AllSigned wins in MachinePolicy or UserPolicy -- you cannot "
