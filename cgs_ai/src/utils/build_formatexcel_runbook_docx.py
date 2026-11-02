@@ -102,34 +102,7 @@ def buildBody() -> str:
         ".\\formatExcel.ps1 -Preflight first: it reports in one command "
         "whether this machine can produce a PDF.", spaceAfter=240))
 
-    # --- 1 ---------------------------------------------------------------
-    parts.append(heading("Step 1 \u2014 Check the machine first"))
-    parts.append(para("Run this before anything else. It needs no workbook, "
-                      "writes no file, and takes a second."))
-    parts.extend(code(".\\formatExcel.ps1 -Preflight"))
-    parts.append(para("On a machine that can do everything:", spaceAfter=80))
-    parts.extend(code(
-        "INFO  .xlsx reading  : OK (no Excel and no module needed)\n"
-        "INFO  .docx output   : OK (written directly as OOXML)\n"
-        "INFO  .html output   : OK (written directly)\n"
-        "INFO  Microsoft Word : FOUND (COM automation answered)\n"
-        "INFO  .pdf output    : OK -- will convert with Microsoft Word\n"
-        "INFO  VERDICT: this machine can produce .pdf, .docx and .html."))
-    parts.append(para(
-        "If no converter is there, the verdict reads \".docx and .html "
-        "will work; .pdf will not\", followed by four numbered fixes.",
-        spaceAfter=80))
-    parts.append(para(
-        "Exit code 0 means PDF works. Exit code 3 means only .docx and .html "
-        "do -- the same 3 the script returns when a real run cannot convert, "
-        "so a scheduled job can branch on it.", spaceAfter=80))
-    parts.append(para(
-        "This runs the script's own Word and LibreOffice detection, not a "
-        "separate check. A hand-written check is a second opinion that can "
-        "disagree with the first, and the disagreement would only surface "
-        "during a real run.", spaceAfter=240))
-
-    # --- 2 ---------------------------------------------------------------
+    # --- dependencies ----------------------------------------------------
     parts.append(heading("What you need \u2014 dependencies"))
     parts.append(para(
         "Nothing to install for .docx or .html. No modules, no "
@@ -153,8 +126,12 @@ def buildBody() -> str:
         "PDF needs EITHER Word or LibreOffice, not both. -Preflight says "
         "which one it will use.", spaceAfter=240))
 
-    # --- 3 ---------------------------------------------------------------
-    parts.append(heading("Step 2 \u2014 Set up the folder"))
+    # --- step 1: set up and unblock --------------------------------------
+    # Before the preflight on purpose: the check cannot run until the
+    # execution policy lets the script load at all, which is the first
+    # thing most people hit.
+
+    parts.append(heading("Step 1 \u2014 Set up and unblock"))
     parts.append(para(
         "a) Put both files in one folder. formatExcel.ps1 dot-sources "
         "cgsUtils.ps1 from its own directory, so one without the other does "
@@ -176,7 +153,57 @@ def buildBody() -> str:
     parts.extend(code("Unblock-File .\\formatExcel.ps1, .\\cgsUtils.ps1"))
     parts.append(para(
         "Missing cgsUtils.ps1 produces an error that blames the folder "
-        "rather than the file -- see \"When it goes wrong\".", spaceAfter=240))
+        "rather than the file -- see \"When it goes wrong\".", spaceAfter=160))
+    parts.append(subheading("If you see \"is not digitally signed\""))
+    parts.append(para(
+        "The policy is AllSigned or RemoteSigned, not Restricted, and the "
+        "two have different fixes. Find out which is in force:", spaceAfter=80))
+    parts.extend(code("Get-ExecutionPolicy -List"))
+    parts.append(para(
+        "The winning scope is the first one in the list with a value set. "
+        "MachinePolicy and UserPolicy come from Group Policy and override "
+        "everything below them -- including -Scope Process and "
+        "powershell -ExecutionPolicy Bypass.", spaceAfter=80))
+    for line in (
+        "RemoteSigned wins -- the file is marked as downloaded. "
+        "Unblock-File alone fixes it.",
+        "AllSigned wins in CurrentUser or LocalMachine -- "
+        "Set-ExecutionPolicy -Scope Process -Bypass fixes it for that window.",
+        "AllSigned wins in MachinePolicy or UserPolicy -- you cannot "
+        "override it. Ask desktop support for an exception, have the script "
+        "signed with an internal certificate, or use the Python twin, which "
+        "no execution policy applies to.",
+    ):
+        parts.append(bullet(line))
+    parts.append(para("", spaceAfter=160))
+
+    # --- step 2: check the machine ---------------------------------------
+    parts.append(heading("Step 2 \u2014 Check the machine"))
+    parts.append(para("Once the script will load, run this before anything "
+                      "else. It needs no workbook, writes no file, and takes "
+                      "a second."))
+    parts.extend(code(".\\formatExcel.ps1 -Preflight"))
+    parts.append(para("On a machine that can do everything:", spaceAfter=80))
+    parts.extend(code(
+        "INFO  .xlsx reading  : OK (no Excel and no module needed)\n"
+        "INFO  .docx output   : OK (written directly as OOXML)\n"
+        "INFO  .html output   : OK (written directly)\n"
+        "INFO  Microsoft Word : FOUND (COM automation answered)\n"
+        "INFO  .pdf output    : OK -- will convert with Microsoft Word\n"
+        "INFO  VERDICT: this machine can produce .pdf, .docx and .html."))
+    parts.append(para(
+        "If no converter is there, the verdict reads \".docx and .html "
+        "will work; .pdf will not\", followed by four numbered fixes.",
+        spaceAfter=80))
+    parts.append(para(
+        "Exit code 0 means PDF works. Exit code 3 means only .docx and .html "
+        "do -- the same 3 the script returns when a real run cannot convert, "
+        "so a scheduled job can branch on it.", spaceAfter=80))
+    parts.append(para(
+        "This runs the script's own Word and LibreOffice detection, not a "
+        "separate check. A hand-written check is a second opinion that can "
+        "disagree with the first, and the disagreement would only surface "
+        "during a real run.", spaceAfter=240))
 
     # --- 4 ---------------------------------------------------------------
     parts.append(heading("Step 3 \u2014 Run it"))
@@ -294,7 +321,13 @@ def buildBody() -> str:
           "folder, not the missing file",
           "Copy both files, not one"],
          ["cannot be loaded because running scripts is disabled",
-          "Execution policy", "Set-ExecutionPolicy -Scope Process -Bypass"],
+          "Execution policy is Restricted",
+          "Set-ExecutionPolicy -Scope Process -Bypass"],
+         ["is not digitally signed",
+          "Policy is AllSigned or RemoteSigned, not Restricted",
+          "Get-ExecutionPolicy -List to see which scope wins; Unblock-File "
+          "for RemoteSigned, -Scope Process Bypass for AllSigned, and "
+          "neither if Group Policy sets it"],
          ["cannot produce a PDF: neither Microsoft Word nor LibreOffice",
           "No converter on this machine",
           "Four numbered fixes print with it; quickest is -OnWordMissing "
