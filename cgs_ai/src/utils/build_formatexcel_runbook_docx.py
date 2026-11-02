@@ -146,7 +146,7 @@ def buildBody() -> str:
         "are blocked by default. -Scope Process lasts only for this session, "
         "changes nothing permanently, and needs no admin rights.",
         spaceAfter=80))
-    parts.extend(code("Set-ExecutionPolicy -Scope Process -Bypass"))
+    parts.extend(code("Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process"))
     parts.append(para(
         "d) Unblock the files if they came from SharePoint or email -- once, "
         "not per session.", spaceAfter=80))
@@ -168,7 +168,7 @@ def buildBody() -> str:
         "RemoteSigned wins -- the file is marked as downloaded. "
         "Unblock-File alone fixes it.",
         "AllSigned wins in CurrentUser or LocalMachine -- "
-        "Set-ExecutionPolicy -Scope Process -Bypass fixes it for that window.",
+        "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process fixes it for that window.",
         "AllSigned wins in MachinePolicy or UserPolicy -- you cannot "
         "override it. Ask desktop support for an exception, have the script "
         "signed with an internal certificate, or use the Python twin, which "
@@ -322,11 +322,12 @@ def buildBody() -> str:
           "Copy both files, not one"],
          ["cannot be loaded because running scripts is disabled",
           "Execution policy is Restricted",
-          "Set-ExecutionPolicy -Scope Process -Bypass"],
+          "Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process"],
          ["is not digitally signed",
           "Policy is AllSigned or RemoteSigned, not Restricted",
           "Get-ExecutionPolicy -List to see which scope wins; Unblock-File "
-          "for RemoteSigned, -Scope Process Bypass for AllSigned, and "
+          "for RemoteSigned, -ExecutionPolicy Bypass -Scope Process for "
+          "AllSigned, and "
           "neither if Group Policy sets it"],
          ["cannot produce a PDF: neither Microsoft Word nor LibreOffice",
           "No converter on this machine",

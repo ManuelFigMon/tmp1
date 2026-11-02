@@ -675,9 +675,18 @@ function New-HtmlReport {
 function Test-WordAvailable {
     <# .SYNOPSIS Is Microsoft Word installed and usable from COM?
        .OUTPUTS [bool] #>
-    if (-not $IsWindows -and $null -ne (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue)) {
-        return $false        # COM automation is Windows-only
+    # $IsWindows exists only in PowerShell 6 and later. Windows PowerShell
+    # 5.1 never defines it, and under Set-StrictMode reading an undefined
+    # variable THROWS rather than returning $null. So its EXISTENCE is
+    # checked before its VALUE, and never in one -and chain: PowerShell
+    # evaluates the left operand first, so an existence test on the right
+    # comes too late to protect the read on the left. That ordering shipped
+    # and broke the script on 5.1, which is most of the estate.
+    $windowsFlag = Get-Variable -Name IsWindows -ErrorAction SilentlyContinue
+    if ($windowsFlag -and -not $windowsFlag.Value) {
+        return $false        # PowerShell 6+ told us this is not Windows
     }
+    # No flag at all means Windows PowerShell 5.1, which only runs on Windows.
     try {
         $word = New-Object -ComObject Word.Application -ErrorAction Stop
         $word.Quit()

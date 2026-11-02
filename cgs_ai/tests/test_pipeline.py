@@ -625,16 +625,30 @@ PWSH = shutil.which("pwsh") or shutil.which("powershell")
 needsPwsh = pytest.mark.skipif(PWSH is None, reason="PowerShell is not installed")
 
 
-def runPwsh(script, *args):
+def runPwsh(script, *args, prelude=""):
     """Run a src/ps script. Returns: CompletedProcess with .output added.
 
     .output is stdout and stderr joined. Which stream a log line lands on
     is a host detail -- it moved once already, when [Console]::Error turned
     out to be invisible in PowerShell ISE -- and no test should depend on it.
+
+    `prelude` runs before the script, in the same session, which needs
+    -Command rather than -File. Used to reproduce a caller's session
+    settings: a user hit a crash under Set-StrictMode that the suite could
+    not see, because -File starts a session with none of it.
     """
-    result = subprocess.run([PWSH, "-NoProfile", "-File", str(PS_DIR / script),
-                             *[str(a) for a in args]],
-                            capture_output=True, text=True, timeout=180)
+    if prelude:
+        # A leading '-' means a parameter name or a switch, and quoting one
+        # turns it into a positional VALUE: '-Preflight' bound to -ExcelPath
+        # and the run died asking for -SheetName.
+        quoted = " ".join(str(a) if str(a).startswith("-")
+                          else f"'{str(a)}'" for a in args)
+        command = f"{prelude}; & '{PS_DIR / script}' {quoted}"
+        argv = [PWSH, "-NoProfile", "-Command", command]
+    else:
+        argv = [PWSH, "-NoProfile", "-File", str(PS_DIR / script),
+                *[str(a) for a in args]]
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=180)
     result.output = (result.stdout or "") + (result.stderr or "")
     return result
 
@@ -1516,11 +1530,34 @@ def test_bad_parameters_are_refused(workload, kwargs):
 
 
 def test_a_linear_workload_scores_about_one(workload):
-    """Reading one row at a time costs the same per row at any size."""
+    """Work that costs the same per row at any size must score near 1.0.
+
+    The first version of this passed by luck. Its workload -- counting to
+    len(data) -- ran in 0.0008s, more than fifty times UNDER the function's
+    own noise floor, and testWorkload flagged every step with a Note that
+    the test never looked at. The index it asserted on was scheduler
+    jitter: across five runs it ranged 0.74 to 1.87 and tripped the
+    assertion about once in three.
+
+    So the work is now heavy enough that BOTH steps are measurable, and the
+    Note is asserted first -- the function already knows when its own
+    numbers are untrustworthy, and a test that ignores that is testing
+    nothing. Over eight runs at these parameters the index held 0.86-1.17
+    with the smallest step at 0.21s.
+    """
+    def linear(data):
+        # Linear in the row count, with a constant big enough to measure.
+        total = 0
+        for _ in range(len(data) * 100):
+            total += 1
+        return total
+
     rows = workload.testWorkload(
-        RowCount=40000, ColumnCount=6, Increment=50, Repeats=3,
-        Work=lambda data: sum(1 for _ in range(len(data))),
-        AsDataFrame=False)
+        RowCount=120000, ColumnCount=6, Increment=50, Repeats=3,
+        Work=linear, AsDataFrame=False)
+    assert all(not row["Note"] for row in rows), (
+        "sized too small to measure anything: "
+        f"{[row['WorkSeconds'] for row in rows]}")
     assert rows[-1]["ScalingIndex"] == pytest.approx(1.0, abs=0.6)
 
 
@@ -1543,9 +1580,16 @@ def test_a_quadratic_workload_is_caught(workload):
     # Sized so BOTH steps clear the noise floor. At a few thousand rows this
     # finished in milliseconds on a fast container, and the index was then
     # measuring scheduler jitter rather than scaling.
+    #
+    # Repeats=3 because a SINGLE sample on the baseline step is what made
+    # this flaky: one slow first step (0.277s against a usual 0.165s)
+    # deflated the ratio to 1.563, just under the assertion, while the true
+    # value is near 2.0. Taking the median of three put the spread at
+    # 2.03-2.31 over six runs, against 2.11-2.64 with one sample -- it is
+    # the BASELINE's noise that matters, since every index divides by it.
     rows = workload.testWorkload(
         RowCount=20000, ColumnCount=4, Increment=50,
-        Work=quadratic, AsDataFrame=False)
+        Work=quadratic, Repeats=3, AsDataFrame=False)
     assert all(not row["Note"] for row in rows), (
         "the test is sized too small to measure anything: "
         f"{[row['WorkSeconds'] for row in rows]}")
@@ -2388,3 +2432,45 @@ def test_both_engines_expose_the_same_preflight_switch():
     # Both must run the renderer's own detection, not a separate check.
     assert "Test-WordAvailable" in psText.split("function Invoke-Preflight")[1]
     assert "wordAvailable()" in pyText.split("def preflight()")[1]
+
+
+def test_no_powershell_6_only_variable_is_read_before_it_is_proven_to_exist():
+    """$IsWindows does not exist in Windows PowerShell 5.1.
+
+    Under Set-StrictMode, reading an undefined variable THROWS rather than
+    returning $null. The first version of Test-WordAvailable guarded it as
+    `-not $IsWindows -and $null -ne (Get-Variable ...)` -- which cannot
+    work, because PowerShell evaluates the LEFT operand first, so the
+    existence check runs after the read it was meant to protect. It shipped
+    and broke -Preflight on 5.1, which is most of the estate.
+
+    The rule this pins: a PowerShell 6+ automatic variable is only ever
+    read through Get-Variable, never bare in a condition.
+    """
+    import re
+    text = FORMAT_EXCEL.read_text(encoding="utf-8")
+    sixOnly = ("IsWindows", "IsLinux", "IsMacOS", "IsCoreCLR")
+    for name in sixOnly:
+        for line in text.splitlines():
+            if f"${name}" not in line or line.strip().startswith("#"):
+                continue
+            assert "Get-Variable" in line, (
+                f"${name} is read bare on this line, which throws under "
+                f"Set-StrictMode on Windows PowerShell 5.1:\n  {line.strip()}")
+            # ...and the read must not sit to the LEFT of its own guard.
+            bare = re.search(r"(-not\s+)?\$%s\b" % name, line)
+            guard = line.index("Get-Variable")
+            assert bare.start() > guard, (
+                f"${name} is read before Get-Variable proves it exists; "
+                f"PowerShell evaluates left to right, so the guard is too "
+                f"late:\n  {line.strip()}")
+
+
+@needsPwsh
+def test_preflight_survives_strict_mode(tmp_path):
+    """The user's session had StrictMode on; the suite's did not."""
+    result = runPwsh("formatExcel.ps1", "-Preflight",
+                     prelude="Set-StrictMode -Version Latest")
+    assert result.returncode in (0, 3), result.output
+    assert "cannot be retrieved because it has not been set" not in result.output
+    assert "VERDICT" in result.output
