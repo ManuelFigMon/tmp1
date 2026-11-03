@@ -90,10 +90,16 @@ const CONFIG = {
        Integrated Security = SSPI, as the SAS server process account. */
     AUTH_MODE: "Windows Authentication (SSPI)",
 
-    /* User Name the stored process runs as. Display only -- this page never
-       sends or stores credentials. The real identity is the SAS server process
-       account configured on the server. */
-    AUTH_USER: "A70ADMED\\731o",
+    /* User Name the DATABASE connection is made as. Display only -- this page
+       never sends or stores credentials.
+
+       NOTE: this is NOT the person signed in to the web application. With
+       Integrated Security the stored process connects as the SAS Stored
+       Process Server service account, confirmed from the SAS log as
+       A70ADMED\SVC_CGSUSASSRV in UNIT. That account must hold a SQL Server
+       login and SELECT on the target view, or every request fails with
+       "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'". See README.md. */
+    AUTH_USER: "A70ADMED\\SVC_CGSUSASSRV",
 
     /* =========================================================================
      * 2. SAS STORED PROCESS BRIDGE

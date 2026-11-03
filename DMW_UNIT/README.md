@@ -68,10 +68,44 @@ Edit the configuration block at the top of `dmw_run.sas`:
 | `DMW_MAXROWS` | `5000` | Row cap; `0` disables it |
 | `DMW_LOGFOLDER` | UNC log path | Empty value disables server-side logging |
 
-With `DMW_TRUSTED = 1` the connection is made as the **SAS server process account**
-(`A70ADMED\731o` in UNIT). That account's database permissions are the real security
-boundary -- grant it read access to the target view and nothing more. No credentials
-are stored in the file.
+### The database identity is the SAS service account, not the signed-in user
+
+With `DMW_TRUSTED = 1` the connection is made as the **SAS Stored Process Server
+service account** -- in UNIT, `A70ADMED\SVC_CGSUSASSRV`. It is **not** made as the
+person who signed in to the web application. This is the single most common reason a
+first query fails:
+
+```
+SYSDBMSG = OLEDB: Unable to Initialize: Login failed for user 'A70ADMED\SVC_CGSUSASSRV'.
+SYSDBRC  = 28000
+```
+
+The remedy is a one-time grant from the DBA on `A70TUCGSDATA012.A70ADMED.COM`:
+
+```sql
+USE [master];
+CREATE LOGIN [A70ADMED\SVC_CGSUSASSRV] FROM WINDOWS;
+
+USE [OHM_CGSScheduler];
+CREATE USER [A70ADMED\SVC_CGSUSASSRV] FOR LOGIN [A70ADMED\SVC_CGSUSASSRV];
+GRANT SELECT ON [dbo].[View_Scheduler_PBI_Dashboard] TO [A70ADMED\SVC_CGSUSASSRV];
+```
+
+Confirm the account name against your own SAS log before asking for the grant -- run
+the page once with `SAS_DEBUG: 1` and read `SYSDBMSG`; the failing account is named in
+the message. Grant `SELECT` on the target view and nothing more.
+
+Two consequences follow. Every DMW user shares one database identity, so the database
+cannot distinguish who ran a statement -- use the server-side log at `DMW_LOGFOLDER`,
+which records the SAS `_METAPERSON`, for that. And per-user database identity is not
+achievable by configuration here; it would require Kerberos constrained delegation
+across the browser, the mid-tier and the stored process server.
+
+If the DBA will not grant the service account a login, set `DMW_TRUSTED = 0` and
+supply `DMW_USER` / `DMW_PASS` -- preferably through a SAS authdomain rather than
+literals in the file.
+
+No credentials are stored in `dmw_run.sas` in either case.
 
 ### 3. Deploy the web page
 
@@ -155,7 +189,9 @@ registered without `nosastags`.
 | A SAS logon page appears in the Console tab instead of data | No active SAS session. Press **Logon**. |
 | HTML wrapped around the JSON | Result type is not **Streaming** in SMC. |
 | `provider not registered` | Change `DMW_PROVIDER` in `dmw_run.sas`. |
-| Login failed for user | The SAS server process account lacks permission on the view. |
+| `Login failed for user 'A70ADMED\SVC_CGSUSASSRV'` (`SYSDBRC = 28000`) | The SAS service account has no SQL Server login. Not a code defect — see "The database identity is the SAS service account" above for the grant. |
+| `ERROR 180-322: Statement is not valid or it is used out of proper order`, pointing at `Integrated Security=SSPI` | An OLE DB init string was built with `%LET`. A semicolon ends a `%LET` statement, so only `Provider=...` is assigned and the rest runs as SAS statements. Fixed in the current `dmw_run.sas`, which builds the string in a DATA step; if you see this you are running an older copy. |
+| The browser shows a SAS "Stored Process Error" page instead of the JSON `{"error":...}` | A SAS syntax error aborted the program before it could write to `_webout`. Press **Show SAS Log** on that page and read the first red `ERROR`. |
 | Nothing happens from `file://` | Serve the page over http(s). |
 | Stale behaviour after editing `CONFIG` | **Clear Cache & Reload**, or Ctrl+F5. |
 
@@ -164,5 +200,8 @@ registered without `nosastags`.
 - The stored process executes SQL supplied over HTTP. The `SELECT` check is a guard,
   not a sandbox. Grant the stored process identity only the database permissions it
   genuinely needs.
-- `debug_mode` output goes to the SAS log only, never to the HTTP response.
+- Every DMW user shares one database identity, the SAS service account. The database
+  audit trail cannot attribute a statement to a person; the `DMW_LOGFOLDER` log can.
+- `debug_mode` output goes to the SAS log only, never to the HTTP response, and the
+  init string is echoed with any `Password=` value masked.
 - Lower `DMW_MAXROWS` if the page should not be able to pull large result sets.

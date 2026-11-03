@@ -66,9 +66,14 @@
     * This program executes SQL supplied over HTTP. The SELECT check below is a
       guard, not a sandbox. Grant the stored process identity only the database
       permissions it genuinely needs -- read access to the target view.
-    * With Integrated Security the connection runs as the SAS server process
-      account (A70ADMED\731o in UNIT). That account's permissions are the real
-      security boundary.
+    * With Integrated Security the connection runs as the SAS Stored Process
+      Server's SERVICE ACCOUNT -- in UNIT that is A70ADMED\SVC_CGSUSASSRV, NOT
+      the person who signed in to the web application. Confirmed from the SAS
+      log. That account's permissions are the real security boundary, and it
+      needs a SQL Server login plus SELECT on the target view or every request
+      fails with "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'".
+      Every DMW user therefore shares one database identity; per-user identity
+      would require Kerberos constrained delegation end to end.
     * Credentials are never placed in this file. SSPI uses the process account.
     * Consider tightening DMW_MAXROWS below if the page should not be able to
       pull unbounded result sets.
@@ -100,10 +105,22 @@
 
 /* Authentication.
      1 = Windows Authentication (Integrated Security = SSPI). The connection is
-         made as the SAS server process account, which in UNIT is A70ADMED\731o.
-         No credentials are stored anywhere.
+         made as the SAS Stored Process Server SERVICE ACCOUNT -- in UNIT,
+         A70ADMED\SVC_CGSUSASSRV -- and NOT as the signed-in user. No
+         credentials are stored anywhere.
+         PREREQUISITE: that account needs a SQL Server login on
+         &DMW_SERVER and SELECT on the target view. Without it every request
+         returns "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'". Ask the DBA
+         for:
+             USE [master];
+             CREATE LOGIN [A70ADMED\SVC_CGSUSASSRV] FROM WINDOWS;
+             USE [OHM_CGSScheduler];
+             CREATE USER [A70ADMED\SVC_CGSUSASSRV] FOR LOGIN [A70ADMED\SVC_CGSUSASSRV];
+             GRANT SELECT ON [dbo].[View_Scheduler_PBI_Dashboard]
+                   TO [A70ADMED\SVC_CGSUSASSRV];
      0 = SQL Server authentication. Supply DMW_USER and DMW_PASS below; prefer a
-         SAS authdomain or metadata-stored credentials over literals here. */
+         SAS authdomain or metadata-stored credentials over literals here. Use
+         this if the DBA will not grant the service account a login. */
 %let DMW_TRUSTED  = 1;
 %let DMW_USER     = ;
 %let DMW_PASS     = ;
@@ -181,16 +198,39 @@
       Build the OLE DB init string from the configuration block.
       Integrated Security (SSPI) uses the SAS server process account and
       carries no credentials; the SQL authentication branch supplies them.
+
+      An OLE DB init string is semicolon-delimited, and a semicolon ENDS a
+      %LET statement -- so the string must NOT be built with %LET. Doing that
+      assigns only "Provider=..." and SAS then tries to run the remainder as
+      statements, producing "ERROR 180-322: Statement is not valid or it is
+      used out of proper order" for each fragment. Build it in a DATA step
+      instead, where semicolons inside a quoted string are ordinary
+      characters, and hand it back with CALL SYMPUTX.
     --------------------------------------------------------------*/
     %local _init;
+    data _null_;
+        length init $1000;
     %if &DMW_TRUSTED = 1 %then %do;
-        %let _init = Provider=&DMW_PROVIDER;Integrated Security=SSPI;Persist Security Info=True;Initial Catalog=&DMW_CATALOG;Data Source=&DMW_SERVER,&DMW_PORT;
+        init = "Provider=&DMW_PROVIDER;Integrated Security=SSPI;Persist Security Info=True;Initial Catalog=&DMW_CATALOG;Data Source=&DMW_SERVER,&DMW_PORT";
     %end;
     %else %do;
-        %let _init = Provider=&DMW_PROVIDER;User ID=&DMW_USER;Password=&DMW_PASS;Persist Security Info=True;Initial Catalog=&DMW_CATALOG;Data Source=&DMW_SERVER,&DMW_PORT;
+        init = "Provider=&DMW_PROVIDER;User ID=&DMW_USER;Password=&DMW_PASS;Persist Security Info=True;Initial Catalog=&DMW_CATALOG;Data Source=&DMW_SERVER,&DMW_PORT";
     %end;
+        call symputx('_init', init);
+    run;
 
-    %if &debug_mode=1 %then %put NOTE: [DEBUG] Target=&DMW_SERVER,&DMW_PORT catalog=&DMW_CATALOG trusted=&DMW_TRUSTED;
+    /* Debug trace. The init string is echoed with the password removed so a
+       SQL-authentication password never reaches the SAS log. */
+    %if &debug_mode=1 %then %do;
+        %put NOTE: [DEBUG] Target=&DMW_SERVER,&DMW_PORT catalog=&DMW_CATALOG trusted=&DMW_TRUSTED;
+        data _null_;
+            length safe $1000;
+            /* [^;]+ is used rather than a star quantifier so the pattern does
+               not contain a comment-closing sequence. */
+            safe = prxchange('s/Password=[^;]+/Password=masked/i', -1, symget('_init'));
+            put "NOTE: [DEBUG] init_string=" safe;
+        run;
+    %end;
 
     /*--------------------------------------------------------------
       Execute SQL (explicit pass-through)
@@ -215,13 +255,22 @@
         %let _dberr = %superq(sysdbmsg);
         %put ERROR: [dmw_run] Pass-through failed. &_dberr;
         data _null_;
-            length msg $2000;
+            length msg $2000 json $4000;
             file _webout lrecl=32767;
             msg = symget('_dberr');
-            msg = tranwrd(msg,'\','\\');
+            msg = tranwrd(msg,'\','\\');     /* escape for JSON */
             msg = tranwrd(msg,'"','\"');
             msg = compbl(msg);
-            put '{"error":"SQL execution failed against &DMW_SERVER/&DMW_CATALOG. ' msg +(-1) '"}';
+            /* Assemble the whole object in one variable, then write it with PUT
+               and a trailing +(-1) so no padding blanks reach the response.
+               Note the server and catalog must be concatenated in -- macro
+               variables do not resolve inside single quotes, and single quotes
+               are needed because the JSON itself contains double quotes. */
+            json = '{"error":"SQL execution failed against '
+                || "&DMW_SERVER/&DMW_CATALOG"
+                || '. ' || strip(msg) || '"}';
+            jlen = length(json);
+            put json $varying4000. jlen;
         run;
         %return;
     %end;
