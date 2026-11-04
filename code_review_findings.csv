@@ -1,0 +1,16 @@
+#,Severity,Category,Issue,Location (line),Recommended Fix
+1,Critical,Air-gap / Dependency,CDN Lodash import violates air-gapped requirement; also unused,1190,Remove the script tag (Lodash is never used) or load from local scripts/lodash.min.js
+2,Critical,Race condition,SAS_CONFIG undefined race condition on Logon/SignOut,"2581, 2592",Guard handleLogon/handleSignOut with a null check on window.SAS_CONFIG or disable Logon until loadConfig() resolves
+3,Critical,Storage,sessionStorage overflow for large datasets with no error handling,"2108, 2147",Wrap setItem in try/catch with user message; or pass data via BroadcastChannel instead of serializing
+4,High,CSV correctness,convertJSONToCSV misses newline quoting producing malformed CSV,2062,Add || value.includes('\n') || value.includes('\r') to the quoting condition
+5,High,Data loss,applyDistinct pipe-character key collision silently drops rows,2044,Use JSON.stringify(columns.map(col => row[col])) as the dedupe key
+6,High,Filter logic,<> operator only does string comparison (skips numeric),2016,Mirror the numeric+string comparison logic used by the = case
+7,High,Filter logic,Numeric operators silently exclude all rows on non-numeric input,2018-2024,Validate the value parses as a number before applying; show validation message otherwise
+8,High,Correctness,TOP 5 shown in SQL preview but not enforced on file-based fetches,1685,Slice file results to TOP N on the client or make the limit configurable and document it
+9,High,Memory leak,URL.createObjectURL without revokeObjectURL,2216-2224,Call URL.revokeObjectURL(url) after link.click()
+10,High,CSV parsing,parseCSV splits on bare comma and breaks quoted fields,1210-1218,Use a proper CSV parser that respects quoted fields containing commas
+11,Medium,UI state,resetForm does not hide the API URL preview panel,2229,Add apiUrlPreviewWrap.style.display = 'none' to resetForm
+12,Medium,Config,Power BI report URL hardcoded in HTML,2177,Move the URL into data_config.json or sas_config.json
+13,Medium,Maintainability,Duplicate document-level click/keydown listeners,"1375, 1387, 1428, 1444",Merge into single click and single keydown handlers
+14,Medium,Efficiency,Profile loaded from localStorage twice in saveCurrentQuery,"2405, 2424",Compute the new index from the in-memory profile object before saving
+15,Medium,CSP / Style,Inline onclick strings in dynamically built HTML,"1600, 1630-1657",Build DOM elements programmatically and attach listeners with addEventListener
