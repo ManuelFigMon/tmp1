@@ -17,6 +17,7 @@
 
 %include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\cgsCore.sas";
 %include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\cgsFunctions.sas";
+%include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\logConnection.sas";
 
 /* Optional per-run overrides */
 %*let PS_FOLDER_PATH     = \\a70admed.com\R1\...\cgs_ai\src\ps\;
@@ -185,6 +186,29 @@ Use and distribution limited solely to authorized personnel.<br>
   extract_keyword=%str(real time),
   output_file_path=\\...\cgs_ai\data\scan.csv,
   metric_profile=sas_log,
+  debug=1
+);
+*;
+
+/* --- N. logConnection: log connections to the spawner port ---------------
+   Pure SAS (needs XCMD). Runs on the SAS server, so submit it from a
+   SEPARATE Enterprise Guide session; it keeps the session busy until done.
+   The PowerShell twin (src\ps\logConnection.ps1) also runs on your own PC
+   with -server_host to log the client side and test that the port answers. */
+%*
+%logConnection(
+  port=8591,
+  interval_seconds=60,
+  duration_minutes=480,
+  client_ip=10.0.0.25,
+  output_file_path=D:\Temp\sas_conn_log_before.csv
+);
+*;
+
+/* --- O. logConnection: DEBUG, print the plan WITHOUT running it --------- */
+%*
+%logConnection(
+  output_file_path=D:\Temp\sas_conn_log_test.csv,
   debug=1
 );
 *;
