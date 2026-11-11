@@ -1,0 +1,2447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Stop a stale copy being served after you edit the CONFIG block below. -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <title>DMW -- IT Management Solution v2</title>
+
+<!-- =============================================================================
+     CONFIGURATION BLOCK
+     =============================================================================
+     Deliberately placed in the document head, above all CSS and markup, so it is
+     the first thing you see when you open this file. Nothing below this block
+     needs to be edited to point the application at a different server, database
+     or query.
+     ========================================================================== -->
+<script>
+/* =============================================================================
+ * DMW (Data Mart Workbench) -- IT Management Solution
+ * CONFIGURATION
+ * =============================================================================
+ *
+ * HOW THIS APPLICATION REACHES THE DATABASE
+ * -----------------------------------------
+ * A browser cannot connect to Microsoft SQL Server. SQL Server speaks the TDS
+ * protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw
+ * TCP socket API -- only HTTP(S), WebSocket and WebRTC. Windows Authentication
+ * additionally needs OS-level credential delegation that a sandboxed page is
+ * never granted.
+ *
+ * This page therefore calls the SAS Stored Process Web Application, which you
+ * already run. The stored process dmw_run.sas holds the OLE DB connection and
+ * returns the result set as a JSON array:
+ *
+ *     This page  --HTTPS + &dmq_query=<SQL>-->  dmw_run (SAS)  --OLEDB-->  SQL Server
+ *
+ * Nothing is installed on the workstation. Registering dmw_run in SAS Management
+ * Console is a configuration task; see DMW_UNIT/README.md.
+ *
+ * TWO BROWSER REQUIREMENTS
+ * ------------------------
+ *   1. You need an active SAS session in this browser. Press "Logon" in the top
+ *      right; the page then sends your SAS session cookie automatically. No
+ *      password is ever collected or stored by this page.
+ *   2. The page must be served over http(s), ideally from the same web server as
+ *      SAS. Opening it from file:// will always be blocked by browser origin
+ *      rules for the live call.
+ *
+ * EDITING
+ * -------
+ *   1. Change the values in CONFIG below.
+ *   2. Save the file.
+ *   3. Refresh the browser (Ctrl+F5, or use Clear Cache & Reload in the header).
+ * ============================================================================= */
+const CONFIG = {
+
+    /* -------------------------------------------------------------------------
+     * APPLICATION IDENTITY
+     * ---------------------------------------------------------------------- */
+    APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
+    APP_VERSION: "v2.0",
+    APP_SUBTITLE:"Scheduler job monitoring, SLA overview and report performance",
+
+    /* =========================================================================
+     * 1. SQL SERVER TARGET
+     * =========================================================================
+     * These values are displayed in the interface and written into the SAS
+     * OLEDB snippet shown on the Connection tab. The connection itself is made
+     * by the stored process, so THESE MUST MATCH the DMW_* macro variables at
+     * the top of dmw_run.sas. Changing them here alone does not re-point the
+     * database connection.
+     * ====================================================================== */
+
+    /* Server Name: host or fully qualified domain name of the SQL Server. */
+    SERVER_HOST: "A70TUCGSDATA012.A70ADMED.COM",
+
+    /* Listening port. SQL Server defaults to 1433. */
+    PORT: 1433,
+
+    /* Database Name (Initial Catalog). */
+    INITIAL_CATALOG: "OHM_CGSScheduler",
+
+    /* Authentication mode shown in the interface.
+       Windows Authentication means the stored process connects with
+       Integrated Security = SSPI, as the SAS server process account. */
+    AUTH_MODE: "Windows Authentication (SSPI)",
+
+    /* User Name the DATABASE connection is made as. Display only -- this page
+       never sends or stores credentials.
+
+       NOTE: this is NOT the person signed in to the web application. With
+       Integrated Security the stored process connects as the SAS Stored
+       Process Server service account, confirmed from the SAS log as
+       A70ADMED\SVC_CGSUSASSRV in UNIT. That account must hold a SQL Server
+       login and SELECT on the target view, or every request fails with
+       "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'". See README.md. */
+    AUTH_USER: "A70ADMED\\SVC_CGSUSASSRV",
+
+    /* =========================================================================
+     * 2. SAS STORED PROCESS BRIDGE
+     * =========================================================================
+     * SAS_BASE_URL   Stored Process Web Application entry point. Must end in
+     *                "_program=". This is the same base URL the existing DMQ
+     *                query builder uses.
+     *
+     * SAS_PROGRAM    SMC metadata path of the stored process. Register
+     *                dmw_run.sas here. Copy the path from SMC exactly,
+     *                including capitalisation and spaces.
+     *
+     * SAS_QUERY_PARAM  Name of the query-string parameter carrying the SQL.
+     *                dmw_run.sas reads "dmq_query"; keep this value unless you
+     *                rename the parameter in the stored process as well.
+     *
+     * SAS_LOGON_PROGRAM  Stored process that performs the SAS logon redirect
+     *                and returns here with ?userid=...&sasAuth=1. Leave as-is
+     *                if you already use sas_auth_redirect.
+     *
+     * SAS_LOGOUT_URL SAS Logon logout endpoint, used by Sign out.
+     *
+     * SAS_DEBUG      0 or 1. When 1 the stored process writes the statement,
+     *                row count and elapsed time to the SAS log.
+     * ====================================================================== */
+    SAS_BASE_URL:       "https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=",
+    SAS_PROGRAM:        "/User Folders/731o/My Folder/dmw_run",
+    SAS_QUERY_PARAM:    "dmq_query",
+    SAS_LOGON_PROGRAM:  "/User Folders/731o/My Folder/sas_auth_redirect",
+    SAS_LOGOUT_URL:     "https://cgssaswebu.a70admed.com/SASLogon/logout",
+    SAS_DEBUG:          0,
+
+    /* Milliseconds to wait for the stored process before aborting. Raise this
+       for queries over large views. */
+    REQUEST_TIMEOUT_MS: 60000,
+
+    /* When true, every request carries a cache-busting parameter and a
+       no-store directive so a response is never reused. */
+    DISABLE_CACHE: true,
+
+    /* Run the initial query automatically as soon as a SAS session is detected.
+       Set false to require an explicit "Run Query" press. */
+    AUTO_RUN_ON_LOGON: true,
+
+    /* =========================================================================
+     * 3. INITIAL SQL STATEMENT
+     * =========================================================================
+     * This statement is sent to dmw_run on start-up (and whenever Run Query is
+     * pressed). It is fully editable in the SQL pane at run time; this value is
+     * simply the default that loads.
+     *
+     * Keep it to a SELECT -- the stored process rejects anything else and
+     * returns an empty array.
+     * ====================================================================== */
+    INITIAL_SQL: `SELECT TOP (1000)
+       v.[RequestID]
+      ,v.[JobID]
+      ,v.[JobName]
+      ,v.[Frequency]
+      ,v.[Status]
+      ,v.[RequestedBy]
+      ,v.[RequestedDatetime]
+      ,v.[LastUpdateDatetime]
+      ,v.[CompletedDatetime]
+      ,v.[ResponseMessage]
+      ,v.[JobLogFile]
+      ,v.[ProgramLogFile]
+      ,v.[LoggingInstanceID]
+      ,v.[Timeout]
+      ,v.[AdHocID]
+      ,v.[AlertID]
+      ,j.[JobTimeOfDay]
+      ,j.[JobDayOfWeek]
+      ,j.[JobDayOfMonth]
+      ,j.[RunsOnBusinessDay]
+      ,j.[RunsOnHoliday]
+      ,j.[JobMonthOfYear]
+      ,j.[Interval]
+      ,j.[IntervalType]
+      ,j.[ExecutionWindowStart]
+      ,j.[ExecutionWindowEnd]
+      ,j.[EffectiveStart]
+      ,j.[EffectiveEnd]
+      ,j.[LastRunDatetime]
+      ,j.[Enabled]
+      ,j.[RunOnNextValidWorkday]
+      ,j.[LineOfBusiness]
+      ,j.[TypeOfJob]
+      ,j.[RunOnExactTime]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard] v
+  LEFT JOIN [OHM_CGSScheduler].[dbo].[Job] j
+         ON j.[JobID] = v.[JobID]
+ ORDER BY v.[RequestedDatetime] DESC`,
+
+    /* =========================================================================
+     * 4. SAVED QUERIES
+     * =========================================================================
+     * Appear in the "Saved Queries" dropdown on the toolbar. Index 0 is the
+     * entry that corresponds to INITIAL_SQL. Add objects with a name and a sql
+     * property to extend the list.
+     * ====================================================================== */
+    SAVED_QUERIES: [
+        {
+            name: "1. Scheduler Dashboard - All Jobs (Top 1000)",
+            sql: null   /* null means: use INITIAL_SQL above */
+        },
+        {
+            name: "2. Failed Jobs Only",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [CompletedDatetime], [ResponseMessage]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [Status] LIKE '%Fail%' OR [Status] LIKE '%Error%'
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "3. Currently Running / In Progress",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [LastUpdateDatetime], [Timeout]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [CompletedDatetime] IS NULL
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "4. Job Volume by Status",
+            sql: `SELECT [Status], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Status]
+ ORDER BY JobCount DESC`
+        },
+        {
+            name: "5. Job Volume by Frequency",
+            sql: `SELECT [Frequency], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Frequency]
+ ORDER BY JobCount DESC`
+        }
+    ],
+
+    /* =========================================================================
+     * 5. GRID BEHAVIOUR  (AG Grid)
+     * =========================================================================
+     * GRID_PAGE_SIZE       Rows per page in the results grid.
+     * GRID_PAGE_SIZES      Options offered in the page-size selector.
+     * GRID_THEME           AG Grid CSS theme class. ag-theme-alpine ships in
+     *                      the styles/ folder beside this file.
+     * DASHBOARD_GROUP_BY   Column the "Generate Dashboard" view summarises by.
+     * VISUALIZE_GROUP_BY   Column the "Visualize Data" bar chart counts by.
+     * ====================================================================== */
+    GRID_PAGE_SIZE: 50,
+    GRID_PAGE_SIZES: [25, 50, 100, 500, 1000],
+    GRID_THEME: "ag-theme-alpine",
+    DASHBOARD_GROUP_BY: "Status",
+    VISUALIZE_GROUP_BY: "Status",
+
+    /* =========================================================================
+     * 6. COLUMN METADATA  (the "i" icon beside every column name)
+     * =========================================================================
+     * METADATA_CSV_PATH is resolved RELATIVE TO THIS HTML FILE. The CSV is an
+     * external file that must sit in the SAME FOLDER as this page -- it is not
+     * embedded, so it can be maintained by the data stewards without anyone
+     * editing HTML.
+     *
+     * Format is identical to query_builder_with_metadata_csv_v1_21.html:
+     *   LOB, PHYSICAL_COLUMN_NAME, LOGICAL_COLUMN_NAME, TABLE_COLUMN_NAME,
+     *   DESCRIPTION, LONG_DESCRIPTION, LOAD_FREQUENCY
+     * Rows are matched to grid columns on PHYSICAL_COLUMN_NAME, case-insensitively.
+     * ====================================================================== */
+    METADATA_CSV_PATH: "column_metadata.csv",
+    METADATA_ENABLED: true,
+
+    /* =========================================================================
+     * 7. EDITABLE COLUMNS  (the pencil icon)
+     * =========================================================================
+     * Columns listed here get a pencil icon in the header and open an editor
+     * when clicked. Each needs a stored process that accepts no SQL.
+     * JobName is written to [dbo].[Job] keyed on JobID -- see
+     * dmw_update_jobname.sas for why the view itself is not updated.
+     * ====================================================================== */
+    EDITABLE_COLUMNS: {
+        JobName: {
+            program:   "/User Folders/731o/My Folder/dmw_update_jobname",
+            keyColumn: "JobID",
+            maxLength: 200,
+            label:     "Job Name"
+        }
+    },
+
+    /* =========================================================================
+     * 8. HOME TAB -- SLA OVERVIEW DATA SOURCES
+     * =========================================================================
+     * Both files are written by the PowerShell scanners in ps1\ and are read
+     * straight from disk by this page. No stored process is involved, so the
+     * Home tab works before any SAS session exists.
+     *
+     *   SERVER_STATUS_CSV   <- Check-SASServers_v2.0.ps1
+     *   SERVICE_STATUS_CSV  <- Check-ObjectSpawner_v1.0.ps1
+     * ====================================================================== */
+    SERVER_STATUS_CSV:  "data/sas_server_status.csv",
+    SERVICE_STATUS_CSV: "data/objectspawner_status.csv",
+
+    /* Hours of history to chart on the Home tab. */
+    UPTIME_WINDOW_HOURS: 336,          /* 14 days */
+    /* A sweep older than this makes the Home tab show the data as stale. */
+    STATUS_STALE_MINUTES: 30,
+    /* Auto-refresh the Home tab, in seconds. 0 disables. */
+    HOME_REFRESH_SECONDS: 300,
+
+    /* =========================================================================
+     * 9. VISUALIZATIONS TAB -- REPORT PERFORMANCE
+     * =========================================================================
+     * Written by:  scanFileSystem.ps1 -metric_profile sas_log
+     * One row per SAS log file, carrying CPU time, real time and step counts.
+     * ====================================================================== */
+    SAS_LOG_METRICS_CSV: "data/sas_log_metrics.csv",
+    VIZ_TOP_N: 12,                     /* programs shown in the CPU breakdown */
+
+    /* =========================================================================
+     * 10. ASK DMW  -- Copilot Studio agent, embedded
+     * =========================================================================
+     * Short-term demo: the agent is embedded as an iframe rather than wired in
+     * through an API, so there is no integration code, no API key and no CORS
+     * configuration in this page.
+     *
+     * NOTE ON LICENSING: an embeddable agent requires Copilot Studio. The free
+     * agent builder included with M365 Copilot cannot be embedded -- it only
+     * runs inside the Microsoft 365 Copilot app.
+     * ====================================================================== */
+    ASK_DMW_ENABLED: true,
+    ASK_DMW_URL: "https://www.office365.us/chat/?titleId=T_6bf356fc-aeac-71f5-1498-5ac17ec0a62e&source=embedded-builder",
+
+    /* =========================================================================
+     * 11. SECURITY TAB
+     * =========================================================================
+     * The software delivery and hotfix flow, drawn inline as SVG so the page
+     * stays air-gapped and the diagram scales without an image asset.
+     * ====================================================================== */
+    SECURITY_ENABLED: true
+};
+</script>
+
+    <link rel="stylesheet" href="styles/ag-grid.css">
+    <link rel="stylesheet" href="styles/ag-theme-alpine.css">
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            font-size: 11px;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ---- Header (reused from the DMW Query Builder) ---- */
+        .header {
+            background: #4a7ba7;
+            color: #fff;
+            padding: 15px 20px;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 16px; font-weight: 600; }
+        .header p  { font-size: 11px; opacity: .95; margin-top: 3px; }
+
+        .top-nav {
+            position: absolute; top: 15px; right: 70px;
+            display: flex; gap: 15px; align-items: center;
+        }
+        .top-nav a {
+            color: #fff; text-decoration: none; font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 3px; transition: background .2s;
+        }
+        .top-nav a:hover { background: rgba(255,255,255,.15); }
+
+        #nav-welcome {
+            color: #d4f5d4; font-size: 11px; font-weight: 700;
+            padding: 5px 10px; display: none;
+        }
+
+        /* ---- Hamburger + dropdown (reused) ---- */
+        .hamburger-container { position: absolute; top: 15px; right: 20px; }
+        .hamburger {
+            width: 30px; height: 30px; background: transparent; border: none;
+            cursor: pointer; padding: 5px; display: flex; flex-direction: column;
+            justify-content: center; gap: 4px; border-radius: 3px; transition: background .2s;
+        }
+        .hamburger:hover { background: rgba(255,255,255,.15); }
+        .hamburger span { display: block; width: 20px; height: 2px; background: #fff; transition: all .3s; }
+        .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+
+        .dropdown-menu {
+            position: absolute; top: 50px; right: 20px; background: #fff;
+            border: 1px solid #c0c0c0; border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15);
+            min-width: 210px; display: none; z-index: 1000;
+        }
+        .dropdown-menu.active { display: block; }
+        .dropdown-menu a {
+            display: block; padding: 12px 20px; color: #333; text-decoration: none;
+            font-size: 11px; font-weight: 600; border-bottom: 1px solid #f0f0f0;
+            transition: background .2s;
+        }
+        .dropdown-menu a:last-child { border-bottom: none; }
+        .dropdown-menu a:hover { background: #f8f8f8; }
+        .dropdown-menu a.dashboard-item { color: #4a7ba7; }
+        .dropdown-menu a.visualize-item { color: #7b4aa7; }
+        .dropdown-menu a.export-item    { color: #2e7d32; }
+
+        /* ---- Toolbar ---- */
+        .toolbar {
+            background: #fff; border-bottom: 1px solid #d0d7de;
+            padding: 8px 16px; display: flex; gap: 8px; align-items: center;
+            flex-wrap: wrap; flex-shrink: 0;
+        }
+        .btn {
+            padding: 6px 12px; font-size: 11px; border: 1px solid transparent;
+            border-radius: 4px; cursor: pointer; font-weight: 600;
+            font-family: inherit;
+        }
+        .btn-primary   { background: #4a7ba7; color: #fff; }
+        .btn-primary:hover { background: #3a6b97; }
+        .btn-run       { background: #16a34a; color: #fff; }
+        .btn-run:hover { background: #22c55e; }
+        .btn-secondary { background: #e6e9ed; color: #222; border-color: #c0c7cf; }
+        .btn-secondary:hover { background: #d6dae0; }
+        .btn-warn      { background: #92400e; color: #fff; border-color: #b45309; }
+        .btn-warn:hover{ background: #b45309; }
+        .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .toolbar input[type="search"] {
+            padding: 6px 10px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 12px; min-width: 240px;
+        }
+        .toolbar select {
+            padding: 5px 8px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 11px; background: #fff; max-width: 300px;
+        }
+        .toolbar label { font-size: 11px; color: #555; font-weight: 600; }
+
+        /* ---- Info pills ---- */
+        .info-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; padding: 7px 16px;
+            background: #fafbfc; border-bottom: 1px solid #e1e4e8; font-size: 11px;
+            flex-shrink: 0; align-items: center;
+        }
+        .pill { background: #fff; border: 1px solid #d0d7de; border-radius: 14px; padding: 3px 10px; }
+        .pill strong { color: #4a7ba7; }
+        .pill.ok strong   { color: #2e7d32; }
+        .pill.warn strong { color: #b45309; }
+        .pill.err strong  { color: #c0392b; }
+
+        /* ---- Tabs ---- */
+        .tab-bar {
+            display: flex; gap: 2px; padding: 0 16px; background: #eef2f6;
+            border-bottom: 1px solid #d0d7de; flex-shrink: 0;
+        }
+        .tab-btn {
+            padding: 7px 14px; font-size: 11px; font-weight: 600; border: none;
+            background: transparent; color: #556; cursor: pointer;
+            border-bottom: 2px solid transparent; font-family: inherit;
+        }
+        .tab-btn:hover  { color: #222; }
+        .tab-btn.active { color: #4a7ba7; background: #fff; border-bottom-color: #4a7ba7; }
+
+        /* ---- Panels ---- */
+        .panel-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .panel { display: none; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px; }
+        .panel.active { display: flex; flex-direction: column; }
+
+        #gridPanel.active { padding: 0 16px 12px; }
+        #dmwGrid { flex: 1 1 auto; min-height: 300px; width: 100%; }
+
+        /* ---- SQL editor ---- */
+        .sql-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+        #sqlEditor {
+            flex: 1 1 auto; min-height: 180px; width: 100%;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+            line-height: 1.5; padding: 10px; border: 1px solid #c0c7cf;
+            border-radius: 4px; resize: none; outline: none; tab-size: 4;
+            background: #1e1e1e; color: #d4d4d4; caret-color: #fff;
+        }
+        #sqlEditor:focus { border-color: #4a7ba7; }
+        .sql-hint { font-size: 11px; color: #666; }
+
+        /* ---- Console ---- */
+        #consoleOut {
+            flex: 1 1 auto; font-family: 'Consolas','Courier New',monospace;
+            font-size: 11px; white-space: pre-wrap; line-height: 1.6;
+            background: #1e1e1e; color: #ccc; padding: 12px; border-radius: 4px;
+            overflow: auto; min-height: 200px;
+        }
+        .c-ok  { color: #22c55e; font-weight: 700; }
+        .c-err { color: #ef4444; font-weight: 700; }
+        .c-warn{ color: #f59e0b; font-weight: 700; }
+        .c-dim { color: #888; }
+
+        /* ---- Connection detail cards ---- */
+        .conn-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 820px) { .conn-grid { grid-template-columns: 1fr 1fr; } }
+        .card {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px;
+        }
+        .card h3 {
+            font-size: 12px; color: #4a7ba7; margin-bottom: 8px;
+            padding-bottom: 6px; border-bottom: 1px solid #eef0f2;
+        }
+        .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; }
+        .kv span:first-child { color: #777; }
+        .kv span:last-child  { font-family: 'Consolas',monospace; color: #222; text-align: right; word-break: break-all; }
+        .code-pre {
+            background: #1e1e1e; color: #22c55e; padding: 10px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; overflow-x: auto;
+            white-space: pre; margin-top: 8px;
+        }
+
+        /* ---- Dashboard / Visualize ---- */
+        .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+        .kpi {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+            padding: 12px 16px; min-width: 130px;
+        }
+        .kpi .v { font-size: 22px; font-weight: 700; color: #4a7ba7; line-height: 1; }
+        .kpi .l { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+        .kpi .v.ok  { color: #2e7d32; }
+        .kpi .v.err { color: #c0392b; }
+        .kpi .v.warn{ color: #b45309; }
+
+        table.sum { width: 100%; border-collapse: collapse; font-size: 11px; background: #fff; }
+        table.sum th {
+            background: #eef2f6; border-bottom: 2px solid #4a7ba7; padding: 7px 10px;
+            text-align: left; white-space: nowrap;
+        }
+        table.sum td { padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
+        table.sum tr:nth-child(even) td { background: #fafbfc; }
+
+        .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+        .bar-label { width: 190px; text-align: right; color: #444; flex-shrink: 0; word-break: break-word; }
+        .bar-track { flex: 1 1 auto; background: #eef2f6; border-radius: 3px; height: 20px; position: relative; }
+        .bar-fill  { background: #4a7ba7; height: 100%; border-radius: 3px; min-width: 2px; }
+        .bar-val   { width: 70px; color: #222; font-weight: 600; flex-shrink: 0; }
+
+        /* ---- Modals (reused) ---- */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+            z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: #fff; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.3);
+            max-width: 620px; width: 90%; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header {
+            background: #4a7ba7; color: #fff; padding: 13px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: 600; font-size: 13px;
+        }
+        .modal-close {
+            background: none; border: none; color: #fff; font-size: 22px;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-body {
+            padding: 18px; overflow-y: auto; font-size: 12px; line-height: 1.6; color: #333;
+        }
+        .modal-body p  { margin-bottom: 11px; }
+        .modal-body h4 { font-size: 12px; color: #222; margin: 14px 0 6px; }
+        .modal-body ol, .modal-body ul { padding-left: 22px; margin-bottom: 11px; }
+        .modal-body li { margin-bottom: 5px; }
+        .modal-body code {
+            background: #f4f4f4; padding: 2px 5px; border-radius: 3px;
+            font-family: 'Consolas',monospace; color: #a3324a;
+        }
+        .modal-body .cfgbox {
+            background: #1e1e1e; color: #ccc; padding: 11px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; white-space: pre; overflow-x: auto;
+        }
+
+        /* ================= v2: Home / SLA, Visualizations, Security ========== */
+        .sla-head { display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap; }
+        .sla-head h2 { font-size:15px; color:#1f3864; }
+        .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
+        .sla-stale { background:#fff3cd; border:1px solid #f0ad4e; color:#8a6d3b;
+                     padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+        .login-nudge { margin-left:auto; background:#eef4fa; border:1px solid #cfe0ef;
+                       padding:8px 12px; border-radius:4px; font-size:11px; max-width:340px; }
+        .login-nudge strong { color:#1f3864; }
+        .login-nudge button { margin-left:8px; }
+
+        .sec-title { font-size:12px; font-weight:700; color:#1f3864; margin:18px 0 8px;
+                     padding-bottom:4px; border-bottom:2px solid #dce6f1; }
+
+        .svc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+        .svc-card { border:1px solid #d8dfe6; border-radius:4px; padding:10px 12px; background:#fff;
+                    border-left-width:5px; }
+        .svc-card.up       { border-left-color:#2e7d32; }
+        .svc-card.degraded { border-left-color:#f0ad4e; }
+        .svc-card.down     { border-left-color:#c00000; }
+        .svc-card.unknown  { border-left-color:#999; }
+        .svc-name { font-weight:700; font-size:12px; color:#222; }
+        .svc-env  { display:inline-block; font-size:9px; font-weight:700; padding:1px 6px;
+                    border-radius:8px; background:#eceff3; color:#555; margin-left:6px; vertical-align:middle; }
+        .svc-env.PROD { background:#1f3864; color:#fff; }
+        .svc-state { font-size:16px; font-weight:700; margin:4px 0 2px; }
+        .svc-card.up .svc-state       { color:#2e7d32; }
+        .svc-card.degraded .svc-state { color:#b07400; }
+        .svc-card.down .svc-state     { color:#c00000; }
+        .svc-card.unknown .svc-state  { color:#777; }
+        .svc-meta { font-size:10px; color:#666; line-height:1.5; }
+
+        .kpi-row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+        .kpi { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:10px 16px; min-width:120px; }
+        .kpi .v { font-size:22px; font-weight:700; color:#1f3864; }
+        .kpi .l { font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:#777; margin-top:2px; }
+        .kpi.bad  .v { color:#c00000; }
+        .kpi.warn .v { color:#b07400; }
+        .kpi.good .v { color:#2e7d32; }
+
+        .chart-box { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:12px; margin-bottom:12px; }
+        .chart-box h4 { font-size:11px; color:#1f3864; margin-bottom:8px; }
+        .chart-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:10px; color:#555; margin-top:6px; }
+        .chart-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+        .viz-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        @media (max-width:1100px){ .viz-2col { grid-template-columns:1fr; } }
+
+        /* ---- metadata "i" icon + pencil in grid headers ---- */
+        .hdr-wrap { display:inline-flex; align-items:center; gap:5px; }
+        .hdr-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:14px; height:14px; border-radius:50%; font-size:9px; font-weight:700;
+            cursor:pointer; border:none; padding:0; line-height:1; flex-shrink:0;
+        }
+        .hdr-ico.info   { background:#4a7ba7; color:#fff; }
+        .hdr-ico.info:hover { background:#1f3864; }
+        .hdr-ico.info.off { background:#c8d2da; color:#fff; cursor:default; }
+        .hdr-ico.edit   { background:none; color:#b07400; font-size:11px; width:auto; }
+        .hdr-ico.edit:hover { color:#8a5600; }
+        .cell-editable { cursor:pointer; border-bottom:1px dotted #b07400; }
+        .cell-editable:hover { background:#fff8e1; }
+
+        /* ---- metadata modal (matches query_builder v1_21 behaviour) ---- */
+        .meta-field { margin-bottom:10px; }
+        .meta-label { font-size:9px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+                      color:#777; margin-bottom:3px; }
+        .meta-value { border:1px solid #ccd4db; border-radius:3px; background:#f8fafc;
+                      padding:7px 9px; font-size:11px; line-height:1.55; color:#222; }
+        .meta-value.mono { font-family:Consolas,monospace; color:#A31515; }
+        .meta-value.scroll { max-height:120px; overflow-y:auto; }
+        .meta-chip { display:inline-block; background:#dce6f1; color:#1f3864; font-family:Consolas,monospace;
+                     font-size:11px; padding:2px 8px; border-radius:3px; margin-left:8px; }
+
+        /* ---- Ask DMW ---- */
+        .ask-wrap { display:flex; flex-direction:column; height:100%; }
+        .ask-note { background:#eef4fa; border:1px solid #cfe0ef; padding:8px 12px;
+                    font-size:10px; color:#334; margin-bottom:8px; line-height:1.6; }
+        .ask-frame { flex:1; min-height:520px; border:1px solid #d8dfe6; border-radius:4px; background:#fff; }
+        .ask-frame iframe { width:100%; height:100%; min-height:520px; border:none; display:block; }
+
+        /* ---- Security diagram ---- */
+        .sec-wrap { background:#fff; border:1px solid #d8dfe6; border-radius:4px; padding:16px; }
+        .sec-wrap svg { width:100%; height:auto; display:block; }
+
+        .modal-footer {
+            padding: 11px 18px; background: #f5f7f9; border-top: 1px solid #e1e4e8;
+            display: flex; justify-content: flex-end;
+        }
+
+        /* ---- Footer / session bar ---- */
+        .session-bar {
+            padding: 6px 16px; border-top: 1px solid #ddd; background: #f8f8f8;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 11px; color: #666; flex-shrink: 0;
+        }
+        .session-ind { display: flex; align-items: center; gap: 7px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex-shrink: 0; }
+        .dot.active { background: #22c55e; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+        #footer-signout { color: #c0392b; text-decoration: none; display: none; }
+        #footer-signout:hover { text-decoration: underline; }
+
+        .loading-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+            z-index: 9999; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            border: 5px solid #f3f3f3; border-top: 5px solid #4a7ba7; border-radius: 50%;
+            width: 54px; height: 54px; animation: spin 1s linear infinite; margin-bottom: 16px;
+        }
+        @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+        .loading-overlay .txt { color: #fff; font-size: 14px; font-weight: 500; }
+
+        .empty-note {
+            padding: 36px; text-align: center; color: #666; font-size: 13px;
+            background: #fff; border: 1px dashed #d0d7de; border-radius: 4px;
+        }
+        .empty-note h2 { color: #4a7ba7; margin-bottom: 9px; font-size: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="txt" id="loadingText">Executing query against SQL Server…</div>
+</div>
+
+<!-- ===================== HEADER ===================== -->
+<div class="header">
+    <h1 id="appTitle">DMW (Data Mart Workbench) -- IT Management Solution</h1>
+    <p id="appSubtitle">—</p>
+
+    <!-- Top nav: Logon (executes the query), About, Help -->
+    <div class="top-nav">
+        <a id="nav-logon" href="#" title="Sign in to SAS, then run the query">Logon</a>
+        <span id="nav-welcome"></span>
+        <a id="nav-about" href="#">About</a>
+        <a id="nav-help" href="#">Help</a>
+    </div>
+
+    <!-- Hamburger: Generate Dashboard, Visualize Data, Export to CSV -->
+    <div class="hamburger-container">
+        <button class="hamburger" id="hamburgerBtn" title="Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="dropdown-menu" id="dropdownMenu">
+            <a href="#" class="dashboard-item" id="menuDashboard">Generate Dashboard</a>
+            <a href="#" class="visualize-item" id="menuVisualize">Visualize Data</a>
+            <a href="#" class="export-item"    id="menuExport">Export to CSV</a>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== TOOLBAR ===================== -->
+<div class="toolbar">
+    <button class="btn btn-run" id="runBtn" title="Execute the SQL below against SQL Server (Ctrl+Enter)">Run Query</button>
+
+    <label for="savedQuery">Saved Queries:</label>
+    <select id="savedQuery"></select>
+
+    <input type="search" id="quickSearch" placeholder="Quick search across all columns…">
+    <button class="btn btn-secondary" id="clearFiltersBtn">Clear Filters</button>
+    <button class="btn btn-secondary" id="autoSizeBtn">Auto-Size</button>
+    <button class="btn btn-primary"   id="exportBtn">Export CSV</button>
+    <button class="btn btn-warn"      id="cacheBtn" style="margin-left:auto;" title="Clear browser-held state and hard reload">Clear Cache &amp; Reload</button>
+</div>
+
+<!-- ===================== INFO PILLS ===================== -->
+<div class="info-bar">
+    <span class="pill">Server: <strong id="infoServer">—</strong></span>
+    <span class="pill">Database: <strong id="infoDb">—</strong></span>
+    <span class="pill">Auth: <strong id="infoAuth">—</strong></span>
+    <span class="pill">Rows: <strong id="infoRows">0</strong></span>
+    <span class="pill">Columns: <strong id="infoCols">0</strong></span>
+    <span class="pill">Filtered: <strong id="infoFiltered">0</strong></span>
+    <span class="pill" id="pillElapsed">Elapsed: <strong id="infoElapsed">—</strong></span>
+</div>
+
+<!-- ===================== TABS ===================== -->
+<div class="tab-bar">
+    <button class="tab-btn active" data-panel="homePanel">Home</button>
+    <button class="tab-btn" data-panel="gridPanel">Data Grid</button>
+    <button class="tab-btn" data-panel="sqlPanel">SQL</button>
+    <button class="tab-btn" data-panel="dashPanel">Dashboard</button>
+    <button class="tab-btn" data-panel="vizPanel">Visualize</button>
+    <button class="tab-btn" data-panel="vizPerfPanel">Visualizations</button>
+    <button class="tab-btn" data-panel="securityPanel">Security</button>
+    <button class="tab-btn" data-panel="askPanel">Ask DMW</button>
+    <button class="tab-btn" data-panel="connPanel">Connection</button>
+    <button class="tab-btn" data-panel="consolePanel">Console</button>
+</div>
+
+<div class="panel-host">
+
+    <!-- ============ HOME: SLA Overview ============ -->
+    <div class="panel active" id="homePanel"></div>
+
+    <!-- Data Grid (AG Grid) -->
+    <div class="panel" id="gridPanel">
+        <div id="dmwGrid"></div>
+    </div>
+
+    <!-- SQL editor -->
+    <div class="panel" id="sqlPanel">
+        <div class="sql-wrap">
+            <div class="sql-hint">
+                Edit the statement and press <strong>Run Query</strong> (or <strong>Ctrl+Enter</strong>).
+                The default statement is <code>CONFIG.INITIAL_SQL</code> at the top of this file.
+                The stored process accepts <strong>SELECT statements only</strong>.
+            </div>
+            <textarea id="sqlEditor" spellcheck="false"></textarea>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="panel" id="dashPanel"></div>
+
+    <!-- Visualize -->
+    <div class="panel" id="vizPanel"></div>
+
+    <!-- Connection -->
+    <!-- ============ VISUALIZATIONS: report performance ============ -->
+    <div class="panel" id="vizPerfPanel"></div>
+
+    <!-- ============ SECURITY: software delivery flow ============ -->
+    <div class="panel" id="securityPanel"></div>
+
+    <!-- ============ ASK DMW: embedded Copilot Studio agent ============ -->
+    <div class="panel" id="askPanel"></div>
+
+    <div class="panel" id="connPanel"></div>
+
+    <!-- Console -->
+    <div class="panel" id="consolePanel">
+        <div id="consoleOut">Initializing…</div>
+    </div>
+
+</div>
+
+<!-- ===================== SESSION BAR ===================== -->
+<div class="session-bar">
+    <div class="session-ind">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusLabel">No active SAS session</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+        <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
+        <a href="#" id="footer-signout">Sign out</a>
+    </div>
+</div>
+
+<!-- ===================== COLUMN METADATA MODAL ===================== -->
+<div class="modal-overlay" id="metaModal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <span>Column Metadata <span class="meta-chip" id="metaChip">—</span></span>
+            <button class="modal-close" data-close="metaModal">&times;</button>
+        </div>
+        <div class="modal-body" id="metaBody"></div>
+        <div class="modal-footer">
+            <button class="btn" data-close="metaModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== EDIT JOBNAME MODAL ===================== -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <span>Edit <span class="meta-chip" id="editChip">—</span></span>
+            <button class="modal-close" data-close="editModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="meta-field">
+                <div class="meta-label">Job ID</div>
+                <div class="meta-value mono" id="editKey">—</div>
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">Current value</div>
+                <div class="meta-value mono" id="editOld">—</div>
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">New value</div>
+                <input type="text" id="editNew" maxlength="200"
+                       style="width:100%;padding:7px 9px;border:1px solid #ccd4db;border-radius:3px;font-size:11px;font-family:Consolas,monospace;">
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">What happens when you save</div>
+                <div class="meta-value" style="font-size:10px;line-height:1.6;">
+                    The change is written to <code>[dbo].[Job].[JobName]</code> through the
+                    <code>dmw_update_jobname</code> stored process, keyed on JobID, and the grid reloads.
+                    Your SAS username is recorded server-side. If someone else renamed this job since the
+                    grid loaded, the save is refused rather than overwriting their change.
+                </div>
+            </div>
+            <div id="editStatus" class="notes-status" style="font-size:10px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-close="editModal">Cancel</button>
+            <button class="btn btn-primary" id="editSaveBtn">Save change</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== ABOUT MODAL ===================== -->
+<div class="modal-overlay" id="aboutModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>About DMW -- IT Management Solution</span>
+            <button class="modal-close" data-close="aboutModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p><strong>DMW (Data Mart Workbench) -- IT Management Solution</strong> monitors SAS Scheduler job activity held in SQL Server. It executes a SQL statement through a SAS Stored Process and renders the returned JSON in an AG Grid, with dashboard, visualisation and CSV export views.</p>
+
+            <h4>How it reaches the database</h4>
+            <p>A browser cannot connect to SQL Server directly: SQL Server speaks the TDS protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw TCP socket API. Windows Authentication additionally requires OS-level credential delegation that a sandboxed page is never granted.</p>
+            <p>This page therefore calls the SAS Stored Process <code>dmw_run</code>, which holds the OLE DB connection and returns the result set as a JSON array. Nothing is installed on the workstation.</p>
+            <div class="cfgbox">Browser  --HTTPS &amp;dmq_query=&lt;SQL&gt;--&gt;  dmw_run (SAS)  --OLEDB--&gt;  SQL Server</div>
+
+            <h4>Current target</h4>
+            <ul>
+                <li>Server: <code id="aboutServer">—</code></li>
+                <li>Database: <code id="aboutDb">—</code></li>
+                <li>Authentication: <code id="aboutAuth">—</code></li>
+                <li>Runs as: <code id="aboutUser">—</code></li>
+                <li>Stored process: <code id="aboutProg">—</code></li>
+            </ul>
+
+            <h4>Configuration</h4>
+            <p>Every adjustable value lives in the <code>CONFIG</code> object in a <code>&lt;script&gt;</code> block at the very top of this HTML file, above the stylesheet and markup. The database connection itself is made by the stored process, so the <code>DMW_*</code> macro variables at the top of <code>dmw_run.sas</code> must describe the same target.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="aboutModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== HELP MODAL ===================== -->
+<div class="modal-overlay" id="helpModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>Help &amp; Support</span>
+            <button class="modal-close" data-close="helpModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <h4>Getting started</h4>
+            <ol>
+                <li>Press <strong>Logon</strong> in the top right. You are redirected to SAS, authenticated, and returned here. The query then runs automatically.</li>
+                <li>Results appear in the <strong>Data Grid</strong> tab. Sort, filter, reorder and resize columns directly in the grid.</li>
+                <li>Use the <strong>SQL</strong> tab to edit the statement, then press <strong>Run Query</strong> or <strong>Ctrl+Enter</strong>.</li>
+            </ol>
+
+            <h4>Hamburger menu (top right)</h4>
+            <ul>
+                <li><strong>Generate Dashboard</strong> — KPI tiles and a summary table grouped by <code>CONFIG.DASHBOARD_GROUP_BY</code>.</li>
+                <li><strong>Visualize Data</strong> — horizontal bar chart of row counts by <code>CONFIG.VISUALIZE_GROUP_BY</code>.</li>
+                <li><strong>Export to CSV</strong> — downloads the rows currently visible after filtering.</li>
+            </ul>
+
+            <h4>Changing the configuration</h4>
+            <p>Open this file in any text editor. The <code>CONFIG</code> object is at the very top.</p>
+            <div class="cfgbox">SERVER_HOST:     "A70TUCGSDATA012.A70ADMED.COM",
+INITIAL_CATALOG: "OHM_CGSScheduler",
+PORT:            1433,
+SAS_PROGRAM:     "/User Folders/731o/My Folder/dmw_run",
+INITIAL_SQL:     `SELECT TOP (1000) ...`</div>
+            <p>After saving, press <strong>Clear Cache &amp; Reload</strong> so the browser does not serve a cached copy.</p>
+
+            <h4>Troubleshooting</h4>
+            <table class="sum">
+                <thead><tr><th>Symptom</th><th>Resolution</th></tr></thead>
+                <tbody>
+                    <tr><td>Returned a logon page instead of data</td><td>No active SAS session. Press <strong>Logon</strong>.</td></tr>
+                    <tr><td>Response was not valid JSON (HTML shown)</td><td>Stored process <em>Result type</em> is not <code>Streaming</code>. Correct it in SMC.</td></tr>
+                    <tr><td>Could not reach the stored process</td><td>Page opened from <code>file://</code>, or CORS. Serve it over http(s) from the SAS web server.</td></tr>
+                    <tr><td>HTTP 404</td><td><code>SAS_PROGRAM</code> does not match the SMC metadata path.</td></tr>
+                    <tr><td>HTTP 500</td><td>Stored process raised an error. Check the SAS log; often a missing OLE DB provider or no SELECT permission.</td></tr>
+                    <tr><td>Empty array returned</td><td>Statement contained no <code>SELECT</code>. The stored process rejects non-SELECT statements.</td></tr>
+                    <tr><td>Edits appear to have no effect</td><td>A cached copy is loaded. Press <strong>Clear Cache &amp; Reload</strong> and check the build stamp changed.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Contact</h4>
+            <p>For issues, questions or enhancement requests, please reach out. Typical response is within one business day.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="helpModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="scripts/ag-grid-community.min.js"></script>
+<script>
+/* =============================================================================
+ * APPLICATION RUNTIME
+ * -----------------------------------------------------------------------------
+ * No configuration below this line. Everything adjustable is in the CONFIG
+ * object at the top of this file.
+ * ========================================================================== */
+
+const BUILD_ID = (CONFIG.APP_VERSION || 'v1.0') + '-' + Date.now().toString(36);
+
+let gridApi = null;
+let currentRows = [];
+let currentCols = [];
+let lastElapsedMs = 0;
+
+window.session = { authenticated: false, userid: null, loginTime: null };
+
+/* ------------------------------ helpers ---------------------------------- */
+const $ = id => document.getElementById(id);
+
+function esc(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, ch =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+}
+
+function logConsole(html, append) {
+    const el = $('consoleOut');
+    if (append) el.innerHTML = html + '\n\n' + el.innerHTML;
+    else el.innerHTML = html;
+}
+
+function showLoading(on, text) {
+    $('loadingText').textContent = text || 'Executing query against SQL Server…';
+    $('loadingOverlay').classList.toggle('active', !!on);
+}
+
+function bust(url) {
+    if (!CONFIG.DISABLE_CACHE) return url;
+    return url + (url.includes('?') ? '&' : '?') +
+           '_cb=' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+/* ------------------------- SAS session / auth ----------------------------
+   Reused from the DMW Query Builder (query_builder_with_metadata_csv_v1_21.html).
+   The logon stored process authenticates the user and redirects back here with
+   ?userid=<id>&sasAuth=1, which this page consumes and then removes from the
+   address bar.
+-------------------------------------------------------------------------- */
+function sasGetParam(name) {
+    return new URLSearchParams(window.location.search).get(name);
+}
+
+function sasCleanUrl() {
+    history.replaceState({}, document.title, window.location.pathname);
+}
+
+function sasRenderLoggedIn() {
+    $('nav-logon').style.display = 'none';
+    const w = $('nav-welcome');
+    w.style.display = 'inline';
+    w.textContent = 'Welcome, ' + window.session.userid + '!';
+    $('statusDot').classList.add('active');
+    $('statusLabel').textContent = 'SAS session active — ' + window.session.userid;
+    $('footer-signout').style.display = 'inline';
+}
+
+function sasRenderLoggedOut() {
+    $('nav-logon').style.display = 'inline';
+    $('nav-welcome').style.display = 'none';
+    $('statusDot').classList.remove('active');
+    $('statusLabel').textContent = 'No active SAS session';
+    $('footer-signout').style.display = 'none';
+}
+
+/* "Logon" authenticates to SAS, which is what makes executing the query
+   possible. On return, the query runs automatically when AUTO_RUN_ON_LOGON. */
+function handleLogon(e) {
+    if (e) e.preventDefault();
+    const returnUrl = encodeURIComponent(window.location.origin + window.location.pathname);
+    const target = CONFIG.SAS_BASE_URL
+                 + encodeURIComponent(CONFIG.SAS_LOGON_PROGRAM)
+                 + '&returnUrl=' + returnUrl;
+    window.location.href = target;
+}
+
+function handleSignOut(e) {
+    if (e) e.preventDefault();
+    window.session = { authenticated: false, userid: null, loginTime: null };
+    try { localStorage.removeItem('dmw_sas_session'); } catch (_) {}
+    sasRenderLoggedOut();
+    window.location.href = CONFIG.SAS_LOGOUT_URL +
+        '?returnUrl=' + encodeURIComponent(window.location.origin + window.location.pathname);
+}
+
+(function sasInit() {
+    const userid = sasGetParam('userid');
+    const sasAuth = sasGetParam('sasAuth');
+    if (userid && sasAuth === '1') {
+        window.session = {
+            authenticated: true,
+            userid: decodeURIComponent(userid),
+            loginTime: new Date().toLocaleTimeString()
+        };
+        try { localStorage.setItem('dmw_sas_session', JSON.stringify(window.session)); } catch (_) {}
+        sasCleanUrl();
+    } else {
+        try {
+            const raw = localStorage.getItem('dmw_sas_session');
+            const stored = raw ? JSON.parse(raw) : null;
+            if (stored && stored.authenticated && stored.userid) window.session = stored;
+        } catch (_) {}
+    }
+})();
+
+/* --------------------------- stored process ------------------------------ */
+function buildStoredProcessUrl(sqlText) {
+    if (!CONFIG.SAS_BASE_URL) throw new Error('CONFIG.SAS_BASE_URL is empty.');
+    if (!CONFIG.SAS_PROGRAM)  throw new Error('CONFIG.SAS_PROGRAM is empty.');
+    let url = CONFIG.SAS_BASE_URL
+            + encodeURIComponent(CONFIG.SAS_PROGRAM)
+            + '&' + encodeURIComponent(CONFIG.SAS_QUERY_PARAM || 'dmq_query')
+            + '=' + encodeURIComponent(sqlText);
+    if (CONFIG.SAS_DEBUG) url += '&debug_mode=1';
+    return url;
+}
+
+/* Accepts the bare JSON array dmw_run returns, and the common wrapper shapes,
+   so an alternative stored process can be substituted without code changes. */
+function normalizePayload(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) throw new Error('The stored process returned an empty response body.');
+
+    if (/^<(!doctype|html)/i.test(trimmed) && /logon|login|password/i.test(trimmed.slice(0, 4000))) {
+        throw new Error('SAS returned a logon page instead of data: this browser has no active SAS session. ' +
+                        'Press "Logon" in the top right, then run the query again.');
+    }
+    if (/^<(!doctype|html)/i.test(trimmed)) {
+        throw new Error('SAS returned HTML instead of JSON. The stored process Result type is probably not set to ' +
+                        '"Streaming", so SAS wrapped the output in ODS HTML. Response began: ' + trimmed.slice(0, 160));
+    }
+
+    let payload;
+    try { payload = JSON.parse(trimmed); }
+    catch (_) { throw new Error('Response was not valid JSON. It began: ' + trimmed.slice(0, 240)); }
+
+    if (payload && payload.error) throw new Error(String(payload.error));
+
+    if (Array.isArray(payload)) return payload;
+    for (const k of ['rows', 'data', 'records', 'results']) {
+        if (Array.isArray(payload && payload[k])) return payload[k];
+    }
+    if (payload && typeof payload === 'object') {
+        for (const k of Object.keys(payload)) {
+            if (k.startsWith('SASJSON')) continue;
+            if (Array.isArray(payload[k])) return payload[k];
+        }
+    }
+    throw new Error('Could not find a row array in the response. Keys seen: ' +
+                    Object.keys(payload || {}).join(', '));
+}
+
+async function executeQuery() {
+    const sqlText = $('sqlEditor').value.trim();
+
+    if (!sqlText) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The SQL buffer is empty. Enter a SELECT statement on the SQL tab.');
+        return;
+    }
+    if (!/\bselect\b/i.test(sqlText)) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The statement contains no SELECT. The stored process accepts SELECT statements only and would return an empty array.');
+        return;
+    }
+    if (!window.session.authenticated) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">NOT SIGNED IN:</span> Press "Logon" in the top right to authenticate to SAS.\n' +
+                   'The query cannot execute without an active SAS session.');
+    }
+
+    const url = buildStoredProcessUrl(sqlText);
+    if (url.length > 7500) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The generated URL is ' + url.length +
+                   ' characters, beyond what most servers accept on a GET request (~8000).\n' +
+                   'Shorten the statement, or change the stored process to read the SQL from the request body.');
+        return;
+    }
+
+    $('runBtn').disabled = true;
+    showLoading(true);
+    const started = performance.now();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+
+    try {
+        const res = await fetch(bust(url), {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'include',      /* carry the SAS session cookie */
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
+
+        const text = await res.text();
+        if (!res.ok) {
+            throw new Error('Stored process returned HTTP ' + res.status + ' ' + res.statusText + '. ' +
+                describeHttp(res.status) + (text ? ' Response began: ' + text.slice(0, 200) : ''));
+        }
+
+        const rows = normalizePayload(text);
+        lastElapsedMs = Math.round(performance.now() - started);
+
+        currentRows = rows;
+        currentCols = rows.length ? Object.keys(rows[0]) : [];
+
+        renderGrid(currentCols, currentRows);
+        renderConnectionPanel();
+        updatePills();
+
+        logConsole(
+            '<span class="c-ok">OUTPUT:</span> Query executed successfully.\n' +
+            'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+            'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+            'Rows    : ' + rows.length + '\n' +
+            'Columns : ' + esc(currentCols.join(', ')) + '\n' +
+            'Elapsed : ' + lastElapsedMs + ' ms\n' +
+            'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+            '<span class="c-dim">First row:</span>\n' +
+            esc(JSON.stringify(rows[0] || {}, null, 2))
+        );
+
+        switchPanel('gridPanel');
+    } catch (err) {
+        lastElapsedMs = Math.round(performance.now() - started);
+        const msg = (err && err.name === 'AbortError')
+            ? 'The stored process did not respond within ' + CONFIG.REQUEST_TIMEOUT_MS + ' ms.'
+            : (err && err.message ? err.message : String(err));
+
+        switchPanel('consolePanel');
+        logConsole(
+            '<span class="c-err">ERROR:</span> ' + esc(msg) + '\n\n' +
+            '<span class="c-dim">Checklist:</span>\n' +
+            '  1. Is there an active SAS session in this browser? Press "Logon".\n' +
+            '  2. Is this page served over http(s)? A file:// page cannot make this call.\n' +
+            '  3. Does CONFIG.SAS_PROGRAM match the SMC metadata path exactly?\n' +
+            '  4. Is the stored process Result type set to "Streaming"?\n' +
+            '  5. Does the SAS identity hold SELECT on the target view?\n\n' +
+            '<span class="c-dim">URL attempted:</span>\n' + esc(url.slice(0, 500))
+        );
+        updatePills(true);
+    } finally {
+        clearTimeout(timer);
+        showLoading(false);
+        $('runBtn').disabled = false;
+    }
+}
+
+function describeHttp(status) {
+    if (status === 401 || status === 403) return 'Authentication or authorization failed — sign in to SAS and confirm you may execute this stored process.';
+    if (status === 404) return 'The stored process path was not found — check CONFIG.SAS_PROGRAM against the SMC path.';
+    if (status === 500) return 'The stored process raised an error — check the SAS log.';
+    return '';
+}
+
+/* ------------------------------ AG Grid ---------------------------------- */
+function renderGrid(cols, rows) {
+    const host = $('dmwGrid');
+    host.className = CONFIG.GRID_THEME;
+
+    const columnDefs = cols.map(c => {
+        const def = {
+            field: c,
+            headerName: c,
+            sortable: true,
+            filter: true,
+            resizable: true,
+            floatingFilter: true,
+            minWidth: 120,
+            /* Custom header draws the metadata "i" and, for editable columns,
+               the pencil. See the DmwHeader class. */
+            headerComponent: DmwHeader,
+            tooltipValueGetter: p => {
+                if (p.value === null || p.value === undefined) return '';
+                const m = Meta.get(c);
+                return m ? (m.LOGICAL_COLUMN_NAME + ' — ' + m.DESCRIPTION) : String(p.value);
+            }
+        };
+
+        /* Editable column: the cell itself opens the editor. */
+        if (CONFIG.EDITABLE_COLUMNS && CONFIG.EDITABLE_COLUMNS[c]) {
+            def.minWidth = 220;
+            def.cellRenderer = p => {
+                if (!p.data) return '';
+                const span = document.createElement('span');
+                span.className = 'cell-editable';
+                span.textContent = (p.value === null || p.value === undefined) ? '' : String(p.value);
+                span.title = 'Click to edit ' + c;
+                span.addEventListener('click', ev => { ev.stopPropagation(); Editor.open(c, p.data); });
+                return span;
+            };
+        }
+        return def;
+    });
+
+    const options = {
+        theme: 'legacy',               /* required for the CSS-file themes on AG Grid v33+ */
+        columnDefs: columnDefs,
+        rowData: rows,
+        defaultColDef: { flex: 1, minWidth: 110, sortable: true, filter: true, resizable: true },
+        pagination: true,
+        paginationPageSize: CONFIG.GRID_PAGE_SIZE,
+        paginationPageSizeSelector: CONFIG.GRID_PAGE_SIZES,
+        animateRows: false,
+        rowSelection: 'multiple',
+        suppressDragLeaveHidesColumns: true,
+        onFilterChanged: updateFilteredCount,
+        onGridReady: p => { gridApi = p.api; updateFilteredCount(); }
+    };
+
+    host.innerHTML = '';
+    if (gridApi && gridApi.destroy) { try { gridApi.destroy(); } catch (_) {} gridApi = null; }
+    agGrid.createGrid(host, options);
+}
+
+function updateFilteredCount() {
+    if (!gridApi) return;
+    let n = 0;
+    gridApi.forEachNodeAfterFilter(() => n++);
+    $('infoFiltered').textContent = n.toLocaleString('en-US');
+}
+
+function visibleRows() {
+    if (!gridApi) return currentRows.slice();
+    const out = [];
+    gridApi.forEachNodeAfterFilterAndSort(node => out.push(node.data));
+    return out;
+}
+
+/* --------------------------- info pills ---------------------------------- */
+function updatePills(failed) {
+    $('infoServer').textContent = CONFIG.SERVER_HOST;
+    $('infoDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('infoAuth').textContent   = CONFIG.AUTH_MODE;
+    $('infoRows').textContent   = currentRows.length.toLocaleString('en-US');
+    $('infoCols').textContent   = currentCols.length;
+    $('infoElapsed').textContent = failed ? 'failed' : (lastElapsedMs ? lastElapsedMs + ' ms' : '—');
+    $('pillElapsed').className  = 'pill ' + (failed ? 'err' : (lastElapsedMs ? 'ok' : ''));
+    if (!gridApi) $('infoFiltered').textContent = currentRows.length.toLocaleString('en-US');
+}
+
+/* --------------------- Generate Dashboard (hamburger) -------------------- */
+function generateDashboard() {
+    switchPanel('dashPanel');
+    const el = $('dashPanel');
+
+    if (!currentRows.length) { el.innerHTML = emptyNote('No data to summarise', 'Run the query first.'); return; }
+
+    const key = CONFIG.DASHBOARD_GROUP_BY;
+    const hasKey = currentCols.includes(key);
+
+    const counts = {};
+    if (hasKey) currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    const lower = s => String(s || '').toLowerCase();
+    const okCount   = Object.keys(counts).filter(k => /complete|success|finish/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const errCount  = Object.keys(counts).filter(k => /fail|error|abort/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const openCount = currentCols.includes('CompletedDatetime')
+        ? currentRows.filter(r => r.CompletedDatetime === null || r.CompletedDatetime === undefined || r.CompletedDatetime === '').length
+        : 0;
+    const distinctJobs = currentCols.includes('JobName')
+        ? new Set(currentRows.map(r => r.JobName)).size : 0;
+
+    let html = '<div class="kpi-row">' +
+        kpi(currentRows.length.toLocaleString('en-US'), 'Rows Returned', '') +
+        kpi(String(distinctJobs), 'Distinct Jobs', '') +
+        kpi(okCount.toLocaleString('en-US'), 'Completed / Success', 'ok') +
+        kpi(errCount.toLocaleString('en-US'), 'Failed / Error', 'err') +
+        kpi(openCount.toLocaleString('en-US'), 'Not Yet Completed', 'warn') +
+        '</div>';
+
+    if (hasKey) {
+        const rowsSorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        const total = currentRows.length;
+        html += '<div class="card"><h3>Row count by ' + esc(key) + '</h3>' +
+                '<table class="sum"><thead><tr><th>' + esc(key) + '</th><th>Rows</th><th>Share</th></tr></thead><tbody>' +
+                rowsSorted.map(([k, v]) =>
+                    '<tr><td>' + esc(k) + '</td><td>' + v.toLocaleString('en-US') + '</td><td>' +
+                    (total ? (v / total * 100).toFixed(1) : '0.0') + '%</td></tr>').join('') +
+                '</tbody></table></div>';
+    } else {
+        html += emptyNote('Group-by column not present',
+            'CONFIG.DASHBOARD_GROUP_BY is "' + esc(key) + '", which is not in the result set. ' +
+            'Change it at the top of this file to one of: ' + esc(currentCols.join(', ')));
+    }
+
+    el.innerHTML = html;
+}
+
+function kpi(value, label, cls) {
+    return '<div class="kpi"><div class="v ' + (cls || '') + '">' + esc(value) + '</div>' +
+           '<div class="l">' + esc(label) + '</div></div>';
+}
+
+/* ---------------------- Visualize Data (hamburger) ----------------------- */
+function visualizeData() {
+    switchPanel('vizPanel');
+    const el = $('vizPanel');
+
+    if (!currentRows.length) { el.innerHTML = emptyNote('Nothing to visualise', 'Run the query first.'); return; }
+
+    const key = CONFIG.VISUALIZE_GROUP_BY;
+    if (!currentCols.includes(key)) {
+        el.innerHTML = emptyNote('Group-by column not present',
+            'CONFIG.VISUALIZE_GROUP_BY is "' + esc(key) + '", which is not in the result set. ' +
+            'Change it at the top of this file to one of: ' + esc(currentCols.join(', ')));
+        return;
+    }
+
+    const counts = {};
+    currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 1;
+
+    el.innerHTML =
+        '<div class="card"><h3>Row count by ' + esc(key) + ' (' + entries.length + ' distinct values)</h3>' +
+        entries.map(([k, v]) =>
+            '<div class="bar-row">' +
+                '<div class="bar-label">' + esc(k) + '</div>' +
+                '<div class="bar-track"><div class="bar-fill" style="width:' + (v / max * 100).toFixed(2) + '%"></div></div>' +
+                '<div class="bar-val">' + v.toLocaleString('en-US') + '</div>' +
+            '</div>').join('') +
+        '</div>';
+}
+
+/* ------------------------ Export to CSV (hamburger) ---------------------- */
+function exportCSV() {
+    const rows = visibleRows();
+    if (!rows.length) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">OUTPUT:</span> No rows to export. Run the query first, or relax the grid filters.');
+        return;
+    }
+    const cols = currentCols.length ? currentCols : Object.keys(rows[0]);
+    const cell = v => {
+        if (v === null || v === undefined) return '';
+        const s = String(v);
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\n');
+
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const stamp = p(d.getMonth() + 1) + p(d.getDate()) + d.getFullYear() + '_' +
+                  p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'DMW_' + CONFIG.INITIAL_CATALOG + '_' + stamp + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+
+    logConsole('<span class="c-ok">OUTPUT:</span> Exported ' + rows.length +
+               ' row(s) to ' + esc(a.download) + '.', true);
+}
+
+/* --------------------------- Connection panel ---------------------------- */
+function renderConnectionPanel() {
+    const integrated = /integrated|sspi|windows/i.test(CONFIG.AUTH_MODE);
+    const connStr = 'Provider=MSOLEDBSQL19;' +
+        (integrated ? 'Integrated Security=SSPI;' : 'User ID=' + CONFIG.AUTH_USER + ';Password=***;') +
+        'Persist Security Info=True;Initial Catalog=' + CONFIG.INITIAL_CATALOG +
+        ';Data Source=' + CONFIG.SERVER_HOST + ',' + CONFIG.PORT + ';';
+
+    const sasSnippet =
+        '/* Equivalent SAS OLEDB pass-through used by dmw_run.sas */\n' +
+        'proc sql noprint;\n' +
+        '    connect to oledb as myconn (init_string=\n' +
+        '        "' + connStr + '");\n' +
+        '    create table work.dmw_result as\n' +
+        '    select * from connection to myconn ( <your SELECT> );\n' +
+        '    disconnect from myconn;\n' +
+        'quit;';
+
+    $('connPanel').innerHTML =
+        '<div class="conn-grid">' +
+            '<div class="card"><h3>SQL Server Target</h3>' +
+                kv('Server Name', CONFIG.SERVER_HOST) +
+                kv('Port', CONFIG.PORT) +
+                kv('Database Name', CONFIG.INITIAL_CATALOG) +
+                kv('Authentication', CONFIG.AUTH_MODE) +
+                kv('Runs As', CONFIG.AUTH_USER) +
+            '</div>' +
+            '<div class="card"><h3>SAS Stored Process Bridge</h3>' +
+                kv('Base URL', CONFIG.SAS_BASE_URL) +
+                kv('Program', CONFIG.SAS_PROGRAM) +
+                kv('SQL Parameter', CONFIG.SAS_QUERY_PARAM) +
+                kv('Debug Mode', CONFIG.SAS_DEBUG ? '1 (SAS log)' : '0') +
+                kv('Timeout', CONFIG.REQUEST_TIMEOUT_MS + ' ms') +
+            '</div>' +
+            '<div class="card"><h3>Last Execution</h3>' +
+                kv('Rows Returned', currentRows.length.toLocaleString('en-US')) +
+                kv('Columns', currentCols.length) +
+                kv('Elapsed', lastElapsedMs ? lastElapsedMs + ' ms' : '—') +
+                kv('SAS Session', window.session.authenticated ? window.session.userid : 'not signed in') +
+                kv('Cache Policy', CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') +
+            '</div>' +
+            '<div class="card"><h3>Build</h3>' +
+                kv('Application', CONFIG.APP_NAME) +
+                kv('Version', CONFIG.APP_VERSION) +
+                kv('Build Stamp', BUILD_ID) +
+                kv('Grid Theme', CONFIG.GRID_THEME) +
+            '</div>' +
+        '</div>' +
+        '<div class="card" style="margin-top:12px;"><h3>Connection String (used by the stored process)</h3>' +
+            '<div class="code-pre">' + esc(sasSnippet) + '</div>' +
+            '<p style="font-size:11px;color:#777;margin-top:8px;">The connection is made by ' +
+            '<code>dmw_run.sas</code>, not by this page. Its <code>DMW_*</code> macro variables must describe ' +
+            'the same target as the CONFIG block above.</p>' +
+        '</div>';
+}
+
+function kv(k, v) {
+    return '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>';
+}
+
+function emptyNote(title, body) {
+    return '<div class="empty-note"><h2>' + esc(title) + '</h2><p>' + esc(body) + '</p></div>';
+}
+
+/* ------------------------------- panels ---------------------------------- */
+function switchPanel(id) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === id));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === id));
+    /* The v2 tabs render on first view rather than at start-up, so a slow
+       CSV read never delays the initial paint. */
+    if (id === 'homePanel')     Home.show();
+    if (id === 'vizPerfPanel')  Viz.show();
+    if (id === 'securityPanel') renderSecurity();
+    if (id === 'askPanel')      renderAskDmw();
+}
+
+/* ------------------------------- modals ---------------------------------- */
+function openModal(id)  { $(id).classList.add('active'); }
+function closeModal(id) { $(id).classList.remove('active'); }
+function toggleMenu()   { $('dropdownMenu').classList.toggle('active'); $('hamburgerBtn').classList.toggle('active'); }
+function closeMenu()    { $('dropdownMenu').classList.remove('active'); $('hamburgerBtn').classList.remove('active'); }
+
+/* ---------------------------- cache control ------------------------------ */
+async function clearCacheAndReload() {
+    if (!confirm('Clear sessionStorage, localStorage and the Cache Storage API, then hard-reload this page?')) return;
+    try { sessionStorage.clear(); } catch (_) {}
+    try { localStorage.clear(); } catch (_) {}
+    try {
+        if (window.caches && caches.keys) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+        }
+    } catch (_) {}
+    const base = window.location.href.split('?')[0].split('#')[0];
+    window.location.replace(base + '?_cb=' + Date.now());
+}
+
+/* -------------------------------- boot ----------------------------------- */
+function populateSavedQueries() {
+    const sel = $('savedQuery');
+    sel.innerHTML = '';
+    (CONFIG.SAVED_QUERIES || []).forEach((q, i) => {
+        const o = document.createElement('option');
+        o.value = i; o.textContent = q.name;
+        sel.appendChild(o);
+    });
+}
+
+function loadSavedQuery(index) {
+    const q = (CONFIG.SAVED_QUERIES || [])[index];
+    if (!q) return;
+    $('sqlEditor').value = (q.sql === null || q.sql === undefined) ? CONFIG.INITIAL_SQL : q.sql;
+}
+
+
+/* =========================================================================
+ * v2 ADDITIONS
+ * =========================================================================
+ * Column metadata, editable JobName, the Home SLA overview, the report
+ * performance Visualizations tab, the Security diagram and the embedded
+ * Ask DMW agent. Everything below is dependency-free: the charts are inline
+ * SVG, so the page stays air-gapped.
+ * ====================================================================== */
+
+/* ---------------------------------------------------------------- CSV ---- */
+/* RFC4180-ish parser: handles quoted fields, embedded commas, doubled quotes
+   and embedded newlines, all of which occur in column_metadata.csv. */
+function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQ = false;
+    text = String(text).replace(/^﻿/, '');          /* strip UTF-8 BOM */
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQ) {
+            if (c === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; }
+                else inQ = false;
+            } else field += c;
+        } else if (c === '"') inQ = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (c !== '\r') field += c;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    if (!rows.length) return [];
+    const head = rows.shift().map(h => h.trim());
+    return rows.filter(r => r.some(v => String(v).trim() !== ''))
+               .map(r => { const o = {}; head.forEach((h, i) => o[h] = (r[i] === undefined ? '' : r[i])); return o; });
+}
+
+async function fetchCSV(path) {
+    const res = await fetch(bust(path), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + path);
+    return parseCSV(await res.text());
+}
+
+/* --------------------------------------------------------- METADATA ------ */
+const Meta = (function () {
+    let map = {}, loaded = false, count = 0;
+
+    async function load() {
+        if (!CONFIG.METADATA_ENABLED) { loaded = true; return; }
+        try {
+            const rows = await fetchCSV(CONFIG.METADATA_CSV_PATH);
+            map = {};
+            rows.forEach(m => {
+                const k = (m.PHYSICAL_COLUMN_NAME || '').trim().toUpperCase();
+                if (k) map[k] = m;
+            });
+            count = Object.keys(map).length;
+            loaded = true;
+            logConsole('<span class="c-ok">METADATA:</span> loaded ' + count +
+                       ' column definitions from ' + esc(CONFIG.METADATA_CSV_PATH));
+        } catch (e) {
+            loaded = true;
+            logConsole('<span class="c-warn">METADATA:</span> ' + esc(e.message) +
+                       '\nThe "i" icons will be greyed out. The CSV must sit in the same folder as this page ' +
+                       'and the page must be served over http(s) — a file:// page cannot fetch it.');
+        }
+    }
+
+    const has = col => !!map[String(col || '').trim().toUpperCase()];
+    const get = col => map[String(col || '').trim().toUpperCase()] || null;
+
+    function show(col) {
+        const m = get(col);
+        $('metaChip').textContent = col;
+        const body = $('metaBody');
+        if (!m) {
+            body.innerHTML = '<div class="meta-value">No metadata available for this column.<br><br>' +
+                'Add a row to <code>' + esc(CONFIG.METADATA_CSV_PATH) + '</code> with ' +
+                '<code>PHYSICAL_COLUMN_NAME</code> set to <code>' + esc(col) + '</code>.</div>';
+            openModal('metaModal');
+            return;
+        }
+        const f = (label, value, cls) =>
+            '<div class="meta-field"><div class="meta-label">' + esc(label) + '</div>' +
+            '<div class="meta-value ' + (cls || '') + '">' + (esc(value) || '&mdash;') + '</div></div>';
+
+        body.innerHTML =
+            f('Logical column name', m.LOGICAL_COLUMN_NAME) +
+            f('Physical / table column name', m.TABLE_COLUMN_NAME || m.PHYSICAL_COLUMN_NAME, 'mono') +
+            f('Description', m.DESCRIPTION) +
+            f('Long description', m.LONG_DESCRIPTION, 'scroll') +
+            f('Load frequency', m.LOAD_FREQUENCY) +
+            f('Line of business (LOB)', m.LOB);
+        openModal('metaModal');
+    }
+
+    return { load, has, get, show, isLoaded: () => loaded, size: () => count };
+})();
+
+/* ----------------------------------------------- GRID HEADER COMPONENT --- */
+/* Renders:  ColumnName  (i)  [pencil]
+   The "i" opens the metadata panel; the pencil marks the column editable. */
+class DmwHeader {
+    init(params) {
+        this.params = params;
+        const col = params.column.getColId();
+        const e = document.createElement('div');
+        e.className = 'hdr-wrap';
+
+        const label = document.createElement('span');
+        label.textContent = params.displayName;
+        e.appendChild(label);
+
+        if (CONFIG.METADATA_ENABLED) {
+            const i = document.createElement('button');
+            const known = Meta.has(col);
+            i.className = 'hdr-ico info' + (known ? '' : ' off');
+            i.textContent = 'i';
+            i.title = known ? 'Column metadata' : 'No metadata available for ' + col;
+            if (known) i.addEventListener('click', ev => { ev.stopPropagation(); Meta.show(col); });
+            else i.addEventListener('click', ev => ev.stopPropagation());
+            e.appendChild(i);
+        }
+
+        if (CONFIG.EDITABLE_COLUMNS && CONFIG.EDITABLE_COLUMNS[col]) {
+            const p = document.createElement('span');
+            p.className = 'hdr-ico edit';
+            p.textContent = '✎';
+            p.title = 'Editable — click a cell in this column to change it';
+            e.appendChild(p);
+        }
+
+        /* Keep AG Grid's own sort behaviour on the label. */
+        label.style.cursor = 'pointer';
+        label.addEventListener('click', ev => params.progressSort(ev.shiftKey));
+
+        this.gui = e;
+    }
+    getGui() { return this.gui; }
+    refresh() { return false; }
+}
+
+/* ------------------------------------------------------ EDIT JOBNAME ----- */
+const Editor = (function () {
+    let col = null, key = null, oldVal = '';
+
+    function open(column, rowData) {
+        const cfg = CONFIG.EDITABLE_COLUMNS[column];
+        if (!cfg) return;
+        col = column;
+        key = rowData[cfg.keyColumn];
+        oldVal = rowData[column] === null || rowData[column] === undefined ? '' : String(rowData[column]);
+
+        $('editChip').textContent = cfg.label || column;
+        $('editKey').textContent = (key === null || key === undefined) ? '—' : String(key);
+        $('editOld').textContent = oldVal || '—';
+        $('editNew').value = oldVal;
+        $('editNew').maxLength = cfg.maxLength || 200;
+        setStatus('');
+        openModal('editModal');
+        setTimeout(() => $('editNew').focus(), 60);
+    }
+
+    function setStatus(msg, cls) {
+        const el = $('editStatus');
+        el.textContent = msg || '';
+        el.className = 'notes-status' + (cls ? ' ' + cls : '');
+    }
+
+    async function save() {
+        const cfg = CONFIG.EDITABLE_COLUMNS[col];
+        const v = ($('editNew').value || '').trim();
+        if (!v)            { setStatus('The new value is empty.', 'err'); return; }
+        if (v === oldVal)  { setStatus('The value is unchanged.', 'err'); return; }
+        if (v.length > (cfg.maxLength || 200)) {
+            setStatus('Too long by ' + (v.length - (cfg.maxLength || 200)) + ' characters.', 'err'); return;
+        }
+
+        $('editSaveBtn').disabled = true;
+        setStatus('Saving…');
+
+        /* POST, not GET: a name reaches the web server log verbatim in a query
+           string, and a refresh can silently re-submit a GET. The username is
+           NOT sent — the stored process reads _METAPERSON server-side. */
+        const body = new URLSearchParams();
+        body.append('job_id',   key);
+        body.append('new_name', v);
+        body.append('old_name', oldVal);
+        body.append('debug_mode', CONFIG.SAS_DEBUG ? 1 : 0);
+
+        try {
+            const url = CONFIG.SAS_BASE_URL + encodeURIComponent(cfg.program);
+            const res = await fetch(bust(url), {
+                method: 'POST', cache: 'no-store', credentials: 'include',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded',
+                           'Accept': 'application/json' },
+                body: body.toString()
+            });
+            const text = await res.text();
+            if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
+            const data = JSON.parse(text);
+
+            if (data.error) throw new Error(data.error);
+            if (data.status === 'CONFLICT') {
+                setStatus(data.message || 'Changed by someone else.', 'err');
+                $('editOld').textContent = data.current_name || oldVal;
+                return;
+            }
+            if (data.status !== 'OK') throw new Error(data.message || 'The change was not applied.');
+
+            setStatus('Saved by ' + (data.changed_by || '?') + '. Reloading…', 'ok');
+            logConsole('<span class="c-ok">EDIT:</span> ' + esc(col) + ' for ' +
+                       esc(cfg.keyColumn) + ' ' + esc(String(key)) + ' changed to "' + esc(v) + '"');
+            setTimeout(() => { closeModal('editModal'); executeQuery(); }, 700);
+        } catch (e) {
+            setStatus(e.message, 'err');
+            logConsole('<span class="c-err">EDIT:</span> ' + esc(e.message));
+        } finally {
+            $('editSaveBtn').disabled = false;
+        }
+    }
+
+    function init() {
+        $('editSaveBtn').addEventListener('click', save);
+        $('editNew').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); save(); }
+        });
+    }
+    return { init, open };
+})();
+
+/* ------------------------------------------------------- SVG CHARTS ------ */
+/* Small hand-rolled chart helpers. No library, so nothing is fetched. */
+const Chart = (function () {
+    const PALETTE = ['#4a7ba7','#2e7d32','#b07400','#8e44ad','#c0392b','#16a085',
+                     '#2c3e50','#d35400','#7f8c8d','#27ae60','#2980b9','#c0392b',
+                     '#9b59b6','#f39c12','#1abc9c','#34495e'];
+    const color = i => PALETTE[i % PALETTE.length];
+    const esc2 = t => esc(String(t));
+
+    /* Multi-series step/line chart over time. series = [{name, points:[{x:Date,y:Number}]}] */
+    function line(series, opts) {
+        opts = opts || {};
+        const W = opts.width || 980, H = opts.height || 190;
+        const m = { t: 10, r: 14, b: 26, l: 40 };
+        const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+        let xs = [], ys = [];
+        series.forEach(s => s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
+        if (!xs.length) return '<div class="notes-empty">No data in the selected window.</div>';
+        const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+        const y0 = opts.yMin !== undefined ? opts.yMin : Math.min.apply(null, ys);
+        const y1 = opts.yMax !== undefined ? opts.yMax : Math.max.apply(null, ys);
+        const sx = v => m.l + (x1 === x0 ? 0 : ((+v - x0) / (x1 - x0)) * iw);
+        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((v - y0) / (y1 - y0)) * ih);
+
+        let g = '';
+        /* gridlines + y labels */
+        for (let i = 0; i <= 4; i++) {
+            const yv = y0 + ((y1 - y0) * i / 4), yy = sy(yv);
+            g += '<line x1="' + m.l + '" y1="' + yy + '" x2="' + (W - m.r) + '" y2="' + yy +
+                 '" stroke="#eceff3" stroke-width="1"/>' +
+                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3) + '" font-size="9" fill="#999" text-anchor="end">' +
+                 (opts.yFormat ? opts.yFormat(yv) : Math.round(yv)) + '</text>';
+        }
+        /* x labels: first, middle, last */
+        [x0, (x0 + x1) / 2, x1].forEach((xv, i) => {
+            g += '<text x="' + sx(xv) + '" y="' + (H - 8) + '" font-size="9" fill="#999" text-anchor="' +
+                 (i === 0 ? 'start' : i === 2 ? 'end' : 'middle') + '">' +
+                 esc2(new Date(xv).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + '</text>';
+        });
+
+        series.forEach((s, si) => {
+            if (!s.points.length) return;
+            const d = s.points.map((p, i) => (i ? 'L' : 'M') + sx(p.x).toFixed(1) + ' ' + sy(p.y).toFixed(1)).join(' ');
+            g += '<path d="' + d + '" fill="none" stroke="' + color(si) + '" stroke-width="1.6" ' +
+                 'stroke-linejoin="round" stroke-linecap="round"/>';
+            /* mark the failures so an outage is visible rather than inferred */
+            if (opts.markBelow !== undefined) {
+                s.points.forEach(p => {
+                    if (p.y <= opts.markBelow) {
+                        g += '<circle cx="' + sx(p.x).toFixed(1) + '" cy="' + sy(p.y).toFixed(1) +
+                             '" r="2.6" fill="#c00000"/>';
+                    }
+                });
+            }
+        });
+
+        const legend = series.map((s, i) =>
+            '<span><i style="background:' + color(i) + '"></i>' + esc2(s.name) + '</span>').join('');
+
+        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;height:auto;">' + g + '</svg>' +
+               '<div class="chart-legend">' + legend + '</div>';
+    }
+
+    /* Donut. items = [{name, value}] */
+    function donut(items, opts) {
+        opts = opts || {};
+        const W = opts.width || 420, H = opts.height || 260;
+        const cx = 128, cy = H / 2, R = 92, r = 52;
+        const total = items.reduce((a, b) => a + b.value, 0);
+        if (!total) return '<div class="notes-empty">No data.</div>';
+
+        let a0 = -Math.PI / 2, g = '';
+        items.forEach((it, i) => {
+            const frac = it.value / total, a1 = a0 + frac * Math.PI * 2;
+            const large = frac > 0.5 ? 1 : 0;
+            const p = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+            const [x1, y1] = p(a0, R), [x2, y2] = p(a1, R), [x3, y3] = p(a1, r), [x4, y4] = p(a0, r);
+            g += '<path d="M' + x1 + ' ' + y1 + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x2 + ' ' + y2 +
+                 ' L' + x3 + ' ' + y3 + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + x4 + ' ' + y4 + ' Z" ' +
+                 'fill="' + color(i) + '" stroke="#fff" stroke-width="1"><title>' + esc2(it.name) + ': ' +
+                 it.value.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '</title></path>';
+            a0 = a1;
+        });
+        g += '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="18" font-weight="700" fill="#1f3864">' +
+             (opts.centerValue || '') + '</text>' +
+             '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="9" fill="#888">' +
+             esc2(opts.centerLabel || '') + '</text>';
+
+        /* legend to the right, inside the SVG so it scales with it */
+        items.forEach((it, i) => {
+            const yy = 24 + i * 15;
+            if (yy > H - 8) return;
+            const pct = ((it.value / total) * 100).toFixed(1);
+            g += '<rect x="248" y="' + (yy - 8) + '" width="9" height="9" rx="2" fill="' + color(i) + '"/>' +
+                 '<text x="262" y="' + yy + '" font-size="9.5" fill="#444">' +
+                 esc2(it.name.length > 26 ? it.name.slice(0, 25) + '…' : it.name) +
+                 ' <tspan fill="#999">' + pct + '%</tspan></text>';
+        });
+
+        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;">' + g + '</svg>';
+    }
+
+    /* Horizontal bars. items = [{name, value}] */
+    function bars(items, opts) {
+        opts = opts || {};
+        if (!items.length) return '<div class="notes-empty">No data.</div>';
+        const max = Math.max.apply(null, items.map(i => i.value)) || 1;
+        return '<table class="sum" style="margin-top:4px;"><tbody>' + items.map((it, i) =>
+            '<tr><td style="width:210px;">' + esc2(it.name) + '</td>' +
+            '<td><div style="background:' + color(i) + ';height:13px;border-radius:2px;width:' +
+            Math.max(1, (it.value / max) * 100).toFixed(1) + '%;"></div></td>' +
+            '<td style="width:90px;text-align:right;font-family:Consolas,monospace;">' +
+            (opts.format ? opts.format(it.value) : it.value.toLocaleString('en-US')) + '</td></tr>').join('') +
+            '</tbody></table>';
+    }
+
+    return { line, donut, bars, color };
+})();
+
+/* ===================================================================== HOME */
+const Home = (function () {
+    let serverRows = [], serviceRows = [], timer = null, lastLoad = null;
+
+    const cls = st => ({ UP:'up', HEALTHY:'up', DEGRADED:'degraded',
+                         DOWN:'down', CRITICAL:'down', UNKNOWN:'unknown' })[st] || 'unknown';
+
+    const parseTs = v => { const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; };
+
+    function withinWindow(rows) {
+        const cut = Date.now() - CONFIG.UPTIME_WINDOW_HOURS * 3600 * 1000;
+        return rows.filter(r => { const d = parseTs(r.Timestamp); return d && +d >= cut; });
+    }
+
+    async function load() {
+        const errs = [];
+        try { serverRows = await fetchCSV(CONFIG.SERVER_STATUS_CSV); }
+        catch (e) { serverRows = []; errs.push('server status: ' + e.message); }
+        try { serviceRows = await fetchCSV(CONFIG.SERVICE_STATUS_CSV); }
+        catch (e) { serviceRows = []; errs.push('service status: ' + e.message); }
+        lastLoad = new Date();
+        return errs;
+    }
+
+    function latestPer(rows, keyFn) {
+        const best = {};
+        rows.forEach(r => {
+            const k = keyFn(r), d = parseTs(r.Timestamp);
+            if (!d) return;
+            if (!best[k] || +d > +parseTs(best[k].Timestamp)) best[k] = r;
+        });
+        return best;
+    }
+
+    function render(errs) {
+        const host = $('homePanel');
+        const authed = !!(window.session && window.session.authenticated);
+
+        /* ---- freshness ---- */
+        const allTs = serverRows.concat(serviceRows).map(r => parseTs(r.Timestamp)).filter(Boolean);
+        const newest = allTs.length ? new Date(Math.max.apply(null, allTs.map(Number))) : null;
+        const ageMin = newest ? Math.round((Date.now() - +newest) / 60000) : null;
+        const stale = ageMin !== null && ageMin > CONFIG.STATUS_STALE_MINUTES;
+
+        let h = '<div class="card">';
+        h += '<div class="sla-head"><h2>Home SLA Overview</h2>';
+        h += '<span class="sla-stamp">' + (newest
+                ? 'Last sweep ' + esc(newest.toLocaleString('en-US')) + ' (' + ageMin + ' min ago)'
+                : 'No monitoring data found') + '</span>';
+        if (stale) h += '<span class="sla-stale">STALE — the scanner may not be running</span>';
+
+        /* ---- login nudge, upper right ---- */
+        h += '<div class="login-nudge">';
+        if (authed) {
+            h += '<strong>Signed in as ' + esc(window.session.userid) + '.</strong> ' +
+                 'Job-level detail is available in the Data Grid.';
+        } else {
+            h += '<strong>Sign in for more.</strong> This page shows environment health without a ' +
+                 'SAS session. Logon to query job history, edit job names and use Ask DMW.' +
+                 '<button class="btn btn-primary" style="margin-top:6px;" onclick="handleLogon(event)">Logon</button>';
+        }
+        h += '</div></div>';
+
+        if (errs && errs.length) {
+            h += '<div class="notes-warn"><strong>Monitoring data unavailable.</strong> ' +
+                 esc(errs.join(' · ')) + '<br>Run the scanners in <code>ps1\\</code> ' +
+                 'or check that the CSV paths in <code>CONFIG</code> are correct. ' +
+                 'A <code>file://</code> page cannot fetch them — serve over http(s).</div>';
+        }
+
+        /* ================= SERVER MONITOR ================= */
+        h += '<div class="sec-title">Server monitor &mdash; HTTP endpoints</div>';
+        const latestSrv = latestPer(serverRows, r => r.Environment + '|' + r.ServiceName);
+        const srvKeys = Object.keys(latestSrv).sort();
+        if (!srvKeys.length) {
+            h += '<div class="notes-empty">No server checks recorded. Run <code>Check-SASServers_v2.0.ps1</code>.</div>';
+        } else {
+            h += '<div class="svc-grid">';
+            srvKeys.forEach(k => {
+                const r = latestSrv[k];
+                h += '<div class="svc-card ' + cls(r.Status) + '">' +
+                     '<div class="svc-name">' + esc(r.ServiceName) +
+                     '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
+                     '<div class="svc-state">' + esc(r.Status) + '</div>' +
+                     '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
+                     esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+            });
+            h += '</div>';
+        }
+
+        /* ================= SERVICES / OBJECT SPAWNER ================= */
+        h += '<div class="sec-title">Services monitor &mdash; OverallStatus from the most recent sweep</div>';
+        const latestSvc = latestPer(serviceRows, r => r.Environment + '|' + r.ServiceName);
+        const svcKeys = Object.keys(latestSvc).sort();
+        if (!svcKeys.length) {
+            h += '<div class="notes-empty">No service checks recorded. Run <code>Check-ObjectSpawner_v1.0.ps1</code>.</div>';
+        } else {
+            /* OverallStatus per environment first — this is the headline number */
+            const envs = {};
+            svcKeys.forEach(k => { const r = latestSvc[k]; envs[r.Environment] = r.OverallStatus; });
+            h += '<div class="svc-grid" style="margin-bottom:10px;">';
+            Object.keys(envs).sort().forEach(e => {
+                h += '<div class="svc-card ' + cls(envs[e]) + '">' +
+                     '<div class="svc-name">OverallStatus<span class="svc-env ' + esc(e) + '">' + esc(e) + '</span></div>' +
+                     '<div class="svc-state">' + esc(envs[e]) + '</div>' +
+                     '<div class="svc-meta">Worst state among monitored services in ' + esc(e) + '</div></div>';
+            });
+            h += '</div>';
+
+            h += '<table class="sum"><thead><tr><th>Environment</th><th>Service</th><th>Host</th>' +
+                 '<th>State</th><th>Critical</th><th>Checked</th></tr></thead><tbody>';
+            svcKeys.forEach(k => {
+                const r = latestSvc[k];
+                const bad = r.State !== 'Running';
+                h += '<tr' + (bad ? ' style="background:#fdf2f2;"' : '') + '>' +
+                     '<td>' + esc(r.Environment) + '</td><td>' + esc(r.Label || r.ServiceName) + '</td>' +
+                     '<td>' + esc(r.ComputerName) + '</td>' +
+                     '<td style="font-weight:700;color:' + (bad ? '#c00000' : '#2e7d32') + '">' + esc(r.State) + '</td>' +
+                     '<td>' + (String(r.Critical).toLowerCase() === 'true' ? 'Yes' : 'No') + '</td>' +
+                     '<td>' + esc(r.Timestamp) + '</td></tr>';
+            });
+            h += '</tbody></table>';
+        }
+
+        /* ================= UPTIME REPORT ================= */
+        h += '<div class="sec-title">Uptime report &mdash; last ' +
+             Math.round(CONFIG.UPTIME_WINDOW_HOURS / 24) + ' days</div>';
+        const win = withinWindow(serverRows);
+        if (!win.length) {
+            h += '<div class="notes-empty">No checks inside the window.</div>';
+        } else {
+            const byKey = {};
+            win.forEach(r => {
+                const k = r.Environment + ' ' + r.ServiceName;
+                (byKey[k] = byKey[k] || []).push(r);
+            });
+            const series = Object.keys(byKey).sort().map(k => ({
+                name: k,
+                points: byKey[k]
+                    .map(r => ({ x: parseTs(r.Timestamp), y: r.Status === 'DOWN' ? 0 : (r.Status === 'DEGRADED' ? 0.5 : 1) }))
+                    .filter(p => p.x).sort((a, b) => a.x - b.x)
+            }));
+            h += '<div class="chart-box"><h4>Availability over time &mdash; 1 = up, 0.5 = degraded, 0 = down. ' +
+                 'Red dots mark failed checks.</h4>' +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, markBelow: 0,
+                                      yFormat: v => (v >= 0.95 ? 'up' : v <= 0.05 ? 'down' : '') }) +
+                 '</div>';
+
+            /* availability % per endpoint */
+            const rows = Object.keys(byKey).sort().map(k => {
+                const a = byKey[k], up = a.filter(r => r.Status !== 'DOWN').length;
+                return { name: k, value: (up / a.length) * 100, checks: a.length,
+                         down: a.length - up };
+            });
+            h += '<div class="chart-box"><h4>Availability by endpoint</h4>' +
+                 '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Failed</th>' +
+                 '<th>Availability</th></tr></thead><tbody>' +
+                 rows.map(r => '<tr><td>' + esc(r.name) + '</td><td>' + r.checks + '</td>' +
+                     '<td style="color:' + (r.down ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.down + '</td>' +
+                     '<td style="font-family:Consolas,monospace;">' + r.value.toFixed(2) + '%</td></tr>').join('') +
+                 '</tbody></table></div>';
+        }
+
+        /* ================= SERVICES RELIABILITY ================= */
+        h += '<div class="sec-title">Services reliability &mdash; UNIT and PROD</div>';
+        const swin = withinWindow(serviceRows);
+        if (!swin.length) {
+            h += '<div class="notes-empty">No service checks inside the window.</div>';
+        } else {
+            const byKey = {};
+            swin.forEach(r => {
+                const k = r.Environment + ' ' + (r.Label || r.ServiceName);
+                (byKey[k] = byKey[k] || []).push(r);
+            });
+            const series = Object.keys(byKey).sort().map(k => ({
+                name: k,
+                points: byKey[k].map(r => ({ x: parseTs(r.Timestamp), y: Number(r.IsRunning) || 0 }))
+                                .filter(p => p.x).sort((a, b) => a.x - b.x)
+            }));
+            h += '<div class="chart-box"><h4>Service state over time &mdash; 1 = running, 0 = stopped or unreachable</h4>' +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, markBelow: 0,
+                                      yFormat: v => (v >= 0.95 ? 'run' : v <= 0.05 ? 'stop' : '') }) +
+                 '</div>';
+
+            const rel = Object.keys(byKey).sort().map(k => {
+                const a = byKey[k], up = a.filter(r => Number(r.IsRunning) === 1).length;
+                return { name: k, value: (up / a.length) * 100, out: a.length - up };
+            });
+            h += '<div class="chart-box"><h4>Uptime by service</h4>' +
+                 Chart.bars(rel, { format: v => v.toFixed(2) + '%' }) + '</div>';
+        }
+
+        h += '</div>';
+        host.innerHTML = h;
+    }
+
+    async function show() {
+        $('homePanel').innerHTML = '<div class="card"><p>Loading environment status…</p></div>';
+        const errs = await load();
+        render(errs);
+        if (CONFIG.HOME_REFRESH_SECONDS > 0) {
+            clearInterval(timer);
+            timer = setInterval(async () => {
+                if (!$('homePanel').classList.contains('active')) return;
+                const e2 = await load(); render(e2);
+            }, CONFIG.HOME_REFRESH_SECONDS * 1000);
+        }
+    }
+    return { show };
+})();
+
+/* ========================================================== VISUALIZATIONS */
+const Viz = (function () {
+    let rows = [], loaded = false;
+
+    async function load() {
+        rows = await fetchCSV(CONFIG.SAS_LOG_METRICS_CSV);
+        loaded = true;
+    }
+
+    async function show() {
+        const host = $('vizPerfPanel');
+        host.innerHTML = '<div class="card"><p>Loading report performance…</p></div>';
+        try { if (!loaded) await load(); }
+        catch (e) {
+            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>Could not load ' +
+                esc(CONFIG.SAS_LOG_METRICS_CSV) + '.</strong> ' + esc(e.message) +
+                '<br>Generate it with <code>scanFileSystem.ps1 -metric_profile sas_log</code>.</div></div>';
+            return;
+        }
+
+        const ok = rows.filter(r => r.ParseStatus === 'OK');
+        const num = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
+
+        /* KPI tiles */
+        const programs = {};
+        ok.forEach(r => { programs[r.ProgramName] = (programs[r.ProgramName] || 0) + num(r, 'CpuTimeSec'); });
+        const progCount = Object.keys(programs).length;
+        const runCount  = rows.length;
+        const totCpu    = ok.reduce((a, r) => a + num(r, 'CpuTimeSec'), 0);
+        const totReal   = ok.reduce((a, r) => a + num(r, 'RealTimeSec'), 0);
+        const errRuns   = rows.filter(r => Number(r.ErrorCount) > 0).length;
+
+        const fmtK = n => n >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(Math.round(n));
+        const fmtH = s => (s / 3600).toFixed(1) + ' h';
+
+        let h = '<div class="card">';
+        h += '<div class="sla-head"><h2>Report Performance</h2>' +
+             '<span class="sla-stamp">Source: ' + esc(CONFIG.SAS_LOG_METRICS_CSV) +
+             ' &middot; scanFileSystem.ps1 -metric_profile sas_log</span></div>';
+
+        h += '<div class="kpi-row">' +
+             '<div class="kpi"><div class="v">' + progCount + '</div><div class="l">Program Count</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtK(runCount) + '</div><div class="l">Run Count</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtH(totCpu) + '</div><div class="l">Total CPU Time</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtH(totReal) + '</div><div class="l">Total Real Time</div></div>' +
+             '<div class="kpi ' + (errRuns ? 'bad' : 'good') + '"><div class="v">' + errRuns +
+             '</div><div class="l">Runs with Errors</div></div>' +
+             '</div>';
+
+        /* Donut: average CPU by program, top N */
+        const avg = Object.keys(programs).map(p => {
+            const runs = ok.filter(r => r.ProgramName === p);
+            return { name: p, value: runs.reduce((a, r) => a + num(r, 'CpuTimeSec'), 0) / runs.length };
+        }).sort((a, b) => b.value - a.value);
+        const topN = avg.slice(0, CONFIG.VIZ_TOP_N);
+        const rest = avg.slice(CONFIG.VIZ_TOP_N);
+        const donutItems = topN.concat(rest.length
+            ? [{ name: 'Other (' + rest.length + ')', value: rest.reduce((a, b) => a + b.value, 0) }] : []);
+
+        /* Line: CPU utilization over time */
+        const byDay = {};
+        ok.forEach(r => {
+            const d = new Date(String(r.LastModified).replace(' ', 'T'));
+            if (isNaN(d)) return;
+            const k = d.toISOString().slice(0, 10);
+            byDay[k] = (byDay[k] || 0) + num(r, 'CpuTimeSec');
+        });
+        const pts = Object.keys(byDay).sort().map(k => ({ x: new Date(k + 'T00:00:00'), y: byDay[k] }));
+
+        h += '<div class="viz-2col">';
+        h += '<div class="chart-box"><h4>Average CPU Time by SAS Program</h4>' +
+             Chart.donut(donutItems, { centerValue: fmtH(totCpu), centerLabel: 'total CPU' }) + '</div>';
+        h += '<div class="chart-box"><h4>CPU Utilization by Time</h4>' +
+             Chart.line([{ name: 'CPU seconds per day', points: pts }],
+                        { height: 230, yFormat: v => fmtK(v) }) + '</div>';
+        h += '</div>';
+
+        /* Detail table */
+        h += '<div class="chart-box"><h4>Program detail &mdash; ranked by average CPU time</h4>' +
+             '<table class="sum"><thead><tr><th>Environment</th><th>SAS Program</th><th>Runs</th>' +
+             '<th>Avg CPU (s)</th><th>Avg Real (s)</th><th>Max CPU (s)</th><th>Steps</th>' +
+             '<th>Errors</th><th>Top PROC</th></tr></thead><tbody>';
+        avg.forEach(p => {
+            const runs = ok.filter(r => r.ProgramName === p.name);
+            const env  = runs[0] ? runs[0].Environment : '';
+            const maxC = Math.max.apply(null, runs.map(r => num(r, 'CpuTimeSec')));
+            const avgR = runs.reduce((a, r) => a + num(r, 'RealTimeSec'), 0) / runs.length;
+            const steps= Math.round(runs.reduce((a, r) => a + num(r, 'TotalStepCount'), 0) / runs.length);
+            const errs = runs.reduce((a, r) => a + (Number(r.ErrorCount) || 0), 0);
+            h += '<tr><td>' + esc(env) + '</td><td>' + esc(p.name) + '</td><td>' + runs.length + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + p.value.toFixed(1) + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + avgR.toFixed(1) + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + maxC.toFixed(1) + '</td>' +
+                 '<td>' + steps + '</td>' +
+                 '<td style="color:' + (errs ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + errs + '</td>' +
+                 '<td>' + esc(runs[0] ? runs[0].TopProcedure : '') + '</td></tr>';
+        });
+        h += '</tbody></table></div></div>';
+        host.innerHTML = h;
+    }
+    return { show };
+})();
+
+/* ================================================================ SECURITY */
+function renderSecurity() {
+    const host = $('securityPanel');
+    if (host.dataset.done) return;
+    const B = (x, y, w, hh, title, body, fill, stroke) =>
+        '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" rx="6" fill="' + fill +
+        '" stroke="' + stroke + '" stroke-width="1.5"/>' +
+        '<text x="' + (x + 14) + '" y="' + (y + 24) + '" font-size="13" font-weight="700" fill="#17375e">' + title + '</text>' +
+        body.map((line, i) => '<text x="' + (x + 14) + '" y="' + (y + 44 + i * 15) + '" font-size="10.5" fill="#44546a">' +
+            line + '</text>').join('');
+    const ARROW = (x1, y1, x2, y2) =>
+        '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+        '" stroke="#17375e" stroke-width="1.6" marker-end="url(#ah)"/>';
+
+    host.innerHTML =
+    '<div class="card"><div class="sla-head"><h2>Security &mdash; Software Delivery</h2>' +
+    '<span class="sla-stamp">Current state and the proposed hotfix cycle</span></div>' +
+    '<div class="sec-wrap"><svg viewBox="0 0 1040 520">' +
+      '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">' +
+      '<path d="M0 0 L10 5 L0 10 z" fill="#17375e"/></marker></defs>' +
+
+      '<text x="8" y="16" font-size="11" font-weight="700" fill="#2e75b6" letter-spacing="1">SOFTWARE DELIVERY</text>' +
+
+      B(8,  30, 250, 92, '1  Download once',
+        ['At the internet-connected HUB', '(about 20 GB)'], '#f2f7fc', '#9dc3e6') +
+      B(298, 30, 250, 92, '2  Scan for security',
+        ['Scanned once, before anything', 'is delivered'], '#f2f7fc', '#9dc3e6') +
+      B(588, 30, 190, 92, '3  Deliver',
+        ['Approved path only.', 'Scan on PC. Scan example', 'workstation.'], '#f2f7fc', '#9dc3e6') +
+
+      B(820, 14, 212, 76, 'CLIENT: Workstations',
+        ['(about 35)', 'Automatic through BigFix'], '#ffffff', '#2e7d4f') +
+      B(820, 100, 212, 76, 'SERVER: Servers and',
+        ['admin desktops (fewer than 10)', 'Installed by hand'], '#ffffff', '#2e7d4f') +
+
+      ARROW(258, 76, 296, 76) + ARROW(548, 76, 586, 76) +
+      ARROW(778, 70, 818, 52) + ARROW(778, 82, 818, 128) +
+
+      '<rect x="8" y="198" width="1024" height="212" rx="8" fill="#f7f9fc" stroke="#cfd8e3"/>' +
+      '<text x="24" y="224" font-size="11" font-weight="700" fill="#2e75b6" letter-spacing="1">HOTFIX CYCLE</text>' +
+      '<text x="24" y="244" font-size="10.5" fill="#44546a">Ad hoc today. Proposed: quarterly, plus urgent runs for security alerts.</text>' +
+
+      B(28,  262, 300, 92, 'A  Identify',
+        ['Which fixes are needed based on', 'the Nessus Scan and deployment.txt.'], '#ffffff', '#9dc3e6') +
+      B(368, 262, 300, 92, 'B  Obtain and prepare',
+        ['Download and scan at the hub (use', 'the powershell script. See NOTES.)'], '#ffffff', '#9dc3e6') +
+      B(708, 262, 300, 92, 'C  Deploy and verify',
+        ['Admin to deploy from workstation to', 'SERVER and/or CLIENT.'], '#ffffff', '#9dc3e6') +
+      ARROW(328, 308, 366, 308) + ARROW(668, 308, 706, 308) +
+
+      B(8,   436, 330, 56, 'Client side: scan passed', [], '#eaf5ec', '#2e7d4f') +
+      B(354, 436, 330, 56, 'Server side: next',        [], '#fdf3e7', '#d9822b') +
+      B(700, 436, 332, 56, 'Open: keep or trim the depot', [], '#fdf3e7', '#d9822b') +
+    '</svg></div>' +
+    '<div class="ask-note" style="margin-top:12px;">This diagram is drawn inline as SVG rather than ' +
+    'embedded as an image, so it scales cleanly, stays searchable, and adds no external asset to an ' +
+    'air-gapped deployment. Edit it in <code>renderSecurity()</code>.</div></div>';
+    host.dataset.done = '1';
+}
+
+/* ================================================================ ASK DMW */
+function renderAskDmw() {
+    const host = $('askPanel');
+    if (host.dataset.done) return;
+    if (!CONFIG.ASK_DMW_ENABLED) {
+        host.innerHTML = '<div class="card"><p>Ask DMW is disabled. Set <code>CONFIG.ASK_DMW_ENABLED</code> to <code>true</code>.</p></div>';
+        host.dataset.done = '1';
+        return;
+    }
+    host.innerHTML =
+        '<div class="card ask-wrap">' +
+        '<div class="sla-head"><h2>Ask DMW</h2>' +
+        '<span class="sla-stamp">Prototype &mdash; embedded Copilot Studio agent</span></div>' +
+        '<div class="ask-note"><strong>Short-term demo.</strong> The agent is embedded as an iframe ' +
+        'rather than wired in through an API, so this page holds no API key, no token handling and no ' +
+        'CORS configuration. It cannot read the grid and the grid cannot read it.<br>' +
+        'If the panel below stays blank, the host page is almost certainly refusing to be framed ' +
+        '(<code>X-Frame-Options</code> or <code>Content-Security-Policy: frame-ancestors</code>), or ' +
+        'you are not signed in to the tenant. Open the URL in a normal tab first to confirm, then ' +
+        'ask whoever published the agent to allow this page\'s origin as a frame ancestor.</div>' +
+        '<div class="ask-frame"><iframe src="' + esc(CONFIG.ASK_DMW_URL) + '" ' +
+        'title="Ask DMW" loading="lazy" referrerpolicy="no-referrer-when-downgrade" ' +
+        'sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe></div>' +
+        '</div>';
+    host.dataset.done = '1';
+}
+
+
+window.addEventListener('DOMContentLoaded', function () {
+    /* Identity */
+    document.title = CONFIG.APP_NAME;
+    $('appTitle').textContent = CONFIG.APP_NAME;
+    $('appSubtitle').textContent = CONFIG.APP_SUBTITLE + '   •   ' +
+        CONFIG.SERVER_HOST + ' / ' + CONFIG.INITIAL_CATALOG;
+    $('buildStamp').textContent = BUILD_ID;
+
+    $('aboutServer').textContent = CONFIG.SERVER_HOST;
+    $('aboutDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('aboutAuth').textContent   = CONFIG.AUTH_MODE;
+    $('aboutUser').textContent   = CONFIG.AUTH_USER;
+    $('aboutProg').textContent   = CONFIG.SAS_PROGRAM;
+
+    /* v2: column metadata, the JobName editor, and the Home tab */
+    Editor.init();
+    Meta.load();                 /* async: the grid re-reads it on next render */
+    Home.show();                 /* Home is the landing tab */
+
+    /* SQL + saved queries */
+    populateSavedQueries();
+    $('sqlEditor').value = CONFIG.INITIAL_SQL;
+
+    /* Grid placeholder until the first run */
+    $('dmwGrid').className = CONFIG.GRID_THEME;
+    $('dmwGrid').innerHTML =
+        '<div class="empty-note" style="margin-top:12px;"><h2>No data loaded yet</h2>' +
+        '<p>Press <strong>Logon</strong> in the top right to authenticate to SAS; the query then runs automatically.</p>' +
+        '<p style="margin-top:6px;">You can also press <strong>Run Query</strong> at any time.</p></div>';
+
+    renderConnectionPanel();
+    updatePills();
+
+    /* Wiring — top nav */
+    $('nav-logon').addEventListener('click', handleLogon);
+    $('nav-about').addEventListener('click', e => { e.preventDefault(); openModal('aboutModal'); });
+    $('nav-help').addEventListener('click',  e => { e.preventDefault(); openModal('helpModal'); });
+    $('footer-signout').addEventListener('click', handleSignOut);
+
+    /* Wiring — hamburger */
+    $('hamburgerBtn').addEventListener('click', toggleMenu);
+    $('menuDashboard').addEventListener('click', e => { e.preventDefault(); generateDashboard(); closeMenu(); });
+    $('menuVisualize').addEventListener('click', e => { e.preventDefault(); visualizeData();    closeMenu(); });
+    $('menuExport').addEventListener('click',    e => { e.preventDefault(); exportCSV();        closeMenu(); });
+
+    /* Wiring — toolbar */
+    $('runBtn').addEventListener('click', executeQuery);
+    $('exportBtn').addEventListener('click', exportCSV);
+    $('cacheBtn').addEventListener('click', clearCacheAndReload);
+    $('savedQuery').addEventListener('change', e => loadSavedQuery(e.target.value));
+    $('quickSearch').addEventListener('input', e => {
+        if (gridApi) { gridApi.setGridOption('quickFilterText', e.target.value); updateFilteredCount(); }
+    });
+    $('clearFiltersBtn').addEventListener('click', () => {
+        $('quickSearch').value = '';
+        if (gridApi) {
+            gridApi.setFilterModel(null);
+            gridApi.setGridOption('quickFilterText', '');
+            updateFilteredCount();
+        }
+    });
+    $('autoSizeBtn').addEventListener('click', () => {
+        if (gridApi) gridApi.autoSizeAllColumns();
+    });
+
+    /* Wiring — tabs, modals, keys */
+    document.querySelectorAll('.tab-btn').forEach(b =>
+        b.addEventListener('click', () => switchPanel(b.dataset.panel)));
+    document.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => closeModal(b.dataset.close)));
+    document.querySelectorAll('.modal-overlay').forEach(o =>
+        o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
+
+    document.addEventListener('click', e => {
+        const menu = $('dropdownMenu'), btn = $('hamburgerBtn');
+        if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeMenu();
+            document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); executeQuery(); }
+    });
+
+    $('sqlEditor').addEventListener('keydown', e => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const t = e.target, s = t.selectionStart, en = t.selectionEnd;
+            t.value = t.value.slice(0, s) + '    ' + t.value.slice(en);
+            t.selectionStart = t.selectionEnd = s + 4;
+        }
+    });
+
+    /* Session banner */
+    if (window.session.authenticated) sasRenderLoggedIn(); else sasRenderLoggedOut();
+
+    logConsole(
+        '<span class="c-ok">OUTPUT:</span> ' + esc(CONFIG.APP_NAME) + ' initialized.\n' +
+        'Build   : ' + BUILD_ID + '\n' +
+        'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+        'Auth    : ' + esc(CONFIG.AUTH_MODE) + ' as ' + esc(CONFIG.AUTH_USER) + '\n' +
+        'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+        'Session : ' + (window.session.authenticated ? esc(window.session.userid) : 'not signed in') + '\n' +
+        'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+        (window.session.authenticated
+            ? 'SAS session detected.' + (CONFIG.AUTO_RUN_ON_LOGON ? ' Running the initial query…' : ' Press "Run Query" to execute.')
+            : 'Press "Logon" in the top right to authenticate to SAS, then the query will run.') +
+        '\nTip: Ctrl+Enter runs the current statement.'
+    );
+
+    /* Logon is what makes execution possible, so run as soon as a session exists. */
+    if (window.session.authenticated && CONFIG.AUTO_RUN_ON_LOGON) {
+        executeQuery();
+    }
+});
+</script>
+</body>
+</html>
