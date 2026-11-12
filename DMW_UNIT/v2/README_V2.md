@@ -1,8 +1,8 @@
-# DMW — IT Management Solution v1.2Beta
+# DMW — IT Management Solution v1.3Beta
 
-`dmw_it_management_v1_2Beta.html` (version **1.2Beta**, shown in the page header
+`dmw_it_management_v1_3Beta.html` (version **1.3Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
-Visualize Performance tab, a Security diagram, an embedded Ask DMW agent, column
+Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
 
 The Data Grid query now joins `View_Scheduler_PBI_Dashboard` to `Job` on
@@ -16,12 +16,12 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_2Beta.html     the application
+├── dmw_it_management_v1_3Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
 ├── styles/ag-grid.css, ag-theme-alpine.css
-├── data/                         CSVs the Home and Visualize Performance tabs read
+├── data/                         CSVs the Home and Data Pipeline Performance tabs read
 │   ├── sas_server_status.csv         <- Check-SASServers_v2.0.ps1
 │   ├── objectspawner_status.csv      <- Check-ObjectSpawner_v1.0.ps1
 │   ├── sas_log_rollup.csv            <- Export-SasLogRollup.ps1
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_2Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_3Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -167,16 +167,17 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **Home** | Home SLA Overview: server monitor, services monitor with `OverallStatus`, uptime report, services reliability. Works with no SAS session. |
 | **Data Grid** | The joined 34-column result. "i" icon on every column, pencil on `JobName`. |
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
-| **Dashboard** | KPI tiles and a group-by summary. Populates automatically when the query returns. |
-| **Charts** | Row counts from the current result set, plus two server response-time charts. Both populate automatically; the hamburger **Chart Data** item just switches to the tab. |
-| **Visualize Performance** | Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
+| **Scheduler Overview** | KPI tiles plus row counts by `DASHBOARD_GROUP_BY`. Populates automatically when the query returns. |
+| **Server Performance** | Response-time charts for the monitored HTTP endpoints. Hover any point for the endpoint, date and value. |
+| **Data Pipeline Performance** | Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
 | **Ask DMW Agent** | Embedded Copilot Studio agent, with an always-visible "open in a new tab" fallback. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
 | **Console** | Request URL, status, timing, errors. Start here when something fails. |
 
-> **The two chart tabs are distinct.** *Chart* plots whatever is currently in
-> the Data Grid, plus server response times. *Visualize Performance* plots SAS log performance from the two
+> **The three performance tabs are distinct.** *Scheduler Overview* summarises
+> what is currently in
+> the Data Grid. *Data Pipeline Performance* plots SAS log performance from the two
 > scanners in `ps1\` and is independent of the grid.
 
 ### Home tab specifics
@@ -200,7 +201,7 @@ column with no row gets a greyed-out "i" icon rather than an error.
 
 ## 3.1 The two SAS-log sources
 
-The Visualize Performance tab reads two CSVs with **different grains**. They are
+The Data Pipeline Performance tab reads two CSVs with **different grains**. They are
 complementary — neither derives the other.
 
 | | `Export-SasLogRollup.ps1` | `Export-SasLogSteps.ps1` (wraps cgs_ai) |
@@ -289,7 +290,7 @@ scanner, so the page reads 4 rows per day instead of 96.
 `Check-SASServers_v2.0.ps1` writes one row per endpoint per sweep. At one sweep
 every five minutes that is **288 rows per endpoint per day** — roughly 420,000
 rows a year for four endpoints, all of which the browser was downloading and
-aggregating on every visit to the Charts tab.
+aggregating on every visit to the Server Performance tab.
 
 `Export-ServerLatencyDaily.ps1` does that arithmetic once, on the server:
 
@@ -301,7 +302,7 @@ AvailabilityPct, MinMs, P50Ms, P90Ms, P95Ms, P99Ms, MaxMs, MeanMs
 On the sample data that is **484 rows instead of 11,524 — 96% smaller**, and
 43 KB instead of 1.3 MB.
 
-**The Charts tab prefers it automatically.** The two time series and the
+**The Server Performance tab prefers it automatically.** The two time series and the
 summary table read the daily file. The per-check file is fetched **only** when
 you press *Load per-check detail* for the scatter, which is the one view that
 genuinely needs every point. If the daily file is missing, the tab falls back
@@ -339,6 +340,43 @@ so the charts show something other than a flat line. Delete them and run the
 scanners for real data; the schemas match exactly, so nothing else changes.
 
 ---
+
+## 3.5 Diagnosing a failed job-name save
+
+Renaming a job reported **"Your SAS session has expired"** while the user was
+signed in. The cause was in this page, not in SAS: the HTML-response check
+tested for the string `SASLogon` first, and a SAS **"Stored Process Error"**
+page carries the standard SAS chrome, which includes a `SASLogon` logout link.
+So a stored process that was simply not registered was reported as an expired
+session.
+
+Two changes:
+
+- **Order and precision.** Specific failures are identified first, and a logon
+  page is now recognised only by something a logon page actually has — a
+  password input, or a form posting to `SASLogon`. Each failure now names its
+  own cause, and the message includes the metadata path that was called.
+- **The response is logged before it is interpreted.** Every save writes the
+  HTTP status, content type and first 300 characters of the reply to the
+  **Console** tab. When a save fails, what the server actually said is the
+  thing worth seeing — an interpretation can be wrong, the bytes cannot.
+
+### The GET fallback
+
+`CONFIG.EDIT_FALLBACK_TO_GET` (default **true**) retries the save as a GET when
+the POST comes back as HTML. Some Stored Process Web Application setups accept
+the read path but not a form POST, and the read path is already proven to work
+here.
+
+The tradeoff is real and the page does not hide it: a GET puts the new job name
+in the query string, where the web server logs it verbatim, and a browser
+refresh can re-submit it. Every use writes a warning to the Console tab. Set it
+to `false` to require POST and fail loudly instead.
+
+> If the save still fails, the message now tells you which of three things is
+> wrong. The most likely is that `dmw_update` is not registered at
+> `CONFIG.EDITABLE_COLUMNS.JobName.program` — check that path in SAS Management
+> Console.
 
 ## 5. Design decisions
 
@@ -398,7 +436,7 @@ cannot be embedded, it only runs inside the Microsoft 365 Copilot app.
 Exercised headless over http, zero console or page errors:
 
 - All ten tabs render; the tab bar reads
-  Home | Data Grid | SQL | Dashboard | Charts | Visualize Performance | Security | Ask DMW Agent | Connection | Console
+  Home | Data Grid | SQL | Scheduler Overview | Server Performance | Data Pipeline Performance | Security | Ask DMW Agent | Connection | Console
 - 34 metadata definitions load from the external CSV; 12 visible columns show a
   live "i" icon, none greyed
 - The metadata panel opens with all six fields populated
@@ -416,7 +454,14 @@ Exercised headless over http, zero console or page errors:
   explains how to produce the other
 - Security renders as one SVG with no overlapping elements
 - Ask DMW Agent renders the iframe with the configured URL and an always-visible fallback
-- The Charts tab reads the 43 KB daily roll-up and does **not** fetch the 1.3 MB
+- Tabs read Home | Data Grid | SQL | Scheduler Overview | Server Performance |
+  Data Pipeline Performance | Security | Ask DMW Agent | Connection | Console
+- Row counts render in Scheduler Overview, not Server Performance
+- Charts carry 968 hover tooltips naming the endpoint, the date and the value
+- A Stored Process Error page containing a SASLogon link is reported as an
+  unregistered stored process, a page with a password field as an expired
+  session, and ODS HTML as a Result type problem — three inputs, three messages
+- The Server Performance tab reads the 43 KB daily roll-up and does **not** fetch the 1.3 MB
   per-check file until *Load per-check detail* is pressed; with the daily file
   returning 404 it falls back to computing from raw and says so
 - Column headers show a sort indicator that cycles ascending → descending →
