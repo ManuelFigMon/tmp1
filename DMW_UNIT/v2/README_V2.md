@@ -1,6 +1,7 @@
-# DMW — IT Management Solution v2
+# DMW — IT Management Solution v1.2Beta
 
-`dmw_it_management_v2.html`. Adds a Home SLA overview, a report-performance
+`dmw_it_management_v1_2Beta.html` (version **1.2Beta**, shown in the page header
+beside the database name). Adds a Home SLA overview, a report-performance
 Visualize Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
 
@@ -15,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v2.html     the application
+├── dmw_it_management_v1_2Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -57,7 +58,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v2.html`.
+then open `http://localhost:8080/dmw_it_management_v1_2Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -69,7 +70,7 @@ commented sections. At minimum confirm:
 | `SAS_BASE_URL` | `https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=` | must end in `_program=` |
 | `SAS_PROGRAM` | `/User Folders/731o/My Folder/dmw_run` | the read stored process |
 | `METADATA_CSV_PATH` | `column_metadata.csv` | relative to the HTML |
-| `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | |
+| `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | Home tab and the Charts response-time views |
 | `SERVICE_STATUS_CSV` | `data/objectspawner_status.csv` | |
 | `SAS_LOG_ROLLUP_CSV` | `data/sas_log_rollup.csv` | per-file metrics |
 | `SAS_LOG_STEPS_CSV` | `data/sas_log_steps.csv` | per-step metrics, optional |
@@ -161,16 +162,16 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **Home** | Home SLA Overview: server monitor, services monitor with `OverallStatus`, uptime report, services reliability. Works with no SAS session. |
 | **Data Grid** | The joined 34-column result. "i" icon on every column, pencil on `JobName`. |
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
-| **Dashboard** | KPI tiles and a group-by summary of the current result set. |
-| **Chart** | Bar chart of the current result set, built from the hamburger **Chart Data** item. |
+| **Dashboard** | KPI tiles and a group-by summary. Populates automatically when the query returns. |
+| **Charts** | Row counts from the current result set, plus two server response-time charts. Both populate automatically; the hamburger **Chart Data** item just switches to the tab. |
 | **Visualize Performance** | Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
-| **Ask DMW** | Embedded Copilot Studio agent. |
+| **Ask DMW Agent** | Embedded Copilot Studio agent, with an always-visible "open in a new tab" fallback. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
 | **Console** | Request URL, status, timing, errors. Start here when something fails. |
 
 > **The two chart tabs are distinct.** *Chart* plots whatever is currently in
-> the Data Grid. *Visualize Performance* plots SAS log performance from the two
+> the Data Grid, plus server response times. *Visualize Performance* plots SAS log performance from the two
 > scanners in `ps1\` and is independent of the grid.
 
 ### Home tab specifics
@@ -233,6 +234,51 @@ it alone to a share will fail.
 > schedule/version suffixes so repeated runs collapse to one program name,
 > where cgs_ai strips a leading keyword token.
 
+## 3.3 Server response time — why `ResponseTimeMs`, and no log column
+
+`Check-SASServers_v2.0.ps1` already records everything these charts need.
+**`ResponseTimeMs` is the right field** — it is the wall-clock duration of the
+HTTP check, written on every sweep.
+
+**Do not add a log column to the CSV.** The logarithm is a *presentation*
+choice, not a fact about the check:
+
+- it duplicates state that can drift from the value it came from,
+- it discards precision,
+- nobody opening the CSV can read it in milliseconds,
+- and it bakes one chart's needs into a file that feeds several views.
+
+The transform belongs to the axis. Both charts scale the axis instead, so the
+tick labels and the summary table still read in real milliseconds.
+
+**Why a log axis is needed at all.** Latency is log-normal: a healthy check is
+a few hundred milliseconds and a timeout is 30 000. On a linear axis the
+timeouts flatten everything else onto the floor and a doubling from 300 ms to
+600 ms — which is what you actually want to catch — is invisible.
+
+**Timed-out checks are handled separately.** A `DOWN` row records roughly the
+timeout ceiling, not a measurement. Averaged in, it drags the mean toward
+30 000 ms and hides the real movement in healthy latency. So:
+
+- the scatter plots them **in red**, so outages stay visible;
+- the daily median line and the summary table **exclude** them.
+
+**The two charts**
+
+| Chart | What it answers |
+|---|---|
+| Every check, by endpoint (scatter, log axis) | What does the spread look like, and when did it break? |
+| Daily median by endpoint (line, log axis) | Is normal latency drifting over months? |
+
+The summary table gives p50, p95, p99 and worst per endpoint. **Prefer
+percentiles to the mean**: one 20-second stall moves the mean and tells you
+nothing, whereas p95 moving from 1.8 s to 3 s is a real change in what users
+experience.
+
+If you later want this cheaper to chart, the right move is not a log column —
+it is a second CSV of **daily pre-aggregated percentiles** written by the
+scanner, so the page reads 4 rows per day instead of 96.
+
 ## 4. Replacing the sample data
 
 The CSVs in `data/` are synthetic. They contain deliberately scripted
@@ -289,6 +335,8 @@ cannot be embedded, it only runs inside the Microsoft 365 Copilot app.
 | Ask DMW panel blank | The agent's host refuses to be framed (`X-Frame-Options` / `frame-ancestors`), or you are not signed in to the tenant. Open the URL in a normal tab to confirm. |
 | Saving a job name returns `CONFLICT` | Someone else renamed it. Reload the grid. |
 | Saving returns `FAILED` | The service account lacks `UPDATE` on `[dbo].[Job].[JobName]`. |
+| Saving a job name reported `Unexpected token '<'` | Fixed. SAS answered with an HTML page — an expired session, a wrong metadata path, or Result type not `Streaming` — and the old code fed it to `JSON.parse`. The page now names the cause instead. |
+| Ask DMW Agent: *This content is blocked* | The agent's host refuses to be framed (`X-Frame-Options` / `frame-ancestors`). **Not fixable from this page** — those are headers on Microsoft's server. Publish the agent via *Copilot Studio → Channels → Custom website*, add this page's origin, and put that embed URL in `CONFIG.ASK_DMW_URL`. The configured URL ends in `source=embedded-builder`, which is the authoring preview, not a published embed endpoint. Use **Open in a new tab** meanwhile. |
 | `ERROR 180-322` in the SAS log | An OLE DB init string was built with `%LET`. Fixed in the current files. |
 
 ---
@@ -298,7 +346,7 @@ cannot be embedded, it only runs inside the Microsoft 365 Copilot app.
 Exercised headless over http, zero console or page errors:
 
 - All ten tabs render; the tab bar reads
-  Home | Data Grid | SQL | Dashboard | Chart | Visualize Performance | Security | Ask DMW | Connection | Console
+  Home | Data Grid | SQL | Dashboard | Charts | Visualize Performance | Security | Ask DMW Agent | Connection | Console
 - 34 metadata definitions load from the external CSV; 12 visible columns show a
   live "i" icon, none greyed
 - The metadata panel opens with all six fields populated

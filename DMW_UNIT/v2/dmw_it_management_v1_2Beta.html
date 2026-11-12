@@ -9,7 +9,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
 
-    <title>DMW -- IT Management Solution v2</title>
+    <title>DMW -- IT Management Solution v1.2Beta</title>
 
 <!-- =============================================================================
      CONFIGURATION BLOCK
@@ -63,7 +63,7 @@ const CONFIG = {
      * APPLICATION IDENTITY
      * ---------------------------------------------------------------------- */
     APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
-    APP_VERSION: "v2.0",
+    APP_VERSION: "1.2Beta",
     APP_SUBTITLE:"Scheduler job monitoring, SLA overview and report performance",
 
     /* =========================================================================
@@ -791,10 +791,10 @@ const CONFIG = {
     <button class="tab-btn" data-panel="gridPanel">Data Grid</button>
     <button class="tab-btn" data-panel="sqlPanel">SQL</button>
     <button class="tab-btn" data-panel="dashPanel">Dashboard</button>
-    <button class="tab-btn" data-panel="vizPanel">Chart</button>
+    <button class="tab-btn" data-panel="vizPanel">Charts</button>
     <button class="tab-btn" data-panel="vizPerfPanel">Visualize Performance</button>
     <button class="tab-btn" data-panel="securityPanel">Security</button>
-    <button class="tab-btn" data-panel="askPanel">Ask DMW</button>
+    <button class="tab-btn" data-panel="askPanel">Ask DMW Agent</button>
     <button class="tab-btn" data-panel="connPanel">Connection</button>
     <button class="tab-btn" data-panel="consolePanel">Console</button>
 </div>
@@ -1161,6 +1161,36 @@ function normalizePayload(text) {
                     Object.keys(payload || {}).join(', '));
 }
 
+/* A stored process that is missing, unauthenticated, or registered without
+   Result type = Streaming answers with an HTML page. Handing that to
+   JSON.parse produces "Unexpected token '<', \"<!DOCTYPE \"... is not valid
+   JSON", which tells the user nothing. This turns each case into a sentence
+   that names the cause. */
+function parseSasJson(text, what) {
+    const trimmed = String(text || '').trim();
+    const label = what || 'The stored process';
+
+    if (!trimmed) {
+        throw new Error(label + ' returned an empty response. Check that it is registered and that its Result type is "Streaming".');
+    }
+    if (/^<!DOCTYPE|^<html|^<\?xml/i.test(trimmed)) {
+        if (/SASLogon|j_username|j_password|login_form|Sign\s*In/i.test(trimmed)) {
+            throw new Error('Your SAS session has expired or was never established. Press "Logon" in the top right, then try again.');
+        }
+        if (/Stored Process Error|Unable to locate|not found in metadata/i.test(trimmed)) {
+            throw new Error(label + ' could not be run. Check the metadata path in CONFIG against SAS Management Console, and that you may execute it. Press "Show SAS Log" on the SAS error page for the reason.');
+        }
+        if (/ODS|<table/i.test(trimmed)) {
+            throw new Error(label + ' returned ODS HTML instead of JSON. Its Result type is not set to "Streaming" in SAS Management Console.');
+        }
+        throw new Error(label + ' returned an HTML page instead of JSON. The usual causes are an expired SAS session, a wrong metadata path, or Result type not set to "Streaming". Response began: ' + trimmed.slice(0, 140));
+    }
+    try { return JSON.parse(trimmed); }
+    catch (_) {
+        throw new Error(label + ' returned something that is not JSON. It began: ' + trimmed.slice(0, 200));
+    }
+}
+
 async function executeQuery() {
     const sqlText = $('sqlEditor').value.trim();
 
@@ -1224,6 +1254,12 @@ async function executeQuery() {
         renderGrid(currentCols, currentRows);
         renderConnectionPanel();
         updatePills();
+
+        /* Build the Dashboard and Charts panels as soon as there is data, so
+           both are populated when the user opens them instead of waiting for
+           a hamburger action. Neither switches the active panel. */
+        try { generateDashboard({ stayOnPanel: true }); } catch (_) {}
+        try { visualizeData({ stayOnPanel: true }); } catch (_) {}
 
         logConsole(
             '<span class="c-ok">OUTPUT:</span> Query executed successfully.\n' +
@@ -1357,8 +1393,8 @@ function updatePills(failed) {
 }
 
 /* --------------------- Generate Dashboard (hamburger) -------------------- */
-function generateDashboard() {
-    switchPanel('dashPanel');
+function generateDashboard(opts) {
+    if (!(opts && opts.stayOnPanel)) switchPanel('dashPanel');
     const el = $('dashPanel');
 
     if (!currentRows.length) { el.innerHTML = emptyNote('No data to summarise', 'Run the query first.'); return; }
@@ -1415,11 +1451,18 @@ function kpi(value, label, cls) {
 }
 
 /* ------------------- Chart Data (hamburger / Chart tab) ------------------ */
-function visualizeData() {
-    switchPanel('vizPanel');
+function visualizeData(opts) {
+    if (!(opts && opts.stayOnPanel)) switchPanel('vizPanel');
     const el = $('vizPanel');
 
-    if (!currentRows.length) { el.innerHTML = emptyNote('Nothing to visualise', 'Run the query first.'); return; }
+    if (!currentRows.length) {
+        /* The server charts do not depend on the grid, so show them anyway. */
+        el.innerHTML = emptyNote('No query results yet',
+            'Row counts appear here once the query runs. The server response-time charts below do not need it.') +
+            '<div id="latencyCharts"></div>';
+        ServerLatency.render('latencyCharts');
+        return;
+    }
 
     const key = CONFIG.VISUALIZE_GROUP_BY;
     if (!currentCols.includes(key)) {
@@ -1446,8 +1489,136 @@ function visualizeData() {
                 '<div class="bar-track"><div class="bar-fill" style="width:' + (v / max * 100).toFixed(2) + '%"></div></div>' +
                 '<div class="bar-val">' + v.toLocaleString('en-US') + '</div>' +
             '</div>').join('') +
-        '</div>';
+        '</div>' +
+        '<div id="latencyCharts"></div>';
+
+    ServerLatency.render('latencyCharts');
 }
+
+/* =========================================================================
+ * SERVER RESPONSE TIME  -- the two charts below "Row count by Status"
+ * =========================================================================
+ * Source: data/sas_server_status.csv, the same file the Home tab reads, so
+ * there is one definition of "how the servers are behaving".
+ *
+ * WHY ResponseTimeMs AND NOT A STORED LOG COLUMN
+ * ----------------------------------------------
+ * ResponseTimeMs already carries what these charts need. A second column
+ * holding its logarithm would be a presentation choice written into the data:
+ * it duplicates state that can drift from the value it was derived from, it
+ * loses precision, and it cannot be read in milliseconds by anyone opening
+ * the CSV. The log belongs to the axis, not to the row -- so the scale is
+ * transformed here and the tick labels still read in real milliseconds.
+ *
+ * WHY TIMED-OUT CHECKS ARE SEPARATED
+ * ----------------------------------
+ * A DOWN check records roughly the timeout ceiling, not a measurement. Left
+ * in the average it drags the mean toward 30 000 ms and hides the real
+ * change in healthy latency. They are drawn in red on the scatter so the
+ * outages stay visible, and excluded from the percentile lines.
+ * ====================================================================== */
+const ServerLatency = (function () {
+    let rows = null;
+
+    const parseTs = v => { const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; };
+    const fmtMs = v => v >= 1000 ? (v / 1000) + ' s' : v + ' ms';
+
+    function pct(sorted, p) {
+        if (!sorted.length) return 0;
+        const i = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
+        return sorted[i];
+    }
+
+    async function render(hostId) {
+        const host = $(hostId);
+        if (!host) return;
+        host.innerHTML = '<div class="card"><p>Loading server response times…</p></div>';
+        try {
+            if (!rows) rows = await fetchCSV(CONFIG.SERVER_STATUS_CSV);
+        } catch (e) {
+            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>No server data.</strong> ' +
+                esc(e.message) + '<br>Produce it with <code>ps1\\Check-SASServers_v2.0.ps1</code>.</div></div>';
+            return;
+        }
+
+        const pts = rows.map(r => ({
+            t: parseTs(r.Timestamp),
+            key: r.Environment + ' ' + r.ServiceName,
+            ms: parseFloat(r.ResponseTimeMs) || 0,
+            down: r.Status === 'DOWN'
+        })).filter(p => p.t);
+
+        if (!pts.length) { host.innerHTML = '<div class="card"><p class="notes-empty">No checks recorded.</p></div>'; return; }
+
+        const keys = [...new Set(pts.map(p => p.key))].sort();
+        const days = Math.round((Math.max.apply(null, pts.map(p => +p.t)) -
+                                 Math.min.apply(null, pts.map(p => +p.t))) / 86400000);
+
+        /* ---- Chart 1: every check, log axis, outages in red ---- */
+        const scatterSeries = keys.map(k => ({
+            name: k,
+            points: pts.filter(p => p.key === k).map(p => ({ x: p.t, y: p.ms, down: p.down }))
+        }));
+
+        /* ---- Chart 2: daily median and 95th percentile, healthy checks only ---- */
+        const byDay = {};
+        pts.filter(p => !p.down).forEach(p => {
+            const d = p.t.toISOString().slice(0, 10);
+            (byDay[p.key] = byDay[p.key] || {});
+            (byDay[p.key][d] = byDay[p.key][d] || []).push(p.ms);
+        });
+        const medianSeries = keys.map(k => ({
+            name: k + ' p50',
+            points: Object.keys(byDay[k] || {}).sort().map(d => {
+                const a = byDay[k][d].slice().sort((x, y) => x - y);
+                return { x: new Date(d + 'T00:00:00'), y: pct(a, 0.5) };
+            })
+        }));
+
+        /* ---- summary table ---- */
+        const summary = keys.map(k => {
+            const all = pts.filter(p => p.key === k);
+            const good = all.filter(p => !p.down).map(p => p.ms).sort((a, b) => a - b);
+            return {
+                name: k, checks: all.length, outages: all.filter(p => p.down).length,
+                p50: pct(good, 0.5), p95: pct(good, 0.95), p99: pct(good, 0.99),
+                max: good.length ? good[good.length - 1] : 0
+            };
+        });
+
+        host.innerHTML =
+            '<div class="card">' +
+            '<div class="sla-head"><h2>Server response time</h2>' +
+            '<span class="sla-stamp">' + pts.length.toLocaleString('en-US') + ' checks across ' +
+            keys.length + ' endpoints over ' + days + ' days &middot; source ' +
+            esc(CONFIG.SERVER_STATUS_CSV) + '</span></div>' +
+
+            '<div class="chart-box"><h4>Every check, by endpoint &mdash; log scale, ' +
+            'so a 200 ms response and a 30 s timeout are both readable</h4>' +
+            Chart.scatter(scatterSeries, { height: 320, logY: true, yFloor: 10,
+                                           yFormat: fmtMs, markLabel: 'timed out' }) +
+            '</div>' +
+
+            '<div class="chart-box"><h4>Daily median response time &mdash; timed-out checks excluded, ' +
+            'because a timeout records the ceiling rather than a measurement</h4>' +
+            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) +
+            '</div>' +
+
+            '<div class="chart-box"><h4>Latency summary &mdash; healthy checks only</h4>' +
+            '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Timed out</th>' +
+            '<th>p50</th><th>p95</th><th>p99</th><th>Worst</th></tr></thead><tbody>' +
+            summary.map(r =>
+              '<tr><td>' + esc(r.name) + '</td>' +
+              '<td>' + r.checks.toLocaleString('en-US') + '</td>' +
+              '<td style="color:' + (r.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.outages + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p50) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p95) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p99) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(r.max) + ' ms</td></tr>').join('') +
+            '</tbody></table></div></div>';
+    }
+    return { render };
+})();
 
 /* ------------------------ Export to CSV (hamburger) ---------------------- */
 function exportCSV() {
@@ -1848,8 +2019,10 @@ const Editor = (function () {
                 body: body.toString()
             });
             const text = await res.text();
-            if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + res.statusText);
-            const data = JSON.parse(text);
+            if (!res.ok) {
+                throw new Error('HTTP ' + res.status + ' ' + res.statusText + '. ' + describeHttp(res.status));
+            }
+            const data = parseSasJson(text, 'The dmw_update stored process');
 
             if (data.error) throw new Error(data.error);
             if (data.status === 'CONFLICT') {
@@ -1900,20 +2073,31 @@ const Chart = (function () {
         series.forEach(s => s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
         if (!xs.length) return '<div class="notes-empty">No data in the selected window.</div>';
         const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-        const y0 = opts.yMin !== undefined ? opts.yMin : Math.min.apply(null, ys);
-        const y1 = opts.yMax !== undefined ? opts.yMax : Math.max.apply(null, ys);
+        const useLog = !!opts.logY;
+        const floor = Math.max(1, opts.yFloor || 1);
+        const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
+        const tv = ys.map(tf);
+        const y0 = opts.yMin !== undefined ? tf(opts.yMin) : Math.min.apply(null, tv);
+        const y1 = opts.yMax !== undefined ? tf(opts.yMax) : Math.max.apply(null, tv);
         const sx = v => m.l + (x1 === x0 ? 0 : ((+v - x0) / (x1 - x0)) * iw);
-        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((v - y0) / (y1 - y0)) * ih);
+        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
 
         let g = '';
         /* gridlines + y labels */
-        for (let i = 0; i <= 4; i++) {
-            const yv = y0 + ((y1 - y0) * i / 4), yy = sy(yv);
-            g += '<line x1="' + m.l + '" y1="' + yy + '" x2="' + (W - m.r) + '" y2="' + yy +
-                 '" stroke="#eceff3" stroke-width="1"/>' +
-                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3) + '" font-size="9" fill="#999" text-anchor="end">' +
-                 (opts.yFormat ? opts.yFormat(yv) : Math.round(yv)) + '</text>';
+        const gridTicks = [];
+        if (useLog) {
+            for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) gridTicks.push(Math.pow(10, d));
+        } else {
+            for (let i = 0; i <= 4; i++) gridTicks.push(y0 + ((y1 - y0) * i / 4));
         }
+        gridTicks.forEach(yv => {
+            const yy = sy(yv);
+            if (yy < m.t - 1 || yy > m.t + ih + 1) return;
+            g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + yy.toFixed(1) +
+                 '" stroke="#eceff3" stroke-width="1"/>' +
+                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" fill="#999" text-anchor="end">' +
+                 (opts.yFormat ? opts.yFormat(yv) : Math.round(yv)) + '</text>';
+        });
         /* x labels: first, middle, last */
         [x0, (x0 + x1) / 2, x1].forEach((xv, i) => {
             g += '<text x="' + sx(xv) + '" y="' + (H - 8) + '" font-size="9" fill="#999" text-anchor="' +
@@ -1998,7 +2182,80 @@ const Chart = (function () {
             '</tbody></table>';
     }
 
-    return { line, donut, bars, color };
+
+    /* Scatter of many points over time, with an optional log Y axis.
+       series = [{name, points:[{x:Date, y:Number, down:Boolean}]}]
+
+       Latency is log-normal: a healthy check is a few hundred ms, a timeout is
+       30 000. On a linear axis the timeouts flatten everything else into the
+       floor. The axis is transformed rather than the data, so the tick labels
+       and tooltips still read in real milliseconds. */
+    function scatter(series, opts) {
+        opts = opts || {};
+        const W = opts.width || 980, H = opts.height || 300;
+        const m = { t: 10, r: 14, b: 28, l: 52 };
+        const iw = W - m.l - m.r, ih = H - m.t - m.b;
+        const useLog = opts.logY !== false;
+
+        let xs = [], ys = [];
+        series.forEach(sr => sr.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
+        if (!xs.length) return '<div class="notes-empty">No data in the selected window.</div>';
+
+        const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+        const floor = Math.max(1, opts.yFloor || 1);
+        const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
+        const yvals = ys.map(tf);
+        const y0 = Math.min.apply(null, yvals), y1 = Math.max.apply(null, yvals);
+        const sx = v => m.l + (x1 === x0 ? iw / 2 : ((+v - x0) / (x1 - x0)) * iw);
+        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
+
+        let g = '';
+        /* Gridlines on decade boundaries when logged, five even steps otherwise. */
+        const ticks = [];
+        if (useLog) {
+            for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) ticks.push(Math.pow(10, d));
+        } else {
+            for (let i = 0; i <= 4; i++) ticks.push(y0 + (y1 - y0) * i / 4);
+        }
+        ticks.forEach(tv => {
+            const yy = sy(tv);
+            if (yy < m.t - 1 || yy > m.t + ih + 1) return;
+            g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) +
+                 '" y2="' + yy.toFixed(1) + '" stroke="#eceff3" stroke-width="1"/>' +
+                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) +
+                 '" font-size="9" fill="#999" text-anchor="end">' +
+                 (opts.yFormat ? opts.yFormat(tv) : Math.round(tv)) + '</text>';
+        });
+
+        const span = (x1 - x0) / 86400000;
+        const fmtX = v => new Date(v).toLocaleDateString('en-US',
+            span > 70 ? { month: 'short', year: '2-digit' } : { month: 'short', day: 'numeric' });
+        [0, 0.25, 0.5, 0.75, 1].forEach((f, i) => {
+            const xv = x0 + (x1 - x0) * f;
+            g += '<text x="' + sx(xv).toFixed(1) + '" y="' + (H - 9) + '" font-size="9" fill="#999" text-anchor="' +
+                 (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + esc(fmtX(xv)) + '</text>';
+        });
+
+        series.forEach((sr, si) => {
+            const c = color(si);
+            sr.points.forEach(p => {
+                const down = !!p.down;
+                g += '<circle cx="' + sx(p.x).toFixed(1) + '" cy="' + sy(p.y).toFixed(1) +
+                     '" r="' + (down ? 2.6 : 1.7) + '" fill="' + (down ? '#c00000' : c) +
+                     '" fill-opacity="' + (down ? 0.95 : 0.55) + '"/>';
+            });
+        });
+
+        const legend = series.map((sr, i) =>
+            '<span><i style="background:' + color(i) + '"></i>' + esc(sr.name) + '</span>').join('') +
+            (opts.markLabel ? '<span><i style="background:#c00000"></i>' + esc(opts.markLabel) + '</span>' : '');
+
+        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;height:auto;">' + g + '</svg>' +
+               '<div class="chart-legend">' + legend + '</div>';
+    }
+
+    return { line, scatter, donut, bars, color };
 })();
 
 /* ===================================================================== HOME */
@@ -2452,36 +2709,99 @@ function renderSecurity() {
 function renderAskDmw() {
     const host = $('askPanel');
     if (host.dataset.done) return;
+    host.dataset.done = '1';
+
     if (!CONFIG.ASK_DMW_ENABLED) {
-        host.innerHTML = '<div class="card"><p>Ask DMW is disabled. Set <code>CONFIG.ASK_DMW_ENABLED</code> to <code>true</code>.</p></div>';
-        host.dataset.done = '1';
+        host.innerHTML = '<div class="card"><p>Ask DMW Agent is disabled. Set <code>CONFIG.ASK_DMW_ENABLED</code> to <code>true</code>.</p></div>';
         return;
     }
+
+    /* "This content is blocked. Contact the site owner to fix the issue."
+       -----------------------------------------------------------------
+       That message is the BROWSER refusing to render the frame, because the
+       agent's host answered with X-Frame-Options or a Content-Security-Policy
+       frame-ancestors directive that does not list this page's origin. Those
+       are response headers on Microsoft's server. Nothing this page can set --
+       no attribute, sandbox value or referrer policy -- overrides them. A page
+       that could opt out of another site's framing rules would defeat the
+       point of having them.
+
+       NOR CAN THE BLOCK BE DETECTED RELIABLY. An earlier attempt here treated
+       "no load event within N seconds" as proof of a block. That is wrong:
+       Chromium fires load for the error document it substitutes, so a blocked
+       frame looks identical to a working one from the outside, and reading
+       into the frame to check is exactly what cross-origin rules forbid.
+
+       So the fallback is ALWAYS VISIBLE rather than conditional. The user who
+       sees an empty rectangle has the escape hatch in front of them, and the
+       user whose frame works simply ignores one line of text.
+
+       THE ACTUAL FIX is to publish the agent for embedding and use the URL
+       that publication gives you:
+
+         Copilot Studio -> your agent -> Channels -> Custom website
+           - add this page's origin to the allowed list
+           - copy the embed URL it generates
+
+       The URL currently configured ends in source=embedded-builder, which is
+       the AUTHORING PREVIEW inside Copilot Studio rather than a published
+       embed endpoint. Preview URLs are normally framable only by the studio
+       itself, which is consistent with the block being reported. */
+
+    const url = CONFIG.ASK_DMW_URL;
     host.innerHTML =
         '<div class="card ask-wrap">' +
-        '<div class="sla-head"><h2>Ask DMW</h2>' +
+        '<div class="sla-head"><h2>Ask DMW Agent</h2>' +
         '<span class="sla-stamp">Prototype &mdash; embedded Copilot Studio agent</span></div>' +
-        '<div class="ask-note"><strong>Short-term demo.</strong> The agent is embedded as an iframe ' +
-        'rather than wired in through an API, so this page holds no API key, no token handling and no ' +
-        'CORS configuration. It cannot read the grid and the grid cannot read it.<br>' +
-        'If the panel below stays blank, the host page is almost certainly refusing to be framed ' +
-        '(<code>X-Frame-Options</code> or <code>Content-Security-Policy: frame-ancestors</code>), or ' +
-        'you are not signed in to the tenant. Open the URL in a normal tab first to confirm, then ' +
-        'ask whoever published the agent to allow this page\'s origin as a frame ancestor.</div>' +
-        '<div class="ask-frame"><iframe src="' + esc(CONFIG.ASK_DMW_URL) + '" ' +
-        'title="Ask DMW" loading="lazy" referrerpolicy="no-referrer-when-downgrade" ' +
-        'sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"></iframe></div>' +
+
+        '<div class="ask-note" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+          '<span><strong>Panel blank or showing "This content is blocked"?</strong> ' +
+          'The agent’s host decides whether it may be framed, and this page cannot override that.</span>' +
+          '<button class="btn btn-primary" id="askOpenTab" style="margin-left:auto;">Open in a new tab</button>' +
+          '<button class="btn" id="askWhy">Why?</button>' +
+        '</div>' +
+
+        '<div id="askWhyBox" class="notes-warn" style="display:none;">' +
+          'The browser refuses the frame when the host answers with ' +
+          '<code>X-Frame-Options</code> or <code>Content-Security-Policy: frame-ancestors</code> ' +
+          'that does not list this page’s origin. Those headers are set on Microsoft’s ' +
+          'server, so no change to this file can affect them.' +
+          '<div style="margin-top:8px;"><strong>To fix it properly:</strong> publish the agent for ' +
+          'embedding and use that URL &mdash; <em>Copilot Studio &rarr; your agent &rarr; Channels ' +
+          '&rarr; Custom website</em>, add this page’s origin, then copy the embed URL into ' +
+          '<code>CONFIG.ASK_DMW_URL</code>.</div>' +
+          '<div style="margin-top:8px;">The configured URL ends in <code>source=embedded-builder</code>, ' +
+          'which is the authoring preview inside Copilot Studio rather than a published embed ' +
+          'endpoint. Preview URLs are normally framable only by the studio itself, which matches ' +
+          'the block being reported.</div>' +
+          '<div style="margin-top:8px;font-size:10px;color:#777;">Note: a page cannot detect this ' +
+          'reliably. The browser fires a load event for the error document it substitutes, and ' +
+          'reading into a cross-origin frame to check is forbidden &mdash; which is why this notice ' +
+          'is always shown rather than appearing only on failure.</div>' +
+          '<div style="margin-top:8px;">Current URL: <code>' + esc(url) + '</code></div>' +
+        '</div>' +
+
+        '<div class="ask-frame"><iframe id="askFrame" src="' + esc(url) + '" ' +
+        'title="Ask DMW Agent" referrerpolicy="origin-when-cross-origin" ' +
+        'allow="microphone; clipboard-write"></iframe></div>' +
         '</div>';
-    host.dataset.done = '1';
+
+    $('askOpenTab').addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+    $('askWhy').addEventListener('click', () => {
+        const box = $('askWhyBox');
+        box.style.display = (box.style.display === 'none') ? '' : 'none';
+    });
 }
+
 
 
 window.addEventListener('DOMContentLoaded', async function () {
     /* Identity */
-    document.title = CONFIG.APP_NAME;
+    document.title = CONFIG.APP_NAME + ' v' + CONFIG.APP_VERSION;
     $('appTitle').textContent = CONFIG.APP_NAME;
     $('appSubtitle').textContent = CONFIG.APP_SUBTITLE + '   •   ' +
-        CONFIG.SERVER_HOST + ' / ' + CONFIG.INITIAL_CATALOG;
+        CONFIG.SERVER_HOST + ' / ' + CONFIG.INITIAL_CATALOG +
+        '   •   version ' + CONFIG.APP_VERSION;
     $('buildStamp').textContent = BUILD_ID;
 
     $('aboutServer').textContent = CONFIG.SERVER_HOST;
