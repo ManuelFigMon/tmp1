@@ -661,6 +661,8 @@ const CONFIG = {
         .hdr-ico.info   { background:#4a7ba7; color:#fff; }
         .hdr-ico.info:hover { background:#1f3864; }
         .hdr-ico.info.off { background:#c8d2da; color:#fff; cursor:default; }
+        .hdr-sort { font-size:9px; color:#c3ccd4; margin-left:2px; user-select:none; }
+        .hdr-sort.active { color:#1f3864; font-size:10px; }
         .hdr-ico.edit   { background:none; color:#b07400; font-size:11px; width:auto; }
         .hdr-ico.edit:hover { color:#8a5600; }
         .cell-editable { cursor:pointer; border-bottom:1px dotted #b07400; }
@@ -1636,9 +1638,27 @@ async function fetchCSV(path) {
 
 /* --------------------------------------------------------- METADATA ------ */
 const Meta = (function () {
-    let map = {}, loaded = false, count = 0;
+    let map = {}, loaded = false, count = 0, pending = null;
 
-    async function load() {
+    /* The grid builds its headers once, reading Meta.has() as it goes. If the
+       CSV resolves after that, every icon would stay greyed for the life of
+       the page. Rebuilding the header when the metadata lands makes the fix
+       independent of which finishes first, so no call site has to remember
+       to await. */
+    function refreshGridHeaders() {
+        if (gridApi && typeof gridApi.refreshHeader === 'function') {
+            try { gridApi.refreshHeader(); } catch (_) {}
+        }
+    }
+
+    /* Idempotent: repeated calls share one request rather than re-fetching. */
+    function load() {
+        if (pending) return pending;
+        pending = doLoad();
+        return pending;
+    }
+
+    async function doLoad() {
         if (!CONFIG.METADATA_ENABLED) { loaded = true; return; }
         try {
             const rows = await fetchCSV(CONFIG.METADATA_CSV_PATH);
@@ -1649,10 +1669,12 @@ const Meta = (function () {
             });
             count = Object.keys(map).length;
             loaded = true;
+            refreshGridHeaders();
             logConsole('<span class="c-ok">METADATA:</span> loaded ' + count +
                        ' column definitions from ' + esc(CONFIG.METADATA_CSV_PATH));
         } catch (e) {
             loaded = true;
+            refreshGridHeaders();
             logConsole('<span class="c-warn">METADATA:</span> ' + esc(e.message) +
                        '\nThe "i" icons will be greyed out. The CSV must sit in the same folder as this page ' +
                        'and the page must be served over http(s) — a file:// page cannot fetch it.');
@@ -1687,7 +1709,10 @@ const Meta = (function () {
         openModal('metaModal');
     }
 
-    return { load, has, get, show, isLoaded: () => loaded, size: () => count };
+    /* ready() lets a caller wait without triggering a second fetch. */
+    const ready = () => pending || Promise.resolve();
+
+    return { load, ready, has, get, show, isLoaded: () => loaded, size: () => count };
 })();
 
 /* ----------------------------------------------- GRID HEADER COMPONENT --- */
@@ -1703,6 +1728,27 @@ class DmwHeader {
         const label = document.createElement('span');
         label.textContent = params.displayName;
         e.appendChild(label);
+
+        /* A custom header replaces AG Grid's own cell, sort arrows included.
+           Without this the column still sorts but gives no feedback, so the
+           user cannot see which column is sorted or in which direction. */
+        this.sortable = params.enableSorting !== false;
+        if (this.sortable) {
+            this.sortEl = document.createElement('span');
+            this.sortEl.className = 'hdr-sort';
+            e.appendChild(this.sortEl);
+
+            this.onSortChanged = () => {
+                const dir = params.column.getSort();
+                this.sortEl.textContent = dir === 'asc' ? '\u25B2' : dir === 'desc' ? '\u25BC' : '\u21C5';
+                this.sortEl.classList.toggle('active', !!dir);
+                this.sortEl.title = dir === 'asc'  ? 'Sorted ascending'
+                                  : dir === 'desc' ? 'Sorted descending'
+                                  : 'Click to sort';
+            };
+            params.column.addEventListener('sortChanged', this.onSortChanged);
+            this.onSortChanged();
+        }
 
         if (CONFIG.METADATA_ENABLED) {
             const i = document.createElement('button');
@@ -1723,14 +1769,26 @@ class DmwHeader {
             e.appendChild(p);
         }
 
-        /* Keep AG Grid's own sort behaviour on the label. */
-        label.style.cursor = 'pointer';
-        label.addEventListener('click', ev => params.progressSort(ev.shiftKey));
+        /* Keep AG Grid's own sort behaviour on the label and the indicator. */
+        if (this.sortable) {
+            const sort = ev => params.progressSort(ev.shiftKey);
+            label.style.cursor = 'pointer';
+            label.addEventListener('click', sort);
+            this.sortEl.style.cursor = 'pointer';
+            this.sortEl.addEventListener('click', sort);
+        }
 
         this.gui = e;
     }
     getGui() { return this.gui; }
     refresh() { return false; }
+    /* Without this the listener outlives the header cell, and every
+       refreshHeader() would leak another one. */
+    destroy() {
+        if (this.onSortChanged && this.params) {
+            try { this.params.column.removeEventListener('sortChanged', this.onSortChanged); } catch (_) {}
+        }
+    }
 }
 
 /* ------------------------------------------------------ EDIT JOBNAME ----- */
@@ -2418,7 +2476,7 @@ function renderAskDmw() {
 }
 
 
-window.addEventListener('DOMContentLoaded', function () {
+window.addEventListener('DOMContentLoaded', async function () {
     /* Identity */
     document.title = CONFIG.APP_NAME;
     $('appTitle').textContent = CONFIG.APP_NAME;
@@ -2434,7 +2492,7 @@ window.addEventListener('DOMContentLoaded', function () {
 
     /* v2: column metadata, the JobName editor, and the Home tab */
     Editor.init();
-    Meta.load();                 /* async: the grid re-reads it on next render */
+    Meta.load();                 /* started here, awaited before the auto-run */
     Home.show();                 /* Home is the landing tab */
 
     /* SQL + saved queries */
@@ -2530,8 +2588,11 @@ window.addEventListener('DOMContentLoaded', function () {
         '\nTip: Ctrl+Enter runs the current statement.'
     );
 
-    /* Logon is what makes execution possible, so run as soon as a session exists. */
+    /* Logon is what makes execution possible, so run as soon as a session
+       exists -- but let the metadata land first so the headers are built with
+       it. refreshGridHeaders() covers the case where this await is bypassed. */
     if (window.session.authenticated && CONFIG.AUTO_RUN_ON_LOGON) {
+        try { await Meta.ready(); } catch (_) {}
         executeQuery();
     }
 });

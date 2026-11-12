@@ -283,7 +283,7 @@ cannot be embedded, it only runs inside the Microsoft 365 Copilot app.
 
 | Symptom | Cause |
 |---|---|
-| All "i" icons grey | `column_metadata.csv` was not fetched. Check the Console tab. Serving from `file://` always fails. |
+| All "i" icons grey | `column_metadata.csv` was not fetched. Check the Console tab. Serving from `file://` always fails. (A *slow* fetch is handled — the headers rebuild when the metadata lands.) |
 | Home tab empty, "Monitoring data unavailable" | The `data/*.csv` files are missing or the paths in `CONFIG` are wrong. |
 | Home tab shows **STALE** | The scheduled task is not running, or cannot write to `data/`. |
 | Ask DMW panel blank | The agent's host refuses to be framed (`X-Frame-Options` / `frame-ancestors`), or you are not signed in to the tenant. Open the URL in a normal tab to confirm. |
@@ -316,6 +316,10 @@ Exercised headless over http, zero console or page errors:
   explains how to produce the other
 - Security renders as one SVG with no overlapping elements
 - Ask DMW renders the iframe with the configured URL
+- Column headers show a sort indicator that cycles ascending → descending →
+  cleared, and the metadata icons survive a slow CSV: with the fetch delayed
+  2.5 s past the first grid render, the icons start greyed and recover to live
+  once the metadata lands
 
 **Not tested here** — there is no SAS, SQL Server, or Windows in the build
 environment. Unverified: the real `UPDATE`, `_METAPERSON` resolution, the join
