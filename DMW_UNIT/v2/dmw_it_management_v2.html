@@ -309,13 +309,32 @@ const CONFIG = {
     HOME_REFRESH_SECONDS: 300,
 
     /* =========================================================================
-     * 9. VISUALIZE PERFORMANCE TAB -- REPORT PERFORMANCE
+     * 9. VISUALIZE PERFORMANCE TAB -- TWO SOURCES, TWO GRAINS
      * =========================================================================
-     * Written by:  scanFileSystem.ps1 -metric_profile sas_log
-     * One row per SAS log file, carrying CPU time, real time and step counts.
+     * The tab reads two independent CSVs. They are complementary, not
+     * alternatives, and neither derives the other.
+     *
+     *   SAS_LOG_ROLLUP_CSV   <- ps1\Export-SasLogRollup.ps1
+     *        One row per LOG FILE. Session totals plus memory, step counts
+     *        and error/warning counts.
+     *        Answers: which programs cost the most, and which are failing.
+     *
+     *   SAS_LOG_STEPS_CSV    <- ps1\Export-SasLogSteps.ps1, which runs the
+     *        cgs_ai tool  cgs_ai\src\ps\scanFileSystem.ps1
+     *                       -metric_profile sas_log
+     *        and flattens its Metrics sheet to CSV. One row per SAS STEP,
+     *        in the cgs_ai column names:
+     *          FullPath, ProgramName, StepIndex, StepLabel,
+     *          RealTimeSec, CpuTimeSec
+     *        Answers: where does the time go inside a program.
+     *
+     * The step source is OPTIONAL. If the file is absent the tab renders the
+     * rollup view and explains how to produce the other half.
      * ====================================================================== */
-    SAS_LOG_METRICS_CSV: "data/sas_log_metrics.csv",
+    SAS_LOG_ROLLUP_CSV: "data/sas_log_rollup.csv",
+    SAS_LOG_STEPS_CSV:  "data/sas_log_steps.csv",
     VIZ_TOP_N: 12,                     /* programs shown in the CPU breakdown */
+    VIZ_TOP_STEPS: 15,                 /* rows in the slowest-steps table */
 
     /* =========================================================================
      * 10. ASK DMW  -- Copilot Studio agent, embedded
@@ -1578,7 +1597,7 @@ function loadSavedQuery(index) {
  * v2 ADDITIONS
  * =========================================================================
  * Column metadata, editable JobName, the Home SLA overview, the report
- * performance Visualize Performance tab, the Security diagram and the embedded
+ * performance Visualize Performance tab (two sources), the Security diagram and the embedded
  * Ask DMW agent. Everything below is dependency-free: the charts are inline
  * SVG, so the page stays air-gapped.
  * ====================================================================== */
@@ -2137,10 +2156,19 @@ const Home = (function () {
 
 /* ========================================================== VISUALIZATIONS */
 const Viz = (function () {
-    let rows = [], loaded = false;
+    let rows = [], steps = [], loaded = false, stepsError = '';
 
     async function load() {
-        rows = await fetchCSV(CONFIG.SAS_LOG_METRICS_CSV);
+        /* The rollup is required; the step source is optional, so a missing
+           step file degrades to half a tab rather than an empty one. */
+        rows = await fetchCSV(CONFIG.SAS_LOG_ROLLUP_CSV);
+        try {
+            steps = await fetchCSV(CONFIG.SAS_LOG_STEPS_CSV);
+            stepsError = '';
+        } catch (e) {
+            steps = [];
+            stepsError = e.message;
+        }
         loaded = true;
     }
 
@@ -2150,8 +2178,8 @@ const Viz = (function () {
         try { if (!loaded) await load(); }
         catch (e) {
             host.innerHTML = '<div class="card"><div class="notes-warn"><strong>Could not load ' +
-                esc(CONFIG.SAS_LOG_METRICS_CSV) + '.</strong> ' + esc(e.message) +
-                '<br>Generate it with <code>scanFileSystem.ps1 -metric_profile sas_log</code>.</div></div>';
+                esc(CONFIG.SAS_LOG_ROLLUP_CSV) + '.</strong> ' + esc(e.message) +
+                '<br>Generate it with <code>ps1\\Export-SasLogRollup.ps1 -metric_profile sas_log</code>.</div></div>';
             return;
         }
 
@@ -2172,8 +2200,9 @@ const Viz = (function () {
 
         let h = '<div class="card">';
         h += '<div class="sla-head"><h2>Report Performance</h2>' +
-             '<span class="sla-stamp">Source: ' + esc(CONFIG.SAS_LOG_METRICS_CSV) +
-             ' &middot; scanFileSystem.ps1 -metric_profile sas_log</span></div>';
+             '<span class="sla-stamp">Per file: ' + esc(CONFIG.SAS_LOG_ROLLUP_CSV) +
+             (steps.length ? ' &middot; Per step: ' + esc(CONFIG.SAS_LOG_STEPS_CSV) : '') +
+             '</span></div>';
 
         h += '<div class="kpi-row">' +
              '<div class="kpi"><div class="v">' + progCount + '</div><div class="l">Program Count</div></div>' +
@@ -2232,7 +2261,70 @@ const Viz = (function () {
                  '<td style="color:' + (errs ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + errs + '</td>' +
                  '<td>' + esc(runs[0] ? runs[0].TopProcedure : '') + '</td></tr>';
         });
-        h += '</tbody></table></div></div>';
+        h += '</tbody></table></div>';
+
+        /* =================================================================
+           SECOND SOURCE -- per-step timings from the cgs_ai scanner.
+           Different grain, so it gets its own section rather than being
+           merged into the per-file numbers above.
+           ================================================================= */
+        h += '<div class="sec-title">Step-level detail &mdash; cgs_ai scanFileSystem.ps1' +
+             ' <span style="font-weight:400;color:#777;">(one row per SAS step)</span></div>';
+
+        if (!steps.length) {
+            h += '<div class="notes-warn"><strong>No step-level data.</strong> ' +
+                 (stepsError ? esc(stepsError) + '<br>' : '') +
+                 'This half of the tab is fed by <code>ps1\\Export-SasLogSteps.ps1</code>, which runs ' +
+                 '<code>cgs_ai\\src\\ps\\scanFileSystem.ps1 -metric_profile sas_log</code> and flattens its ' +
+                 'Metrics sheet to <code>' + esc(CONFIG.SAS_LOG_STEPS_CSV) + '</code>. ' +
+                 'The per-file view above is unaffected.</div>';
+        } else {
+            const sNum = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
+            const stepCpu = steps.reduce((a, r) => a + sNum(r, 'CpuTimeSec'), 0);
+            const progs   = new Set(steps.map(r => r.ProgramName)).size;
+            const labels  = new Set(steps.map(r => r.StepLabel)).size;
+
+            h += '<div class="kpi-row">' +
+                 '<div class="kpi"><div class="v">' + steps.length.toLocaleString('en-US') +
+                 '</div><div class="l">Step Rows</div></div>' +
+                 '<div class="kpi"><div class="v">' + progs + '</div><div class="l">Programs</div></div>' +
+                 '<div class="kpi"><div class="v">' + labels + '</div><div class="l">Distinct Step Types</div></div>' +
+                 '<div class="kpi"><div class="v">' + (stepCpu / 3600).toFixed(1) +
+                 ' h</div><div class="l">CPU Across Steps</div></div>' +
+                 '</div>';
+
+            /* CPU by step type -- one pass, not a filter per group. */
+            const byLabel = {};
+            steps.forEach(r => {
+                const k = r.StepLabel || '(unlabelled)';
+                byLabel[k] = (byLabel[k] || 0) + sNum(r, 'CpuTimeSec');
+            });
+            const labelItems = Object.keys(byLabel)
+                .map(k => ({ name: k, value: byLabel[k] }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, CONFIG.VIZ_TOP_N);
+
+            h += '<div class="viz-2col">';
+            h += '<div class="chart-box"><h4>CPU by step type</h4>' +
+                 Chart.bars(labelItems, { format: v => v.toFixed(1) + ' s' }) + '</div>';
+
+            const slowest = steps.slice()
+                .sort((a, b) => sNum(b, 'CpuTimeSec') - sNum(a, 'CpuTimeSec'))
+                .slice(0, CONFIG.VIZ_TOP_STEPS);
+            h += '<div class="chart-box"><h4>Slowest individual steps</h4>' +
+                 '<table class="sum"><thead><tr><th>Program</th><th>#</th><th>Step</th>' +
+                 '<th>CPU (s)</th><th>Real (s)</th></tr></thead><tbody>' +
+                 slowest.map(r =>
+                   '<tr><td>' + esc(r.ProgramName) + '</td>' +
+                   '<td>' + esc(r.StepIndex) + '</td>' +
+                   '<td>' + esc(r.StepLabel) + '</td>' +
+                   '<td style="font-family:Consolas,monospace;">' + sNum(r, 'CpuTimeSec').toFixed(2) + '</td>' +
+                   '<td style="font-family:Consolas,monospace;">' + sNum(r, 'RealTimeSec').toFixed(2) + '</td></tr>').join('') +
+                 '</tbody></table></div>';
+            h += '</div>';
+        }
+
+        h += '</div>';
         host.innerHTML = h;
     }
     return { show };

@@ -1,34 +1,58 @@
 <#
 .SYNOPSIS
-  Script Name   : scanFileSystem.ps1
-  Purpose       : cgs_ai file-system scanner. With -metric_profile sas_log it
-                  parses SAS .log files into per-program performance metrics
-                  for the DMW Visualizations tab.
-  Version       : 1.0.0
+  Script Name   : Export-SasLogRollup.ps1
+  Purpose       : Roll SAS .log files up to ONE ROW PER FILE for the DMW
+                  "Visualize Performance" tab.
+  Version       : 1.1.0
 
-  .DESCRIPTION
-    Walks one or more roots, selects files matching the active metric profile,
-    extracts metrics, and writes a flat CSV.
+  -----------------------------------------------------------------------------
+  RELATIONSHIP TO cgs_ai\src\ps\scanFileSystem.ps1  -- READ THIS FIRST
+  -----------------------------------------------------------------------------
+  This script was previously, and wrongly, named scanFileSystem.ps1. That name
+  belongs to the cgs_ai tool, which is a different program with a different
+  output contract and a Python twin. The name has been corrected; the two now
+  coexist and feed DMW as two sources:
 
-    PROFILES
-      sas_log      Parse SAS 9.4 logs for CPU time, real time, memory, step
-                   counts and error/warning counts. One row per log file.
-      file_inventory  Size/age inventory only. No parsing.
+      cgs_ai scanFileSystem.ps1 -metric_profile sas_log
+          GRAIN  one row per SAS STEP
+          GIVES  FullPath, ProgramName, StepIndex, StepLabel,
+                 RealTimeSec, CpuTimeSec
+          USE    "where does the time go inside a program"
+          -> DMW reads it via Export-SasLogSteps.ps1, which runs the cgs_ai
+             script and flattens its Metrics sheet to CSV.
 
-    The sas_log profile reads the NOTE lines SAS writes at the end of a
-    session:
+      THIS SCRIPT
+          GRAIN  one row per LOG FILE
+          GIVES  session totals plus memory, step counts, error and warning
+                 counts, top PROC and librefs
+          USE    "which programs cost the most, and which are failing"
 
-      NOTE: The SAS System used:
-            real time           35:17.06
-            cpu time            2:45.12
+  They are complementary, not duplicates. Neither derives the other: the
+  cgs_ai script does not capture memory, errors or session totals, and this
+  one does not capture per-step timings.
 
-    and the per-step equivalents. Durations appear as ss.ff, mm:ss.ff or
-    h:mm:ss.ff, all three of which are normalised to decimal seconds.
+  -----------------------------------------------------------------------------
+  WHY THIS ONE STILL EXISTS
+  -----------------------------------------------------------------------------
+  The DMW dashboard needs per-program cost and failure counts. Those are not in
+  the cgs_ai output, so they have to be parsed separately. Two further
+  differences are deliberate:
 
-    OUTPUT -> data\sas_log_metrics.csv   (read by the DMW Visualizations tab)
+    * ENCODING. SAS on Windows writes the ANSI code page. This script reads
+      Windows-1252; the cgs_ai script falls back to ISO-8859-1, which differs
+      in 0x80-0x9F and turns a smart quote or em dash into a control character.
+
+    * PROGRAM NAME. This script strips TRAILING schedule and version suffixes
+      (_1200PM, _V1_1, _20261110) so repeated runs of one program roll up to a
+      single name. The cgs_ai script strips a LEADING keyword token instead,
+      which would scatter those runs across separate rows.
+
+  -----------------------------------------------------------------------------
+  OUTPUT -> data\sas_log_rollup.csv   (read by the DMW Visualize Performance tab)
+  -----------------------------------------------------------------------------
 
   .PARAMETER metric_profile
-    sas_log | file_inventory
+    sas_log | file_inventory. Named to mirror the cgs_ai parameter.
 
   .PARAMETER Root
     One or more directories to scan. Defaults to $DefaultRoots below.
@@ -40,15 +64,10 @@
     Safety cap. 0 = unlimited.
 
   .EXAMPLE
-    .\scanFileSystem.ps1 -metric_profile sas_log
+    .\Export-SasLogRollup.ps1 -metric_profile sas_log
 
   .EXAMPLE
-    .\scanFileSystem.ps1 -metric_profile sas_log -Root "\\srv\sas\logs" -MaxFiles 500
-
-  ENCODING NOTE
-    SAS logs on Windows are written in the ANSI code page, not UTF-8. They are
-    read here as Windows-1252 so that a copyright symbol or an accented
-    character does not abort the scan.
+    .\Export-SasLogRollup.ps1 -metric_profile sas_log -Root "\\srv\sas\logs" -MaxFiles 500
 #>
 
 #Requires -Version 5.1
@@ -76,7 +95,7 @@ $Extensions  = @("log")        # sas_log profile
 $MaxAgeDays  = 180             # ignore logs older than this (0 = no limit)
 
 $DataDir      = "$PSScriptRoot\..\data"
-$DataFileName = "sas_log_metrics.csv"
+$DataFileName = "sas_log_rollup.csv"
 
 $LogDir   = "$PSScriptRoot\..\log"
 $LogLevel = "INFO"
@@ -102,7 +121,7 @@ function Write-RunLog {
         if ($script:LogLevelMap[$Level] -lt $script:LogLevelMap[$LogLevel]) { return }
         if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
         $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        "[$ts] [$Level] $Message" | Out-File -FilePath (Join-Path $LogDir ("scanFileSystem_{0}.log" -f (Get-Date -Format "yyyyMMdd"))) -Append -Encoding UTF8
+        "[$ts] [$Level] $Message" | Out-File -FilePath (Join-Path $LogDir ("Export-SasLogRollup_{0}.log" -f (Get-Date -Format "yyyyMMdd"))) -Append -Encoding UTF8
         if ($Level -eq "ERROR") { Write-Host "[$ts] [$Level] $Message" -ForegroundColor Red }
     } catch { }
 }
@@ -213,7 +232,7 @@ function Read-SasLog {
 $roots = if ($Root) { $Root } else { $DefaultRoots }
 $out   = if ($OutputPath) { $OutputPath } else { Join-Path $DataDir $DataFileName }
 
-Write-RunLog "scanFileSystem start: profile=$metric_profile roots=$($roots -join '; ')"
+Write-RunLog "Export-SasLogRollup start: profile=$metric_profile roots=$($roots -join '; ')"
 
 $files = @()
 foreach ($r in $roots) {

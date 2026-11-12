@@ -23,11 +23,13 @@ v2/
 ├── data/                         CSVs the Home and Visualize Performance tabs read
 │   ├── sas_server_status.csv         <- Check-SASServers_v2.0.ps1
 │   ├── objectspawner_status.csv      <- Check-ObjectSpawner_v1.0.ps1
-│   └── sas_log_metrics.csv           <- scanFileSystem.ps1
+│   ├── sas_log_rollup.csv            <- Export-SasLogRollup.ps1
+│   └── sas_log_steps.csv             <- Export-SasLogSteps.ps1 (cgs_ai)
 └── ps1/
     ├── Check-SASServers_v2.0.ps1
     ├── Check-ObjectSpawner_v1.0.ps1
-    └── scanFileSystem.ps1
+    ├── Export-SasLogRollup.ps1       one row per LOG FILE
+    └── Export-SasLogSteps.ps1        one row per SAS STEP (wraps cgs_ai)
 ```
 
 **The three CSVs in `data/` are SAMPLE DATA.** They were generated so the
@@ -69,7 +71,8 @@ commented sections. At minimum confirm:
 | `METADATA_CSV_PATH` | `column_metadata.csv` | relative to the HTML |
 | `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | |
 | `SERVICE_STATUS_CSV` | `data/objectspawner_status.csv` | |
-| `SAS_LOG_METRICS_CSV` | `data/sas_log_metrics.csv` | |
+| `SAS_LOG_ROLLUP_CSV` | `data/sas_log_rollup.csv` | per-file metrics |
+| `SAS_LOG_STEPS_CSV` | `data/sas_log_steps.csv` | per-step metrics, optional |
 | `EDITABLE_COLUMNS.JobName.program` | `/User Folders/731o/My Folder/dmw_update` | the write stored process |
 | `ASK_DMW_URL` | the Copilot Studio embed URL | |
 
@@ -94,23 +97,25 @@ GRANT UPDATE ON [dbo].[Job] ([JobName]) TO [A70ADMED\SVC_CGSUSASSRV];
 Column-level is deliberate: this one field can change and nothing else on the
 row, so a defect here cannot alter a schedule.
 
-### Step 4 — Schedule the three PowerShell scanners
+### Step 4 — Schedule the PowerShell scanners
 
-Each writes a CSV into `data/`. All three are read-only against the servers
+Each writes a CSV into `data/`. All are read-only against the servers
 they inspect.
 
 | Script | Writes | Suggested schedule |
 |---|---|---|
 | `Check-SASServers_v2.0.ps1` | `sas_server_status.csv` | every 5 minutes |
 | `Check-ObjectSpawner_v1.0.ps1` | `objectspawner_status.csv` | every 5 minutes |
-| `scanFileSystem.ps1 -metric_profile sas_log` | `sas_log_metrics.csv` | nightly |
+| `Export-SasLogRollup.ps1 -metric_profile sas_log` | `sas_log_rollup.csv` | nightly |
+| `Export-SasLogSteps.ps1` | `sas_log_steps.csv` | nightly |
 
 Try each by hand first:
 
 ```powershell
 .\Check-SASServers_v2.0.ps1   -TestMode
 .\Check-ObjectSpawner_v1.0.ps1 -TestMode
-.\scanFileSystem.ps1 -metric_profile sas_log -TestMode -MaxFiles 50
+.\Export-SasLogRollup.ps1 -metric_profile sas_log -TestMode -MaxFiles 50
+.\Export-SasLogSteps.ps1   -TestMode
 ```
 
 `-TestMode` prints to the console and writes nothing, so you can confirm the
@@ -158,15 +163,15 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
 | **Dashboard** | KPI tiles and a group-by summary of the current result set. |
 | **Chart** | Bar chart of the current result set, built from the hamburger **Chart Data** item. |
-| **Visualize Performance** | Report performance from the SAS log scan — program count, run count, CPU by program, CPU over time, and a ranked detail table. |
+| **Visualize Performance** | Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
 | **Ask DMW** | Embedded Copilot Studio agent. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
 | **Console** | Request URL, status, timing, errors. Start here when something fails. |
 
 > **The two chart tabs are distinct.** *Chart* plots whatever is currently in
-> the Data Grid. *Visualize Performance* plots SAS log performance from
-> `scanFileSystem.ps1` and is independent of the grid.
+> the Data Grid. *Visualize Performance* plots SAS log performance from the two
+> scanners in `ps1\` and is independent of the grid.
 
 ### Home tab specifics
 
@@ -186,6 +191,47 @@ column with no row gets a greyed-out "i" icon rather than an error.
   all-green board from a scanner that died three days ago cannot mislead.
 
 ---
+
+## 3.1 The two SAS-log sources
+
+The Visualize Performance tab reads two CSVs with **different grains**. They are
+complementary — neither derives the other.
+
+| | `Export-SasLogRollup.ps1` | `Export-SasLogSteps.ps1` (wraps cgs_ai) |
+|---|---|---|
+| Grain | one row per **log file** | one row per **SAS step** |
+| Columns | 22: session totals, memory, step counts, error/warning counts, top PROC, librefs | 6, in the cgs_ai names: `FullPath, ProgramName, StepIndex, StepLabel, RealTimeSec, CpuTimeSec` |
+| Answers | which programs cost most, which are failing | where the time goes inside a program |
+| Required? | yes — the tab needs it | optional — the tab degrades cleanly without it |
+
+**`Export-SasLogSteps.ps1` does not re-implement the parse.** It runs
+`cgs_ai\src\ps\scanFileSystem.ps1 -metric_profile sas_log`, which is the single
+source of truth for step timings and has a Python twin, then flattens its
+`Metrics` sheet to CSV.
+
+Two constraints make the wrapper necessary rather than optional:
+
+- The cgs_ai script writes metrics to an **XLSX sheet**. Its own code is
+  explicit: with an output path that does not end in `.xlsx` it writes only the
+  match rows and the metric rows are **silently dropped**. Asking it for a
+  `.csv` produces a file with no timings in it.
+- A browser cannot read `.xlsx`.
+
+The wrapper needs nothing installed: it uses `ImportExcel` when present, and
+otherwise unzips the workbook and parses the sheet XML with built-in .NET.
+
+Point it at your checkout with `-ScanScript`. The cgs_ai script dot-sources
+`cgsUtils.ps1` from its own folder, so it must be run where it lives — copying
+it alone to a share will fail.
+
+> **Why `Export-SasLogRollup.ps1` was renamed.** It previously shipped as
+> `scanFileSystem.ps1`, which collided with the cgs_ai tool of that name while
+> producing an incompatible output contract. The name is corrected and both now
+> coexist. Two differences in the rollup are deliberate: it reads
+> **Windows-1252** (SAS on Windows writes ANSI; the cgs_ai fallback to
+> ISO-8859-1 mangles smart quotes and em dashes), and it strips **trailing**
+> schedule/version suffixes so repeated runs collapse to one program name,
+> where cgs_ai strips a leading keyword token.
 
 ## 4. Replacing the sample data
 
@@ -263,12 +309,15 @@ Exercised headless over http, zero console or page errors:
 - Home renders 4 server cards, 2 `OverallStatus` cards, the service table, and
   two time-series charts; availability computes to 99.08–100% against the
   sample data
-- Visualize Performance renders 16 programs, 864 runs, 74.7 h CPU, 41 error runs, a
-  donut, a time series and a 16-row detail table
+- Visualize Performance renders both sources: 16 programs / 864 runs / 74.7 h CPU /
+  41 error runs from the rollup, and 348 step rows / 12 step types / 1.7 h CPU from
+  the cgs_ai source, with a 15-row slowest-steps table
+- With `sas_log_steps.csv` returning 404 the tab still renders the rollup half and
+  explains how to produce the other
 - Security renders as one SVG with no overlapping elements
 - Ask DMW renders the iframe with the configured URL
 
 **Not tested here** — there is no SAS, SQL Server, or Windows in the build
 environment. Unverified: the real `UPDATE`, `_METAPERSON` resolution, the join
-against the live `Job` table, all three PowerShell scripts against real hosts,
+against the live `Job` table, all four PowerShell scripts against real hosts, including the cgs_ai wrapper,
 and whether the Copilot agent permits framing from your origin.
