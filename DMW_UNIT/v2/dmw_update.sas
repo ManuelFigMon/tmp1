@@ -1,5 +1,5 @@
 /*=============================================================================
-  dmw_update_jobname.sas
+  dmw_update.sas
   -----------------------------------------------------------------------------
   DMW (Data Mart Workbench) -- IT Management Solution
   Updates ONE field: the job name, from the Data Grid.
@@ -64,7 +64,7 @@
   -----------------------------------------------------------------------------
   REGISTRATION IN SAS MANAGEMENT CONSOLE
   -----------------------------------------------------------------------------
-    Name            : dmw_update_jobname
+    Name            : dmw_update
     Result type     : Streaming      <-- REQUIRED
     Input parameters: job_id, new_name, old_name, debug_mode
                       (all Text, none required at prompt)
@@ -111,7 +111,7 @@
 
 %global job_id new_name old_name debug_mode;
 
-%macro dmw_update_jobname();
+%macro dmw_update();
 
     %if %symexist(debug_mode)=0 %then %let debug_mode=0;
     %if %superq(debug_mode)=     %then %let debug_mode=0;
@@ -323,7 +323,7 @@
       before and after values are recorded here.
     ==============================================================*/
     %if %length(&DMW_LOGFOLDER) > 0 %then %do;
-        %let logfile = &DMW_LOGFOLDER\dmw_jobname_%sysfunc(today(),yymmddn8.).log;
+        %let logfile = &DMW_LOGFOLDER\dmw_update_%sysfunc(today(),yymmddn8.).log;
         filename jlog "&logfile";
         data _null_;
             length old $&DMW_NAME_MAXLEN new $&DMW_NAME_MAXLEN;
@@ -371,6 +371,6 @@
         delete dmw_newname dmw_cur;
     quit;
 
-%mend dmw_update_jobname;
+%mend dmw_update;
 
-%dmw_update_jobname();
+%dmw_update();

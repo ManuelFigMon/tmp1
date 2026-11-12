@@ -246,7 +246,8 @@ const CONFIG = {
      * GRID_THEME           AG Grid CSS theme class. ag-theme-alpine ships in
      *                      the styles/ folder beside this file.
      * DASHBOARD_GROUP_BY   Column the "Generate Dashboard" view summarises by.
-     * VISUALIZE_GROUP_BY   Column the "Visualize Data" bar chart counts by.
+     * VISUALIZE_GROUP_BY   Column the Chart tab's bar chart counts by.
+     *                      (Key name kept for compatibility with edited copies.)
      * ====================================================================== */
     GRID_PAGE_SIZE: 50,
     GRID_PAGE_SIZES: [25, 50, 100, 500, 1000],
@@ -276,11 +277,11 @@ const CONFIG = {
      * Columns listed here get a pencil icon in the header and open an editor
      * when clicked. Each needs a stored process that accepts no SQL.
      * JobName is written to [dbo].[Job] keyed on JobID -- see
-     * dmw_update_jobname.sas for why the view itself is not updated.
+     * dmw_update.sas for why the view itself is not updated.
      * ====================================================================== */
     EDITABLE_COLUMNS: {
         JobName: {
-            program:   "/User Folders/731o/My Folder/dmw_update_jobname",
+            program:   "/User Folders/731o/My Folder/dmw_update",
             keyColumn: "JobID",
             maxLength: 200,
             label:     "Job Name"
@@ -308,7 +309,7 @@ const CONFIG = {
     HOME_REFRESH_SECONDS: 300,
 
     /* =========================================================================
-     * 9. VISUALIZATIONS TAB -- REPORT PERFORMANCE
+     * 9. VISUALIZE PERFORMANCE TAB -- REPORT PERFORMANCE
      * =========================================================================
      * Written by:  scanFileSystem.ps1 -metric_profile sas_log
      * One row per SAS log file, carrying CPU time, real time and step counts.
@@ -522,7 +523,7 @@ const CONFIG = {
             white-space: pre; margin-top: 8px;
         }
 
-        /* ---- Dashboard / Visualize ---- */
+        /* ---- Dashboard / Chart ---- */
         .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
         .kpi {
             background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
@@ -584,7 +585,7 @@ const CONFIG = {
             font-family: 'Consolas',monospace; font-size: 11px; white-space: pre; overflow-x: auto;
         }
 
-        /* ================= v2: Home / SLA, Visualizations, Security ========== */
+        /* ========== v2: Home / SLA, Visualize Performance, Security ========== */
         .sla-head { display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap; }
         .sla-head h2 { font-size:15px; color:#1f3864; }
         .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
@@ -725,14 +726,14 @@ const CONFIG = {
         <a id="nav-help" href="#">Help</a>
     </div>
 
-    <!-- Hamburger: Generate Dashboard, Visualize Data, Export to CSV -->
+    <!-- Hamburger: Generate Dashboard, Chart Data, Export to CSV -->
     <div class="hamburger-container">
         <button class="hamburger" id="hamburgerBtn" title="Menu">
             <span></span><span></span><span></span>
         </button>
         <div class="dropdown-menu" id="dropdownMenu">
             <a href="#" class="dashboard-item" id="menuDashboard">Generate Dashboard</a>
-            <a href="#" class="visualize-item" id="menuVisualize">Visualize Data</a>
+            <a href="#" class="visualize-item" id="menuVisualize">Chart Data</a>
             <a href="#" class="export-item"    id="menuExport">Export to CSV</a>
         </div>
     </div>
@@ -769,8 +770,8 @@ const CONFIG = {
     <button class="tab-btn" data-panel="gridPanel">Data Grid</button>
     <button class="tab-btn" data-panel="sqlPanel">SQL</button>
     <button class="tab-btn" data-panel="dashPanel">Dashboard</button>
-    <button class="tab-btn" data-panel="vizPanel">Visualize</button>
-    <button class="tab-btn" data-panel="vizPerfPanel">Visualizations</button>
+    <button class="tab-btn" data-panel="vizPanel">Chart</button>
+    <button class="tab-btn" data-panel="vizPerfPanel">Visualize Performance</button>
     <button class="tab-btn" data-panel="securityPanel">Security</button>
     <button class="tab-btn" data-panel="askPanel">Ask DMW</button>
     <button class="tab-btn" data-panel="connPanel">Connection</button>
@@ -802,7 +803,7 @@ const CONFIG = {
     <!-- Dashboard -->
     <div class="panel" id="dashPanel"></div>
 
-    <!-- Visualize -->
+    <!-- Chart -->
     <div class="panel" id="vizPanel"></div>
 
     <!-- Connection -->
@@ -875,7 +876,7 @@ const CONFIG = {
                 <div class="meta-label">What happens when you save</div>
                 <div class="meta-value" style="font-size:10px;line-height:1.6;">
                     The change is written to <code>[dbo].[Job].[JobName]</code> through the
-                    <code>dmw_update_jobname</code> stored process, keyed on JobID, and the grid reloads.
+                    <code>dmw_update</code> stored process, keyed on JobID, and the grid reloads.
                     Your SAS username is recorded server-side. If someone else renamed this job since the
                     grid loaded, the save is refused rather than overwriting their change.
                 </div>
@@ -940,7 +941,7 @@ const CONFIG = {
             <h4>Hamburger menu (top right)</h4>
             <ul>
                 <li><strong>Generate Dashboard</strong> — KPI tiles and a summary table grouped by <code>CONFIG.DASHBOARD_GROUP_BY</code>.</li>
-                <li><strong>Visualize Data</strong> — horizontal bar chart of row counts by <code>CONFIG.VISUALIZE_GROUP_BY</code>.</li>
+                <li><strong>Chart Data</strong> — horizontal bar chart of row counts by <code>CONFIG.VISUALIZE_GROUP_BY</code>, shown on the <strong>Chart</strong> tab.</li>
                 <li><strong>Export to CSV</strong> — downloads the rows currently visible after filtering.</li>
             </ul>
 
@@ -1392,7 +1393,7 @@ function kpi(value, label, cls) {
            '<div class="l">' + esc(label) + '</div></div>';
 }
 
-/* ---------------------- Visualize Data (hamburger) ----------------------- */
+/* ------------------- Chart Data (hamburger / Chart tab) ------------------ */
 function visualizeData() {
     switchPanel('vizPanel');
     const el = $('vizPanel');
@@ -1577,7 +1578,7 @@ function loadSavedQuery(index) {
  * v2 ADDITIONS
  * =========================================================================
  * Column metadata, editable JobName, the Home SLA overview, the report
- * performance Visualizations tab, the Security diagram and the embedded
+ * performance Visualize Performance tab, the Security diagram and the embedded
  * Ask DMW agent. Everything below is dependency-free: the charts are inline
  * SVG, so the page stays air-gapped.
  * ====================================================================== */

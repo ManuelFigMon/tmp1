@@ -1,7 +1,7 @@
 # DMW — IT Management Solution v2
 
 `dmw_it_management_v2.html`. Adds a Home SLA overview, a report-performance
-Visualizations tab, a Security diagram, an embedded Ask DMW agent, column
+Visualize Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
 
 The Data Grid query now joins `View_Scheduler_PBI_Dashboard` to `Job` on
@@ -17,10 +17,10 @@ Keep this structure. Every path below is relative to the HTML file.
 v2/
 ├── dmw_it_management_v2.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
-├── dmw_update_jobname.sas        stored process: the only thing that writes
+├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
 ├── styles/ag-grid.css, ag-theme-alpine.css
-├── data/                         CSVs the Home and Visualizations tabs read
+├── data/                         CSVs the Home and Visualize Performance tabs read
 │   ├── sas_server_status.csv         <- Check-SASServers_v2.0.ps1
 │   ├── objectspawner_status.csv      <- Check-ObjectSpawner_v1.0.ps1
 │   └── sas_log_metrics.csv           <- scanFileSystem.ps1
@@ -70,18 +70,18 @@ commented sections. At minimum confirm:
 | `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | |
 | `SERVICE_STATUS_CSV` | `data/objectspawner_status.csv` | |
 | `SAS_LOG_METRICS_CSV` | `data/sas_log_metrics.csv` | |
-| `EDITABLE_COLUMNS.JobName.program` | `/User Folders/731o/My Folder/dmw_update_jobname` | the write stored process |
+| `EDITABLE_COLUMNS.JobName.program` | `/User Folders/731o/My Folder/dmw_update` | the write stored process |
 | `ASK_DMW_URL` | the Copilot Studio embed URL | |
 
 After editing, press **Clear Cache & Reload** in the header.
 
-### Step 3 — Register the JobName stored process
+### Step 3 — Register the update stored process
 
 Only needed if you want `JobName` to be editable. Skip it and everything else
 still works; the pencil column simply fails on save.
 
-1. Copy `dmw_update_jobname.sas` to the stored process source folder.
-2. SMC → New Stored Process, name `dmw_update_jobname`.
+1. Copy `dmw_update.sas` to the stored process source folder.
+2. SMC → New Stored Process, name `dmw_update`.
 3. **Result type = Streaming.** Required.
 4. Input parameters, all Text, none required at prompt:
    `job_id`, `new_name`, `old_name`, `debug_mode`.
@@ -157,15 +157,15 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **Data Grid** | The joined 34-column result. "i" icon on every column, pencil on `JobName`. |
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
 | **Dashboard** | KPI tiles and a group-by summary of the current result set. |
-| **Visualize** | Bar chart of the current result set. |
-| **Visualizations** | Report performance from the SAS log scan — program count, run count, CPU by program, CPU over time, and a ranked detail table. |
+| **Chart** | Bar chart of the current result set, built from the hamburger **Chart Data** item. |
+| **Visualize Performance** | Report performance from the SAS log scan — program count, run count, CPU by program, CPU over time, and a ranked detail table. |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
 | **Ask DMW** | Embedded Copilot Studio agent. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
 | **Console** | Request URL, status, timing, errors. Start here when something fails. |
 
-> **Two tabs have similar names.** *Visualize* charts whatever is currently in
-> the Data Grid. *Visualizations* charts SAS log performance from
+> **The two chart tabs are distinct.** *Chart* plots whatever is currently in
+> the Data Grid. *Visualize Performance* plots SAS log performance from
 > `scanFileSystem.ps1` and is independent of the grid.
 
 ### Home tab specifics
@@ -199,7 +199,7 @@ scanners for real data; the schemas match exactly, so nothing else changes.
 ## 5. Design decisions
 
 **The write path is separate from the read path.** `dmw_run.sas` keeps its
-`SELECT`-only guard and is untouched. `dmw_update_jobname.sas` can change one
+`SELECT`-only guard and is untouched. `dmw_update.sas` can change one
 column on one row and accepts no SQL.
 
 **The grid shows `View_Scheduler_PBI_Dashboard.JobName`, but the update writes
@@ -252,7 +252,7 @@ cannot be embedded, it only runs inside the Microsoft 365 Copilot app.
 Exercised headless over http, zero console or page errors:
 
 - All ten tabs render; the tab bar reads
-  Home | Data Grid | SQL | Dashboard | Visualize | Visualizations | Security | Ask DMW | Connection | Console
+  Home | Data Grid | SQL | Dashboard | Chart | Visualize Performance | Security | Ask DMW | Connection | Console
 - 34 metadata definitions load from the external CSV; 12 visible columns show a
   live "i" icon, none greyed
 - The metadata panel opens with all six fields populated
@@ -263,7 +263,7 @@ Exercised headless over http, zero console or page errors:
 - Home renders 4 server cards, 2 `OverallStatus` cards, the service table, and
   two time-series charts; availability computes to 99.08–100% against the
   sample data
-- Visualizations renders 16 programs, 864 runs, 74.7 h CPU, 41 error runs, a
+- Visualize Performance renders 16 programs, 864 runs, 74.7 h CPU, 41 error runs, a
   donut, a time series and a 16-row detail table
 - Security renders as one SVG with no overlapping elements
 - Ask DMW renders the iframe with the configured URL
