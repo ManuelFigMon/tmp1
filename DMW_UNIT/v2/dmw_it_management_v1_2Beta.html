@@ -299,6 +299,15 @@ const CONFIG = {
      *   SERVICE_STATUS_CSV  <- Check-ObjectSpawner_v1.0.ps1
      * ====================================================================== */
     SERVER_STATUS_CSV:  "data/sas_server_status.csv",
+
+    /* Daily pre-aggregated percentiles, written by
+       ps1\Export-ServerLatencyDaily.ps1 -- one row per endpoint per day
+       instead of one per check. The Charts tab reads this for its time series
+       and summary, so a year of history costs ~1,500 rows rather than
+       ~420,000. The per-check file is then fetched only if you ask for the
+       scatter, which is the one view that genuinely needs every point.
+       Leave the path empty to go back to computing everything from raw. */
+    SERVER_LATENCY_DAILY_CSV: "data/sas_server_latency_daily.csv",
     SERVICE_STATUS_CSV: "data/objectspawner_status.csv",
 
     /* Hours of history to chart on the Home tab. */
@@ -1518,105 +1527,237 @@ function visualizeData(opts) {
  * outages stay visible, and excluded from the percentile lines.
  * ====================================================================== */
 const ServerLatency = (function () {
-    let rows = null;
+    let raw = null, daily = null, dailyTried = false;
 
     const parseTs = v => { const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; };
-    const fmtMs = v => v >= 1000 ? (v / 1000) + ' s' : v + ' ms';
+    const fmtMs = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + ' s' : Math.round(v) + ' ms';
+    const num = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? null : v; };
 
+    /* Nearest-rank, identical to Get-Percentile in
+       Export-ServerLatencyDaily.ps1. If one changes, change both. */
     function pct(sorted, p) {
         if (!sorted.length) return 0;
-        const i = Math.min(sorted.length - 1, Math.floor(sorted.length * p));
-        return sorted[i];
+        return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+    }
+
+    async function loadDaily() {
+        if (dailyTried) return daily;
+        dailyTried = true;
+        if (!CONFIG.SERVER_LATENCY_DAILY_CSV) return (daily = null);
+        try { daily = await fetchCSV(CONFIG.SERVER_LATENCY_DAILY_CSV); }
+        catch (e) {
+            daily = null;
+            logConsole('<span class="c-warn">LATENCY:</span> no daily roll-up (' + esc(e.message) +
+                       '). Falling back to the per-check file. Produce it with ' +
+                       'ps1\\Export-ServerLatencyDaily.ps1.');
+        }
+        return daily;
+    }
+
+    async function loadRaw() {
+        if (!raw) raw = await fetchCSV(CONFIG.SERVER_STATUS_CSV);
+        return raw;
+    }
+
+    /* ---- summary from the daily roll-up -------------------------------
+       Percentiles do NOT average. The 95th percentile of a quarter is not
+       the mean of 90 daily 95th percentiles, and presenting it as one would
+       be quietly wrong. So the columns say what they actually are: a typical
+       day, the worst day, and the true maximum -- which is the one figure
+       that does survive aggregation. For an exact quarter-wide percentile,
+       load the per-check detail below. */
+    function summariseDaily(rows) {
+        const by = {};
+        rows.forEach(r => {
+            const k = r.Environment + ' ' + r.ServiceName;
+            (by[k] = by[k] || []).push(r);
+        });
+        return Object.keys(by).sort().map(k => {
+            const a = by[k];
+            const checks   = a.reduce((x, r) => x + (num(r, 'Checks') || 0), 0);
+            const timeouts = a.reduce((x, r) => x + (num(r, 'Timeouts') || 0), 0);
+            const p50s = a.map(r => num(r, 'P50Ms')).filter(v => v !== null).sort((x, y) => x - y);
+            const p95s = a.map(r => num(r, 'P95Ms')).filter(v => v !== null).sort((x, y) => x - y);
+            const maxs = a.map(r => num(r, 'MaxMs')).filter(v => v !== null);
+            return {
+                name: k, days: a.length, checks: checks, outages: timeouts,
+                availability: checks ? ((checks - timeouts) / checks) * 100 : 0,
+                typicalP50: p50s.length ? pct(p50s, 0.5) : 0,
+                worstP50:   p50s.length ? p50s[p50s.length - 1] : 0,
+                worstP95:   p95s.length ? p95s[p95s.length - 1] : 0,
+                max:        maxs.length ? Math.max.apply(null, maxs) : 0
+            };
+        });
+    }
+
+    function summaryTableDaily(rows) {
+        return '<div class="chart-box"><h4>Latency summary &mdash; from the daily roll-up, ' +
+            'timed-out checks excluded</h4>' +
+            '<table class="sum"><thead><tr><th>Endpoint</th><th>Days</th><th>Checks</th>' +
+            '<th>Timed out</th><th>Availability</th><th>Typical day p50</th>' +
+            '<th>Worst day p50</th><th>Worst day p95</th><th>Worst single check</th></tr></thead><tbody>' +
+            summariseDaily(rows).map(r =>
+              '<tr><td>' + esc(r.name) + '</td><td>' + r.days + '</td>' +
+              '<td>' + r.checks.toLocaleString('en-US') + '</td>' +
+              '<td style="color:' + (r.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.outages + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + r.availability.toFixed(2) + '%</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.typicalP50) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.worstP50) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.worstP95) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.max) + '</td></tr>').join('') +
+            '</tbody></table>' +
+            '<div style="font-size:10px;color:#777;margin-top:6px;">Percentiles do not average, so these ' +
+            'are per-day figures rather than one percentile over the whole period. ' +
+            '&ldquo;Worst single check&rdquo; is exact. For an exact period-wide percentile, load the ' +
+            'per-check detail.</div></div>';
     }
 
     async function render(hostId) {
         const host = $(hostId);
         if (!host) return;
         host.innerHTML = '<div class="card"><p>Loading server response times…</p></div>';
-        try {
-            if (!rows) rows = await fetchCSV(CONFIG.SERVER_STATUS_CSV);
-        } catch (e) {
-            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>No server data.</strong> ' +
-                esc(e.message) + '<br>Produce it with <code>ps1\\Check-SASServers_v2.0.ps1</code>.</div></div>';
+
+        const d = await loadDaily();
+
+        /* ---------- preferred path: the daily roll-up ---------- */
+        if (d && d.length) {
+            const keys = [...new Set(d.map(r => r.Environment + ' ' + r.ServiceName))].sort();
+            const mk = field => keys.map(k => ({
+                name: k,
+                points: d.filter(r => (r.Environment + ' ' + r.ServiceName) === k && num(r, field) !== null)
+                         .map(r => ({ x: new Date(r.Date + 'T00:00:00'), y: num(r, field) }))
+                         .sort((a, b) => a.x - b.x)
+            })).filter(sr => sr.points.length);
+
+            const days = new Set(d.map(r => r.Date)).size;
+            const checks = d.reduce((a, r) => a + (num(r, 'Checks') || 0), 0);
+
+            host.innerHTML =
+              '<div class="card">' +
+              '<div class="sla-head"><h2>Server response time</h2>' +
+              '<span class="sla-stamp">' + d.length.toLocaleString('en-US') + ' daily rows covering ' +
+              checks.toLocaleString('en-US') + ' checks over ' + days + ' days &middot; source ' +
+              esc(CONFIG.SERVER_LATENCY_DAILY_CSV) + '</span></div>' +
+
+              '<div class="chart-box"><h4>Daily median (p50) by endpoint &mdash; log scale. ' +
+              'Is normal latency drifting?</h4>' +
+              Chart.line(mk('P50Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) + '</div>' +
+
+              '<div class="chart-box"><h4>Daily 95th percentile by endpoint &mdash; what the slowest ' +
+              'one check in twenty looks like</h4>' +
+              Chart.line(mk('P95Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) + '</div>' +
+
+              summaryTableDaily(d) +
+
+              '<div class="chart-box" id="scatterBox">' +
+              '<h4>Every individual check</h4>' +
+              '<p style="font-size:11px;color:#555;line-height:1.6;">The charts above read the daily ' +
+              'roll-up, which is about 4 rows per day instead of 288 per endpoint. Plotting every ' +
+              'check needs the full per-check file (<code>' + esc(CONFIG.SERVER_STATUS_CSV) +
+              '</code>), so it is fetched only when you ask for it.</p>' +
+              '<button class="btn btn-primary" id="loadScatterBtn">Load per-check detail</button>' +
+              '</div></div>';
+
+            $('loadScatterBtn').addEventListener('click', async () => {
+                const box = $('scatterBox');
+                box.innerHTML = '<h4>Every individual check</h4><p>Loading…</p>';
+                try {
+                    const r = await loadRaw();
+                    box.innerHTML = '<h4>Every check, by endpoint &mdash; log scale, timed-out checks in red</h4>' +
+                        Chart.scatter(scatterSeries(r), { height: 320, logY: true, yFloor: 10,
+                                                          yFormat: fmtMs, markLabel: 'timed out' });
+                } catch (e) {
+                    box.innerHTML = '<h4>Every individual check</h4>' +
+                        '<div class="notes-warn">Could not load ' + esc(CONFIG.SERVER_STATUS_CSV) +
+                        '. ' + esc(e.message) + '</div>';
+                }
+            });
             return;
         }
 
-        const pts = rows.map(r => ({
-            t: parseTs(r.Timestamp),
-            key: r.Environment + ' ' + r.ServiceName,
-            ms: parseFloat(r.ResponseTimeMs) || 0,
-            down: r.Status === 'DOWN'
-        })).filter(p => p.t);
+        /* ---------- fallback: compute everything from the per-check file ---------- */
+        let r;
+        try { r = await loadRaw(); }
+        catch (e) {
+            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>No server data.</strong> ' +
+                esc(e.message) + '<br>Produce it with <code>ps1\\Check-SASServers_v2.0.ps1</code>, then ' +
+                '<code>ps1\\Export-ServerLatencyDaily.ps1</code> for the cheaper daily roll-up.</div></div>';
+            return;
+        }
 
+        const pts = toPoints(r);
         if (!pts.length) { host.innerHTML = '<div class="card"><p class="notes-empty">No checks recorded.</p></div>'; return; }
-
         const keys = [...new Set(pts.map(p => p.key))].sort();
         const days = Math.round((Math.max.apply(null, pts.map(p => +p.t)) -
                                  Math.min.apply(null, pts.map(p => +p.t))) / 86400000);
 
-        /* ---- Chart 1: every check, log axis, outages in red ---- */
-        const scatterSeries = keys.map(k => ({
-            name: k,
-            points: pts.filter(p => p.key === k).map(p => ({ x: p.t, y: p.ms, down: p.down }))
-        }));
-
-        /* ---- Chart 2: daily median and 95th percentile, healthy checks only ---- */
         const byDay = {};
         pts.filter(p => !p.down).forEach(p => {
-            const d = p.t.toISOString().slice(0, 10);
+            const dd = p.t.toISOString().slice(0, 10);
             (byDay[p.key] = byDay[p.key] || {});
-            (byDay[p.key][d] = byDay[p.key][d] || []).push(p.ms);
+            (byDay[p.key][dd] = byDay[p.key][dd] || []).push(p.ms);
         });
         const medianSeries = keys.map(k => ({
-            name: k + ' p50',
-            points: Object.keys(byDay[k] || {}).sort().map(d => {
-                const a = byDay[k][d].slice().sort((x, y) => x - y);
-                return { x: new Date(d + 'T00:00:00'), y: pct(a, 0.5) };
+            name: k,
+            points: Object.keys(byDay[k] || {}).sort().map(dd => {
+                const a = byDay[k][dd].slice().sort((x, y) => x - y);
+                return { x: new Date(dd + 'T00:00:00'), y: pct(a, 0.5) };
             })
         }));
 
-        /* ---- summary table ---- */
         const summary = keys.map(k => {
             const all = pts.filter(p => p.key === k);
             const good = all.filter(p => !p.down).map(p => p.ms).sort((a, b) => a - b);
-            return {
-                name: k, checks: all.length, outages: all.filter(p => p.down).length,
-                p50: pct(good, 0.5), p95: pct(good, 0.95), p99: pct(good, 0.99),
-                max: good.length ? good[good.length - 1] : 0
-            };
+            return { name: k, checks: all.length, outages: all.filter(p => p.down).length,
+                     p50: pct(good, 0.5), p95: pct(good, 0.95), p99: pct(good, 0.99),
+                     max: good.length ? good[good.length - 1] : 0 };
         });
 
         host.innerHTML =
             '<div class="card">' +
             '<div class="sla-head"><h2>Server response time</h2>' +
             '<span class="sla-stamp">' + pts.length.toLocaleString('en-US') + ' checks across ' +
-            keys.length + ' endpoints over ' + days + ' days &middot; source ' +
+            keys.length + ' endpoints over ' + days + ' days &middot; computed from ' +
             esc(CONFIG.SERVER_STATUS_CSV) + '</span></div>' +
-
-            '<div class="chart-box"><h4>Every check, by endpoint &mdash; log scale, ' +
-            'so a 200 ms response and a 30 s timeout are both readable</h4>' +
-            Chart.scatter(scatterSeries, { height: 320, logY: true, yFloor: 10,
-                                           yFormat: fmtMs, markLabel: 'timed out' }) +
-            '</div>' +
-
-            '<div class="chart-box"><h4>Daily median response time &mdash; timed-out checks excluded, ' +
-            'because a timeout records the ceiling rather than a measurement</h4>' +
-            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) +
-            '</div>' +
-
+            '<div class="notes-warn" style="margin-bottom:10px;">No daily roll-up found, so every check ' +
+            'is being downloaded and aggregated in the browser. Run ' +
+            '<code>ps1\\Export-ServerLatencyDaily.ps1</code> to do this once on the server instead.</div>' +
+            '<div class="chart-box"><h4>Every check, by endpoint &mdash; log scale, timed-out checks in red</h4>' +
+            Chart.scatter(scatterSeries(r), { height: 320, logY: true, yFloor: 10,
+                                              yFormat: fmtMs, markLabel: 'timed out' }) + '</div>' +
+            '<div class="chart-box"><h4>Daily median response time &mdash; timed-out checks excluded</h4>' +
+            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) + '</div>' +
             '<div class="chart-box"><h4>Latency summary &mdash; healthy checks only</h4>' +
             '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Timed out</th>' +
             '<th>p50</th><th>p95</th><th>p99</th><th>Worst</th></tr></thead><tbody>' +
-            summary.map(r =>
-              '<tr><td>' + esc(r.name) + '</td>' +
-              '<td>' + r.checks.toLocaleString('en-US') + '</td>' +
-              '<td style="color:' + (r.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.outages + '</td>' +
-              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p50) + ' ms</td>' +
-              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p95) + ' ms</td>' +
-              '<td style="font-family:Consolas,monospace;">' + Math.round(r.p99) + ' ms</td>' +
-              '<td style="font-family:Consolas,monospace;">' + Math.round(r.max) + ' ms</td></tr>').join('') +
+            summary.map(x =>
+              '<tr><td>' + esc(x.name) + '</td><td>' + x.checks.toLocaleString('en-US') + '</td>' +
+              '<td style="color:' + (x.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + x.outages + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p50) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p95) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p99) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.max) + ' ms</td></tr>').join('') +
             '</tbody></table></div></div>';
     }
+
+    function toPoints(rows) {
+        return rows.map(r => ({
+            t: parseTs(r.Timestamp),
+            key: r.Environment + ' ' + r.ServiceName,
+            ms: parseFloat(r.ResponseTimeMs) || 0,
+            down: r.Status === 'DOWN'
+        })).filter(p => p.t);
+    }
+
+    function scatterSeries(rows) {
+        const pts = toPoints(rows);
+        const keys = [...new Set(pts.map(p => p.key))].sort();
+        return keys.map(k => ({
+            name: k,
+            points: pts.filter(p => p.key === k).map(p => ({ x: p.t, y: p.ms, down: p.down }))
+        }));
+    }
+
     return { render };
 })();
 
@@ -1725,6 +1866,13 @@ function switchPanel(id) {
     if (id === 'vizPerfPanel')  Viz.show();
     if (id === 'securityPanel') renderSecurity();
     if (id === 'askPanel')      renderAskDmw();
+
+    /* Dashboard and Charts are normally built when a query returns. Before the
+       first query they would otherwise be blank, and the Charts tab has
+       server-latency content that does not need query results at all, so
+       build them on first view too. */
+    if (id === 'dashPanel' && !$('dashPanel').children.length) generateDashboard({ stayOnPanel: true });
+    if (id === 'vizPanel'  && !$('vizPanel').children.length)  visualizeData({ stayOnPanel: true });
 }
 
 /* ------------------------------- modals ---------------------------------- */

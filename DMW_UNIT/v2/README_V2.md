@@ -25,12 +25,14 @@ v2/
 │   ├── sas_server_status.csv         <- Check-SASServers_v2.0.ps1
 │   ├── objectspawner_status.csv      <- Check-ObjectSpawner_v1.0.ps1
 │   ├── sas_log_rollup.csv            <- Export-SasLogRollup.ps1
-│   └── sas_log_steps.csv             <- Export-SasLogSteps.ps1 (cgs_ai)
+│   ├── sas_log_steps.csv             <- Export-SasLogSteps.ps1 (cgs_ai)
+│   └── sas_server_latency_daily.csv  <- Export-ServerLatencyDaily.ps1
 └── ps1/
     ├── Check-SASServers_v2.0.ps1
     ├── Check-ObjectSpawner_v1.0.ps1
     ├── Export-SasLogRollup.ps1       one row per LOG FILE
-    └── Export-SasLogSteps.ps1        one row per SAS STEP (wraps cgs_ai)
+    ├── Export-SasLogSteps.ps1        one row per SAS STEP (wraps cgs_ai)
+    └── Export-ServerLatencyDaily.ps1 one row per ENDPOINT per DAY
 ```
 
 **The three CSVs in `data/` are SAMPLE DATA.** They were generated so the
@@ -70,7 +72,8 @@ commented sections. At minimum confirm:
 | `SAS_BASE_URL` | `https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=` | must end in `_program=` |
 | `SAS_PROGRAM` | `/User Folders/731o/My Folder/dmw_run` | the read stored process |
 | `METADATA_CSV_PATH` | `column_metadata.csv` | relative to the HTML |
-| `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | Home tab and the Charts response-time views |
+| `SERVER_STATUS_CSV` | `data/sas_server_status.csv` | Home tab; Charts scatter, loaded on demand |
+| `SERVER_LATENCY_DAILY_CSV` | `data/sas_server_latency_daily.csv` | Charts time series and summary. Empty = compute from raw |
 | `SERVICE_STATUS_CSV` | `data/objectspawner_status.csv` | |
 | `SAS_LOG_ROLLUP_CSV` | `data/sas_log_rollup.csv` | per-file metrics |
 | `SAS_LOG_STEPS_CSV` | `data/sas_log_steps.csv` | per-step metrics, optional |
@@ -109,6 +112,7 @@ they inspect.
 | `Check-ObjectSpawner_v1.0.ps1` | `objectspawner_status.csv` | every 5 minutes |
 | `Export-SasLogRollup.ps1 -metric_profile sas_log` | `sas_log_rollup.csv` | nightly |
 | `Export-SasLogSteps.ps1` | `sas_log_steps.csv` | nightly |
+| `Export-ServerLatencyDaily.ps1` | `sas_server_latency_daily.csv` | daily, 00:20 |
 
 Try each by hand first:
 
@@ -117,6 +121,7 @@ Try each by hand first:
 .\Check-ObjectSpawner_v1.0.ps1 -TestMode
 .\Export-SasLogRollup.ps1 -metric_profile sas_log -TestMode -MaxFiles 50
 .\Export-SasLogSteps.ps1   -TestMode
+.\Export-ServerLatencyDaily.ps1 -TestMode
 ```
 
 `-TestMode` prints to the console and writes nothing, so you can confirm the
@@ -279,6 +284,53 @@ If you later want this cheaper to chart, the right move is not a log column —
 it is a second CSV of **daily pre-aggregated percentiles** written by the
 scanner, so the page reads 4 rows per day instead of 96.
 
+## 3.4 The daily latency roll-up
+
+`Check-SASServers_v2.0.ps1` writes one row per endpoint per sweep. At one sweep
+every five minutes that is **288 rows per endpoint per day** — roughly 420,000
+rows a year for four endpoints, all of which the browser was downloading and
+aggregating on every visit to the Charts tab.
+
+`Export-ServerLatencyDaily.ps1` does that arithmetic once, on the server:
+
+```
+Date, Environment, ServiceName, Checks, UpChecks, Timeouts, Degraded,
+AvailabilityPct, MinMs, P50Ms, P90Ms, P95Ms, P99Ms, MaxMs, MeanMs
+```
+
+On the sample data that is **484 rows instead of 11,524 — 96% smaller**, and
+43 KB instead of 1.3 MB.
+
+**The Charts tab prefers it automatically.** The two time series and the
+summary table read the daily file. The per-check file is fetched **only** when
+you press *Load per-check detail* for the scatter, which is the one view that
+genuinely needs every point. If the daily file is missing, the tab falls back
+to computing everything from raw and says so.
+
+Run it daily, after midnight, so the previous day is complete. It is
+idempotent — it rewrites the whole output from the input each run, so a missed
+day is repaired by the next one rather than leaving a hole.
+
+### Two details that matter
+
+**The percentile definition is shared.** Both the script and the page use
+nearest-rank, `index = min(n - 1, floor(n * p))`. Two different definitions
+would make the daily file and the raw file disagree by a millisecond or two on
+the same data, and someone would eventually spend an afternoon on it. If you
+change one, change the other.
+
+**Percentiles do not average.** The 95th percentile of a quarter is *not* the
+mean of 90 daily 95th percentiles. So the summary built from the daily file
+labels its columns for what they actually are — *typical day p50*, *worst day
+p50*, *worst day p95* — plus *worst single check*, which is the one figure that
+does survive aggregation. For an exact period-wide percentile, load the
+per-check detail.
+
+> **Still on the list.** The Home tab reads the per-check file directly,
+> because it needs the most recent sweep and a 14-day availability view. That
+> download is unaffected by this change. If it becomes a problem, the fix is to
+> have the scanner also write a small "latest status" file; say the word.
+
 ## 4. Replacing the sample data
 
 The CSVs in `data/` are synthetic. They contain deliberately scripted
@@ -363,7 +415,10 @@ Exercised headless over http, zero console or page errors:
 - With `sas_log_steps.csv` returning 404 the tab still renders the rollup half and
   explains how to produce the other
 - Security renders as one SVG with no overlapping elements
-- Ask DMW renders the iframe with the configured URL
+- Ask DMW Agent renders the iframe with the configured URL and an always-visible fallback
+- The Charts tab reads the 43 KB daily roll-up and does **not** fetch the 1.3 MB
+  per-check file until *Load per-check detail* is pressed; with the daily file
+  returning 404 it falls back to computing from raw and says so
 - Column headers show a sort indicator that cycles ascending → descending →
   cleared, and the metadata icons survive a slow CSV: with the fetch delayed
   2.5 s past the first grid render, the icons start greyed and recover to live
