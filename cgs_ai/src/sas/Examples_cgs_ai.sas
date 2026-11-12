@@ -18,6 +18,7 @@
 %include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\cgsCore.sas";
 %include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\cgsFunctions.sas";
 %include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\logConnection.sas";
+%include "\\a70admed.com\R1\CGS\APPS\SAS\UNIT\SAS_G\GSIT_Prod\MANUAL\cgs_ai\src\sas\logEGProcess.sas";
 
 /* Optional per-run overrides */
 %*let PS_FOLDER_PATH     = \\a70admed.com\R1\...\cgs_ai\src\ps\;
@@ -209,6 +210,44 @@ Use and distribution limited solely to authorized personnel.<br>
 %*
 %logConnection(
   output_file_path=D:\Temp\sas_conn_log_test.csv,
+  debug=1
+);
+*;
+
+/* --- P. logEGProcess: capture an Enterprise Guide process flow log --------
+   Put the START call in the FIRST code node of the process flow and the STOP
+   call in the LAST one, linked so they run first and last. The log goes to a
+   file on the SAS server (UNC path or server drive, not your PC). While it is
+   on, the node log tabs stay empty; replay=1 copies the run into the STOP
+   node. Full step-by-step instructions are in the header of logEGProcess.sas.
+   If a flow fails and STOP never runs, run the STOP call by hand.
+
+   Each call is its own %* ... ; block because a %* comment ends at the first
+   semicolon. Un-comment only the call you want.
+
+   node 00_START_log:                                                        */
+%*
+%logEGProcess(
+  action=start,
+  output_file_path=\\a70tucgssasr006\custom\projects\sas_monitor\eg_flow_2026-11-12.log
+);
+*;
+
+/* optional marker between steps:                                            */
+%*
+%logEGProcess(action=mark, label=Finished loading claims);
+*;
+
+/* node 99_STOP_log:                                                         */
+%*
+%logEGProcess(action=stop, replay=0);
+*;
+
+/* --- Q. logEGProcess: DEBUG, print the plan WITHOUT changing the log ------ */
+%*
+%logEGProcess(
+  action=start,
+  output_file_path=D:\Temp\eg_flow_test.log,
   debug=1
 );
 *;
