@@ -1,6 +1,6 @@
-# DMW — IT Management Solution v1.3Beta
+# DMW — IT Management Solution v1.4Beta
 
-`dmw_it_management_v1_3Beta.html` (version **1.3Beta**, shown in the page header
+`dmw_it_management_v1_4Beta.html` (version **1.4Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
 Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
@@ -16,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_3Beta.html     the application
+├── dmw_it_management_v1_4Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_3Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_4Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -168,8 +168,8 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **Data Grid** | The joined 34-column result. "i" icon on every column, pencil on `JobName`. |
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
 | **Scheduler Overview** | KPI tiles plus row counts by `DASHBOARD_GROUP_BY`. Populates automatically when the query returns. |
-| **Server Performance** | Response-time charts for the monitored HTTP endpoints. Hover any point for the endpoint, date and value. |
-| **Data Pipeline Performance** | Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
+| **Server Performance** | Response-time charts for the monitored HTTP endpoints. Hover for values, click the legend to filter endpoints, and set a date range. |
+| **Data Pipeline Performance** | Date-filterable; the CPU donut is clickable to hide a program. Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
 | **Ask DMW Agent** | Embedded Copilot Studio agent, with an always-visible "open in a new tab" fallback. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
@@ -332,6 +332,46 @@ per-check detail.
 > download is unaffected by this change. If it becomes a problem, the fix is to
 > have the scanner also write a small "latest status" file; say the word.
 
+## 3.6 Chart interaction
+
+### Tooltips are no longer `<title>`
+
+v1.3Beta put a native SVG `<title>` on every point. Free to write, poor to
+use: the browser waits about a second before showing it, it disappears while
+the pointer moves, and a dense scatter needed **one DOM node per point** —
+968 on the sample data.
+
+v1.4Beta has **zero** `<title>` nodes. Each chart keeps a plain array of its
+plotted points, one `mousemove` listener finds the nearest by squared
+distance, and a single shared `div` follows the cursor. The tooltip appears on
+the same frame as the movement — measured at **60 ms**, which is the test's
+own polling interval rather than a delay in the page — and a highlight ring
+marks the point being read.
+
+### Click the legend to filter
+
+Every legend entry is a toggle. Hidden series grey out and strike through, the
+axes rescale to what is left, and a **show all** button appears once anything
+is hidden. The same mechanism drives the donut, where **clicking a segment**
+hides that program — the gesture people try first.
+
+### Date range
+
+A shared control on both tabs: presets for 7, 30 and 90 days, 6 months and
+all, plus two date inputs for a span the presets do not cover. State is held
+per tab, so filtering one does not disturb the other.
+
+The row count reads *"124 of 484 rows · showing 2026-10-13 → 2026-11-12 · data
+runs 2026-07-15 → 2026-11-12"*. Printing the full span beside a filtered count
+would read as if the filter had not applied, so both are shown.
+
+### More x-axis values
+
+Up from 3–5 labels to up to 12, with the density capped by available width so
+they cannot overlap. The format follows the span — times within two days,
+day-and-month up to a year, month-and-year beyond — and a second grey line
+carries the year when a range crosses one.
+
 ## 4. Replacing the sample data
 
 The CSVs in `data/` are synthetic. They contain deliberately scripted
@@ -457,7 +497,10 @@ Exercised headless over http, zero console or page errors:
 - Tabs read Home | Data Grid | SQL | Scheduler Overview | Server Performance |
   Data Pipeline Performance | Security | Ask DMW Agent | Connection | Console
 - Row counts render in Scheduler Overview, not Server Performance
-- Charts carry 968 hover tooltips naming the endpoint, the date and the value
+- Charts carry no `<title>` nodes at all (was 968); the shared tooltip renders
+  within 60 ms of the pointer moving
+- Legend clicks filter series and a show-all button appears; donut segments
+  are clickable; the date presets cut 484 daily rows to 124 for "Last 30 days"
 - A Stored Process Error page containing a SASLogon link is reported as an
   unregistered stored process, a page with a password field as an expired
   session, and ODS HTML as a Result type problem — three inputs, three messages
