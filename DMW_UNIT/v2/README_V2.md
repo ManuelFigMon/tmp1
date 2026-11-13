@@ -1,6 +1,6 @@
-# DMW — IT Management Solution v1.6Beta
+# DMW — IT Management Solution v1.7Beta
 
-`dmw_it_management_v1_6Beta.html` (version **1.6Beta**, shown in the page header
+`dmw_it_management_v1_7Beta.html` (version **1.7Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
 Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
@@ -16,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_6Beta.html     the application
+├── dmw_it_management_v1_7Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_6Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_7Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -416,17 +416,26 @@ with the centre following the radius, and the CPU time series from 230 to
 
 ## 3.8 The SLA note on the Home tab
 
-Beside the server tiles sits a short explainer: what an SLA commits to
-(availability, response, controlled and auditable access), where each half of
-that commitment is measured in this page, and why measuring it continuously
-is what makes it real. It closes with one sentence on Lean Six Sigma — the
-same record supplies the **Measure** phase with a baseline nobody has to
-reconstruct, and the **Control** phase with the monitoring that stops an
-improved process drifting back.
+**Click here for SLA Info**, the second blue box under the session box, opens
+a panel explaining what an SLA commits to (availability, response, controlled
+and auditable access), a table mapping each half of that commitment to the tab
+that measures it, why measuring continuously is what makes it real, and one
+paragraph on Lean Six Sigma — the same record supplies the **Measure** phase
+with a baseline nobody has to reconstruct, and the **Control** phase with the
+monitoring that stops an improved process drifting back.
 
-It is there because the tiles answer *"is it up?"* without saying what
+It exists because the tiles answer *"is it up?"* without saying what
 "up enough" would mean, and the people who ask for this page are not always
 the people who wrote the agreement.
+
+**It moved behind a link in v1.7Beta.** Inline beside the tiles it was the
+largest thing on a screen whose job is to show status at a glance, and it is
+reference material — read once, then rarely. Moving it returned the tile row
+from 1027px to the full 1342px.
+
+The panel closes with the thing a status page cannot tell you: it reports what
+the environment *did*, while the thresholds it should be judged against live in
+your SLA document, not in this tool.
 
 Tiles are grouped one row per environment with **PROD first**, rather than
 flowing alphabetically into a single row. Production is what the SLA is
