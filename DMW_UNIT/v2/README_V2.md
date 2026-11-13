@@ -1,6 +1,6 @@
-# DMW — IT Management Solution v1.4Beta
+# DMW — IT Management Solution v1.5Beta
 
-`dmw_it_management_v1_4Beta.html` (version **1.4Beta**, shown in the page header
+`dmw_it_management_v1_5Beta.html` (version **1.5Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
 Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
@@ -16,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_4Beta.html     the application
+├── dmw_it_management_v1_5Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_4Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_5Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -169,7 +169,7 @@ column with no row gets a greyed-out "i" icon rather than an error.
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
 | **Scheduler Overview** | KPI tiles plus row counts by `DASHBOARD_GROUP_BY`. Populates automatically when the query returns. |
 | **Server Performance** | Response-time charts for the monitored HTTP endpoints. Hover for values, click the legend to filter endpoints, and set a date range. |
-| **Data Pipeline Performance** | Date-filterable; the CPU donut is clickable to hide a program. Report performance from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
+| **Data Pipeline Performance** | Cross-filtered by date and by SAS program: selecting either re-scopes every section of the tab. Built from **two sources**: per-file rollup (program count, run count, CPU by program, CPU over time, ranked detail) and per-step detail from the cgs_ai scanner (CPU by step type, slowest individual steps). |
 | **Security** | Software delivery and hotfix cycle, drawn inline as SVG. |
 | **Ask DMW Agent** | Embedded Copilot Studio agent, with an always-visible "open in a new tab" fallback. |
 | **Connection** | Effective settings and the SAS OLE DB snippet. |
@@ -372,6 +372,48 @@ they cannot overlap. The format follows the span — times within two days,
 day-and-month up to a year, month-and-year beyond — and a second grey line
 carries the year when a range crosses one.
 
+## 3.7 Cross-filtering on Data Pipeline Performance
+
+Selecting a program on the donut used to hide one slice and leave the KPIs,
+the time series, the detail table and the step-level section still reporting
+on everything — so the tab quietly disagreed with itself.
+
+The selection now lives beside the date range in the panel's own state, and
+**every section is built from the same filtered set**. Filtering
+`DMEC_ADM_UPDATE` moves all of it together:
+
+```
+before   16 programs / 864 runs / 74.7 h CPU / 41 error runs
+         348 step rows / 16 programs / 1.7 h step CPU
+after    15 programs / 834 runs / 68.1 h CPU / 40 error runs
+         323 step rows / 15 programs / 1.5 h step CPU
+```
+
+**Three ways to filter, one state.** Click a donut segment, click a legend
+entry, or click a row in the program detail table. All three add to the same
+set.
+
+**Every active filter is visible.** A chip bar lists each hidden program with
+an `×` to restore it and a *clear all* button, and states that the programs
+are hidden from every section. A filter you cannot see is a filter you will
+misread the whole tab through.
+
+**Date and program filters compose** and are independent: changing the date
+range keeps the program selection, and clearing the chips keeps the date
+range.
+
+Two notes on behaviour:
+
+- The aggregate **"Other (N)"** slice stands for several programs at once, so
+  there is nothing single to filter on. Clicking it writes an explanation to
+  the Console tab rather than doing something arbitrary.
+- Filtering every program leaves the tab with nothing to show, so it renders
+  the filter bars and an explanation instead of empty charts.
+
+Chart sizes on this tab: the donut's viewBox went from 420×190 to **560×330**
+with the centre following the radius, and the CPU time series from 230 to
+**330** high.
+
 ## 4. Replacing the sample data
 
 The CSVs in `data/` are synthetic. They contain deliberately scripted
@@ -499,8 +541,11 @@ Exercised headless over http, zero console or page errors:
 - Row counts render in Scheduler Overview, not Server Performance
 - Charts carry no `<title>` nodes at all (was 968); the shared tooltip renders
   within 60 ms of the pointer moving
-- Legend clicks filter series and a show-all button appears; donut segments
-  are clickable; the date presets cut 484 daily rows to 124 for "Last 30 days"
+- Legend clicks filter series and a show-all button appears; the date presets
+  cut 484 daily rows to 124 for "Last 30 days"
+- On Data Pipeline Performance a program selection re-scopes the whole tab:
+  KPIs, donut, time series, detail table and the step-level section all move
+  together, and the chips survive a date change
 - A Stored Process Error page containing a SASLogon link is reported as an
   unregistered stored process, a page with a password field as an expired
   session, and ODS HTML as a Result type problem — three inputs, three messages
