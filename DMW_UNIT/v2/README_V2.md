@@ -1,6 +1,6 @@
-# DMW — IT Management Solution v1.7Beta
+# DMW — IT Management Solution v1.8Beta
 
-`dmw_it_management_v1_7Beta.html` (version **1.7Beta**, shown in the page header
+`dmw_it_management_v1_8Beta.html` (version **1.8Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
 Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
@@ -16,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_7Beta.html     the application
+├── dmw_it_management_v1_8Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_7Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_8Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -410,9 +410,33 @@ Two notes on behaviour:
 - Filtering every program leaves the tab with nothing to show, so it renders
   the filter bars and an explanation instead of empty charts.
 
-Chart sizes on this tab: the donut's viewBox went from 420×190 to **560×330**
-with the centre following the radius, and the CPU time series from 230 to
-**330** high.
+### Chart widths on this tab
+
+The donut and the time series do not deserve equal width, so since v1.8Beta
+this row is **asymmetric**: a fixed 330px column for the donut and everything
+else for the series.
+
+| | v1.7Beta | v1.8Beta |
+|---|---|---|
+| Donut column | 665 px | **330 px** |
+| Series column | 665 px | **1000 px** |
+| Series rendered | 639 × 215 | **974 × 298** |
+
+The reasoning: a donut is a composition — a dozen slices read at a glance, and
+past a certain size it stops telling you more. The series is 120+ days against
+a log axis, where every extra pixel of width is another day you can resolve.
+
+Only this row is asymmetric. The step-level pair below it stays 50/50, because
+both halves there are lists rather than one glance and one trend.
+
+Two details that follow from the narrower column: legend chips are tighter so a
+dozen programs do not push the box to twice the height of the chart beside it,
+and the row uses `align-items:start` so neither box is stretched to leave blank
+space under its chart. Below 1100px it stacks, as before.
+
+The x-axis tick cap is a per-label width budget rather than a fixed count, so a
+caller can ask for more labels and never get collisions — the series now draws
+12 dated gridlines instead of 10.
 
 ## 3.8 The SLA note on the Home tab
 
