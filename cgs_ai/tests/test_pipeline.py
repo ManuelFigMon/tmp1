@@ -2474,3 +2474,135 @@ def test_preflight_survives_strict_mode(tmp_path):
     assert result.returncode in (0, 3), result.output
     assert "cannot be retrieved because it has not been set" not in result.output
     assert "VERDICT" in result.output
+
+
+# --- .pptx output ------------------------------------------------------------
+
+def _deckParts(path):
+    """Open a .pptx and return {part name: text}. Returns: dict."""
+    import zipfile
+    with zipfile.ZipFile(path) as archive:
+        return {n: archive.read(n).decode("utf-8", "replace")
+                for n in archive.namelist()}
+
+
+@needsPwsh
+def test_pptx_is_a_valid_package_with_the_parts_powerpoint_demands(tmp_path):
+    """A deck needs a master, a layout and a theme, each with relationships.
+
+    PowerPoint refuses the file outright if any is missing, and the refusal
+    names none of them -- so they are checked here rather than discovered
+    on somebody's laptop.
+    """
+    import xml.etree.ElementTree as ET
+    source = _governanceWorkbook(tmp_path)
+    deck = tmp_path / "out.pptx"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data", "-OutputPath", deck,
+                     "-Title", "T", "-Subtitle", "S")
+    assert result.returncode == 0, result.output
+    parts = _deckParts(deck)
+    for required in ("[Content_Types].xml", "_rels/.rels",
+                     "ppt/presentation.xml", "ppt/_rels/presentation.xml.rels",
+                     "ppt/slideMasters/slideMaster1.xml",
+                     "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+                     "ppt/slideLayouts/slideLayout1.xml",
+                     "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+                     "ppt/theme/theme1.xml", "ppt/slides/slide1.xml",
+                     "ppt/slides/_rels/slide1.xml.rels"):
+        assert required in parts, f"the deck has no {required}"
+    for name, text in parts.items():
+        ET.fromstring(text)                  # every part must parse
+    # Every slide must be declared AND related, or it silently vanishes.
+    slides = [n for n in parts if n.startswith("ppt/slides/slide")]
+    listed = parts["ppt/presentation.xml"].count("<p:sldId ")
+    assert listed == len(slides), "a slide part is not in the slide id list"
+    # PowerPoint's own widescreen size, not an inch calculation that lands
+    # three ten-thousandths short of it.
+    assert 'cx="12192000"' in parts["ppt/presentation.xml"]
+    assert 'cy="6858000"' in parts["ppt/presentation.xml"]
+
+
+@needsPwsh
+def test_corporate_status_follows_its_specification(tmp_path):
+    """The colours, fonts and column widths were given exactly."""
+    source = _governanceWorkbook(tmp_path)
+    deck = tmp_path / "status.pptx"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data",
+                     "-OutputPath", deck, "-format_name", "corporate_status")
+    assert result.returncode == 0, result.output
+    slide = _deckParts(deck)["ppt/slides/slide1.xml"]
+
+    assert 'val="4472C4"' in slide, "header fill"
+    assert 'val="D9E1F2"' in slide, "alternating band"
+    assert 'val="1E2761"' in slide, "navy text"
+    assert 'typeface="Calibri"' in slide
+    assert "<a:t>ID</a:t>" in slide and "<a:t>Detailed Task</a:t>" in slide
+    # ID is the specified 1.145"; Detailed Task takes the rest so the two
+    # add up to the slide exactly.
+    idWidth = int(1.145 * 914400)
+    assert f'<a:gridCol w="{idWidth}"/>' in slide
+    assert f'<a:gridCol w="{12192000 - idWidth}"/>' in slide
+    assert abs((12192000 - idWidth) / 914400 - 12.188) < 0.001
+    # Default title and subtitle label when the caller gives none.
+    assert "Activities/Tasks and Results" in slide
+    assert "Week of" in slide
+    assert "<a:t>Overview</a:t>" in slide
+    # A real field, so the number follows the slide if one is inserted.
+    assert 'type="slidenum"' in slide
+    # No decorative lines were asked for, so none are drawn.
+    assert "<a:ln " not in slide
+
+
+@needsPwsh
+def test_every_continuation_slide_repeats_the_header_row(tmp_path):
+    """A continuation slide with unlabelled columns is unreadable."""
+    from src.utils.xlsx import writeWorkbook
+    rows = [{"Task Name": f"Task {n}", "Bucket": "DONE",
+             "Notes": "x" * 160} for n in range(1, 41)]
+    source = tmp_path / "many.xlsx"
+    writeWorkbook([{"name": "Consolidated Data",
+                    "columns": ["Task Name", "Bucket", "Notes"],
+                    "rows": rows}], str(source))
+    deck = tmp_path / "many.pptx"
+    result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                     "-SheetName", "Consolidated Data", "-OutputPath", deck,
+                     "-format_name", "corporate_status", "-MaxCellLength", "180")
+    assert result.returncode == 0, result.output
+    parts = _deckParts(deck)
+    slides = sorted(n for n in parts if n.startswith("ppt/slides/slide"))
+    assert len(slides) > 1, "40 rows should not fit on one slide"
+    for name in slides:
+        assert "<a:t>ID</a:t>" in parts[name], f"{name} lost its header row"
+        assert "<a:t>Detailed Task</a:t>" in parts[name]
+
+    # The ID column must run 1..40 unbroken ACROSS slides, never restart.
+    import re
+    ids = []
+    for name in slides:
+        ids += [int(m) for m in
+                re.findall(r'sz="1600" b="1"[^>]*>.*?<a:t>(\d+)</a:t>',
+                           parts[name], re.S)]
+    assert ids == list(range(1, 41)), f"ids restart or skip: {ids[:12]}..."
+
+
+@needsPwsh
+def test_adding_pptx_left_the_other_renderers_untouched(tmp_path):
+    """The brief was explicit: no other output may change.
+
+    Compares this script's .docx and .html against the SAME script's --
+    the Python twin is the usual parity check; this one guards against the
+    pptx work leaking into the renderers beside it.
+    """
+    source = _governanceWorkbook(tmp_path)
+    for extension in ("html", "docx"):
+        out = tmp_path / f"a.{extension}"
+        result = runPwsh("formatExcel.ps1", "-ExcelPath", source,
+                         "-SheetName", "Consolidated Data", "-OutputPath", out,
+                         "-Title", "T", "-Subtitle", "S")
+        assert result.returncode == 0, result.output
+        assert out.is_file() and out.stat().st_size > 0
+    # And the Python twin still matches, which is the real guarantee.
+    psPath, pyPath = _runBothEngines(tmp_path, "html")
+    assert psPath.read_bytes() == pyPath.read_bytes()

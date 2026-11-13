@@ -37,11 +37,15 @@
     -SheetName   (REQUIRED) worksheet to format, e.g. "Consolidated Data".
     -OutputPath  (REQUIRED) destination. Its EXTENSION picks the renderer:
                    .docx -> Word          (native, no Office needed)
+                   .pptx -> PowerPoint    (native, no Office needed)
                    .html -> web page      (native, prints to PDF anywhere)
                    .pdf  -> PDF           (needs Word or LibreOffice)
     -Columns     (optional) names to keep, in order. Empty = every column.
     -format_name (optional, default "corporate")
-                   corporate | corporatev2 | plain | minimal
+                   corporate | corporatev2 | plain | minimal | corporate_status
+                   corporate_status is a SLIDE format: a two-column
+                   ID / Detailed Task table on 16:9 slides. It changes
+                   .pptx only; the other renderers ignore it.
     -Title       (optional) banner text; defaults to the workbook name.
     -Subtitle    (optional) second line; defaults to sheet and row count.
     -ExcludeWhere (optional) drop rows matching "Column=Value". Several
@@ -99,6 +103,11 @@ $script:FormatStyles = @{
     'corporatev2' = @{ Banner='1F3864'; Header='2E75B6'; Stripe='DCE6F1'; HeaderFont='FFFFFF'; BannerFont='FFFFFF' }
     'plain'       = @{ Banner='FFFFFF'; Header='D9D9D9'; Stripe='FFFFFF'; HeaderFont='000000'; BannerFont='000000' }
     'minimal'     = @{ Banner='FFFFFF'; Header='FFFFFF'; Stripe='FFFFFF'; HeaderFont='000000'; BannerFont='000000' }
+    # corporate_status is a SLIDE format. Its Status* colours are the ones
+    # its specification names; the Banner/Header/Stripe entries keep it
+    # working if somebody asks for .docx or .html with it.
+    'corporate_status' = @{ Banner='1E2761'; Header='4472C4'; Stripe='D9E1F2'; HeaderFont='FFFFFF'; BannerFont='FFFFFF';
+                            StatusText='1E2761'; StatusHeader='4472C4'; StatusBand='D9E1F2' }
 }
 $script:StripedFormats = @('corporate', 'corporatev2')
 $script:Version = '1.1beta'
@@ -809,6 +818,509 @@ function Invoke-Preflight {
     return 3
 }
 
+# =====================================================================
+# PowerPoint output
+#
+# A .pptx is a zip of XML parts, the same idea as the .docx above, with
+# one slide per part and a presentation.xml that lists them. Written
+# directly so the script keeps its promise: no PowerPoint, no add-in, no
+# module. EMU throughout -- 914400 to the inch -- because that is the
+# unit DrawingML measures in.
+# =====================================================================
+
+$script:Emu            = 914400
+# 12192000 x 6858000 is PowerPoint's own widescreen 16:9 size. Writing
+# [int](13.333 * 914400) instead gives 12191695 -- three ten-thousandths of
+# an inch short, invisible on screen but not the standard size, and a deck
+# that is not exactly 16:9 is resized when it is pasted into one that is.
+$script:SlideWidth     = 12192000                     # 13.333" widescreen 16:9
+$script:SlideHeight    = 6858000                      # 7.5"
+$script:SlideMargin    = [int](0.25   * $script:Emu)
+$script:StatusIdWidth  = [int](1.145  * $script:Emu)
+# The remainder, not 12.188" literally: the two columns must add up to the
+# slide exactly or the table stops short of the right edge.
+$script:StatusTaskWidth= $script:SlideWidth - $script:StatusIdWidth
+$script:StatusRowHeight= [int](0.647  * $script:Emu)
+$script:TitleTop       = [int](0.18   * $script:Emu)
+$script:TitleHeight    = [int](0.80   * $script:Emu)
+$script:SubtitleHeight = [int](0.26   * $script:Emu)
+$script:TableTop       = [int](1.42   * $script:Emu)
+$script:TableBottom    = [int](6.95   * $script:Emu)  # clears the slide number
+
+function Get-WeekCommencing {
+    <# .SYNOPSIS The Monday of the week containing a date.
+       .OUTPUTS [datetime]
+       .NOTES  Monday, not "seven days back": a report run on Wednesday and
+               the same report run on Friday must name the same week, or two
+               copies of one week's status carry two different titles. #>
+    param([datetime] $When = (Get-Date))
+    # DayOfWeek counts Sunday as 0, so Sunday belongs to the week that began
+    # six days earlier, not to the one starting tomorrow.
+    $offset = if ($When.DayOfWeek -eq [System.DayOfWeek]::Sunday) { 6 }
+              else { [int] $When.DayOfWeek - 1 }
+    return $When.Date.AddDays(-$offset)
+}
+
+function ConvertTo-PptxRun {
+    <# .SYNOPSIS One <a:r> run of text.
+       .OUTPUTS [string] #>
+    param([string] $Text, [int] $Size, [string] $Color, [bool] $Bold = $false,
+          [string] $Font = 'Calibri')
+    $b = if ($Bold) { ' b="1"' } else { '' }
+    return '<a:r><a:rPr lang="en-US" sz="' + $Size + '"' + $b + ' dirty="0">' +
+           '<a:solidFill><a:srgbClr val="' + $Color + '"/></a:solidFill>' +
+           '<a:latin typeface="' + $Font + '"/><a:cs typeface="' + $Font + '"/>' +
+           '</a:rPr><a:t>' + (ConvertTo-CgsXmlText $Text) + '</a:t></a:r>'
+}
+
+function New-PptxCell {
+    <# .SYNOPSIS One table cell.
+       .PARAMETER Runs   Pre-built <a:r> XML; several make mixed weights.
+       .OUTPUTS [string] #>
+    param([string] $Runs, [string] $Fill, [string] $Align = 'l',
+          [int] $MarginL = 91440, [int] $MarginR = 91440)
+    return '<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>' +
+           '<a:p><a:pPr algn="' + $Align + '"/>' + $Runs + '</a:p></a:txBody>' +
+           '<a:tcPr marL="' + $MarginL + '" marR="' + $MarginR + '" marT="45720" marB="45720" anchor="ctr">' +
+           '<a:solidFill><a:srgbClr val="' + $Fill + '"/></a:solidFill></a:tcPr></a:tc>'
+}
+
+function New-PptxTable {
+    <# .SYNOPSIS A table inside a graphicFrame.
+       .PARAMETER Widths  Column widths in EMU.
+       .PARAMETER RowsXml Pre-built <a:tr> elements.
+       .OUTPUTS [string]
+       .NOTES  firstRow and bandRow are both off and every fill is stated on
+               the cell. A table style id would hand the colours to whatever
+               theme the deck is opened under, and the specification names
+               exact colours. #>
+    param([int] $Left, [int] $Top, [int] $Width, [int] $Height,
+          [int[]] $Widths, [string] $RowsXml, [int] $ShapeId)
+    $grid = ''
+    foreach ($w in $Widths) { $grid += '<a:gridCol w="' + $w + '"/>' }
+    return '<p:graphicFrame><p:nvGraphicFramePr>' +
+        '<p:cNvPr id="' + $ShapeId + '" name="Table ' + $ShapeId + '"/>' +
+        '<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr>' +
+        '<p:nvPr/></p:nvGraphicFramePr>' +
+        '<p:xfrm><a:off x="' + $Left + '" y="' + $Top + '"/>' +
+        '<a:ext cx="' + $Width + '" cy="' + $Height + '"/></p:xfrm>' +
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">' +
+        '<a:tbl><a:tblPr firstRow="0" bandRow="0"/><a:tblGrid>' + $grid + '</a:tblGrid>' +
+        $RowsXml + '</a:tbl></a:graphicData></a:graphic></p:graphicFrame>'
+}
+
+function New-PptxTextBox {
+    <# .SYNOPSIS A free-standing text box. .OUTPUTS [string] #>
+    param([int] $Left, [int] $Top, [int] $Width, [int] $Height,
+          [string] $Runs, [string] $Align = 'ctr', [int] $ShapeId)
+    return '<p:sp><p:nvSpPr><p:cNvPr id="' + $ShapeId + '" name="Text ' + $ShapeId + '"/>' +
+        '<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>' +
+        '<a:xfrm><a:off x="' + $Left + '" y="' + $Top + '"/>' +
+        '<a:ext cx="' + $Width + '" cy="' + $Height + '"/></a:xfrm>' +
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>' +
+        '<p:txBody><a:bodyPr wrap="square" anchor="ctr"><a:normAutofit/></a:bodyPr><a:lstStyle/>' +
+        '<a:p><a:pPr algn="' + $Align + '"/>' + $Runs + '</a:p></p:txBody></p:sp>'
+}
+
+function New-PptxSlideNumber {
+    <# .SYNOPSIS The slide-number placeholder, bottom right.
+       .OUTPUTS [string]
+       .NOTES  A real <a:fld type="slidenum"> rather than typed digits, so
+               the number follows the slide if one is inserted later. Each
+               field needs its own GUID. #>
+    param([int] $ShapeId, [int] $Number)
+    $left = $script:SlideWidth - [int](1.4 * $script:Emu)
+    $top  = $script:SlideHeight - [int](0.45 * $script:Emu)
+    return '<p:sp><p:nvSpPr><p:cNvPr id="' + $ShapeId + '" name="Slide Number"/>' +
+        '<p:cNvSpPr txBox="1"/><p:nvPr><p:ph type="sldNum" sz="quarter" idx="12"/></p:nvPr></p:nvSpPr>' +
+        '<p:spPr><a:xfrm><a:off x="' + $left + '" y="' + $top + '"/>' +
+        '<a:ext cx="' + [int](1.1 * $script:Emu) + '" cy="' + [int](0.3 * $script:Emu) + '"/></a:xfrm>' +
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>' +
+        '<p:txBody><a:bodyPr anchor="ctr"/><a:lstStyle/><a:p><a:pPr algn="r"/>' +
+        '<a:fld id="{' + ([guid]::NewGuid().ToString().ToUpperInvariant()) + '}" type="slidenum">' +
+        '<a:rPr lang="en-US" sz="1000"><a:solidFill><a:srgbClr val="808080"/></a:solidFill>' +
+        '<a:latin typeface="Calibri"/></a:rPr><a:t>' + $Number + '</a:t></a:fld>' +
+        '</a:p></p:txBody></p:sp>'
+}
+
+function Get-StatusRowText {
+    <# .SYNOPSIS Collapse one row's columns into "label: detail".
+       .OUTPUTS [hashtable] @{ Label; Detail }
+       .NOTES  The status layout has ONE text column, so the selected
+               columns have to become one sentence. The FIRST selected
+               column is the intro label -- it is the one a reader scans --
+               and the rest follow as "Field: value". The specification
+               bolds "the first few words up to the colon", so the label is
+               returned separately rather than glued on with a marker that
+               the renderer would then have to find again. #>
+    param($Row, [string[]] $Names, [int] $MaxLength = 0)
+    $label = ''
+    if ($Names.Count -gt 0) { $label = [string] $Row.($Names[0]) }
+    if (-not $label) { $label = '(untitled)' }
+
+    $pieces = @()
+    foreach ($name in $Names | Select-Object -Skip 1) {
+        $value = [string] $Row.$name
+        if ($value -and $value.Trim()) { $pieces += ($name + ': ' + $value.Trim()) }
+    }
+    $detail = $pieces -join '   |   '
+    if ($MaxLength -gt 0) { $detail = Limit-CellText -Value $detail -MaxLength $MaxLength }
+    return @{ Label = $label.Trim(); Detail = $detail }
+}
+
+function New-StatusSlideXml {
+    <# .SYNOPSIS One slide of the corporate_status layout.
+       .OUTPUTS [string] the slide part. #>
+    param([object[]] $Chunk, [string[]] $Names, [string] $Title,
+          [string] $SubtitleLabel, [int] $FirstId, [int] $Number,
+          [hashtable] $Style, [int] $MaxLength = 0)
+    $navy   = $Style.StatusText
+    $header = $Style.StatusHeader
+    $band   = $Style.StatusBand
+
+    # Header row.
+    $rows = '<a:tr h="' + $script:StatusRowHeight + '">' +
+        (New-PptxCell -Runs (ConvertTo-PptxRun -Text 'ID' -Size 1400 -Color 'FFFFFF' -Bold $true) `
+                      -Fill $header -Align 'ctr') +
+        (New-PptxCell -Runs (ConvertTo-PptxRun -Text 'Detailed Task' -Size 1400 -Color 'FFFFFF' -Bold $true) `
+                      -Fill $header -Align 'l') + '</a:tr>'
+
+    $id = $FirstId
+    $index = 0
+    foreach ($row in $Chunk) {
+        # Alternating white and light blue, starting white under the header.
+        $fill = if ($index % 2 -eq 1) { $band } else { 'FFFFFF' }
+        $text = Get-StatusRowText -Row $row -Names $Names -MaxLength $MaxLength
+        $runs = (ConvertTo-PptxRun -Text ($text.Label + ':') -Size 1200 -Color $navy -Bold $true)
+        if ($text.Detail) {
+            $runs += (ConvertTo-PptxRun -Text (' ' + $text.Detail) -Size 1200 -Color $navy)
+        }
+        $rows += '<a:tr h="' + $script:StatusRowHeight + '">' +
+            (New-PptxCell -Runs (ConvertTo-PptxRun -Text ([string] $id) -Size 1600 -Color $navy -Bold $true) `
+                          -Fill $fill -Align 'ctr' -MarginL 45720 -MarginR 45720) +
+            (New-PptxCell -Runs $runs -Fill $fill -Align 'l') + '</a:tr>'
+        $id++
+        $index++
+    }
+
+    $shapes = New-PptxTextBox -Left 0 -Top $script:TitleTop -Width $script:SlideWidth `
+        -Height $script:TitleHeight -ShapeId 2 `
+        -Runs (ConvertTo-PptxRun -Text $Title -Size 3600 -Color $navy -Bold $true)
+    if ($SubtitleLabel) {
+        $shapes += New-PptxTextBox -Left 0 -Top ($script:TitleTop + $script:TitleHeight) `
+            -Width $script:SlideWidth -Height $script:SubtitleHeight -ShapeId 3 `
+            -Runs (ConvertTo-PptxRun -Text $SubtitleLabel -Size 1200 -Color $navy -Bold $true)
+    }
+    $tableHeight = $script:StatusRowHeight * ($Chunk.Count + 1)
+    $shapes += New-PptxTable -Left 0 -Top $script:TableTop -Width $script:SlideWidth `
+        -Height $tableHeight -Widths @($script:StatusIdWidth, $script:StatusTaskWidth) `
+        -RowsXml $rows -ShapeId 4
+    $shapes += New-PptxSlideNumber -ShapeId 5 -Number $Number
+    return $shapes
+}
+
+function New-GridSlideXml {
+    <# .SYNOPSIS One slide of the DEFAULT pptx layout: the chosen columns.
+       .OUTPUTS [string] the slide part.
+       .NOTES  Used by every format_name except corporate_status, which has
+               its own two-column specification. Column widths come from
+               Get-ColumnWidths, the same proportional share the Word report
+               uses, rescaled from twips to EMU so the two stay in step. #>
+    param([object[]] $Chunk, [string[]] $Names, [int[]] $Widths,
+          [string] $Title, [string] $Subtitle, [int] $Number,
+          [hashtable] $Style, [bool] $Striped, [int] $RowHeight,
+          [int] $MaxLength = 0)
+
+    $rows = '<a:tr h="' + $RowHeight + '">'
+    foreach ($name in $Names) {
+        $rows += New-PptxCell -Runs (ConvertTo-PptxRun -Text $name -Size 1100 `
+            -Color $Style.HeaderFont -Bold $true) -Fill $Style.Header -Align 'l'
+    }
+    $rows += '</a:tr>'
+
+    $index = 0
+    foreach ($row in $Chunk) {
+        $fill = if ($Striped -and $index % 2 -eq 1) { $Style.Stripe } else { 'FFFFFF' }
+        $rows += '<a:tr h="' + $RowHeight + '">'
+        foreach ($name in $Names) {
+            $value = Limit-CellText -Value $row.$name -MaxLength $MaxLength
+            $rows += New-PptxCell -Runs (ConvertTo-PptxRun -Text $value -Size 900 `
+                -Color '1F2937') -Fill $fill -Align 'l'
+        }
+        $rows += '</a:tr>'
+        $index++
+    }
+
+    $shapes = New-PptxTextBox -Left $script:SlideMargin -Top $script:TitleTop `
+        -Width ($script:SlideWidth - 2 * $script:SlideMargin) -Height $script:TitleHeight `
+        -ShapeId 2 -Align 'l' `
+        -Runs (ConvertTo-PptxRun -Text $Title -Size 2800 -Color $Style.Banner -Bold $true)
+    if ($Subtitle) {
+        $shapes += New-PptxTextBox -Left $script:SlideMargin `
+            -Top ($script:TitleTop + $script:TitleHeight) `
+            -Width ($script:SlideWidth - 2 * $script:SlideMargin) `
+            -Height $script:SubtitleHeight -ShapeId 3 -Align 'l' `
+            -Runs (ConvertTo-PptxRun -Text $Subtitle -Size 1200 -Color $Style.Banner)
+    }
+    $tableWidth = $script:SlideWidth - (2 * $script:SlideMargin)
+    $shapes += New-PptxTable -Left $script:SlideMargin -Top $script:TableTop `
+        -Width $tableWidth -Height ($RowHeight * ($Chunk.Count + 1)) `
+        -Widths $Widths -RowsXml $rows -ShapeId 4
+    $shapes += New-PptxSlideNumber -ShapeId 5 -Number $Number
+    return $shapes
+}
+
+function New-PptxBytes {
+    <# .SYNOPSIS Write the report as a PowerPoint deck.
+       .OUTPUTS [string] the path written.
+       .NOTES  No PowerPoint and no module: the parts are written straight
+               into a zip, the same way New-DocxBytes writes a .docx.
+
+               Rows are paginated to fill each slide and the HEADER ROW IS
+               REPEATED on every one -- a continuation slide whose columns
+               are unlabelled is the thing that makes a long deck unusable. #>
+    param([object[]] $Rows, [string[]] $Names, [hashtable] $Style,
+          [bool] $Striped, [string] $Title, [string] $Subtitle, [string] $Path,
+          [int] $MaxLength = 0, [string] $Note = '', [string] $FormatName = 'corporate',
+          [string] $UserTitle = '', [string] $UserSubtitle = '')
+
+    $status = ($FormatName -eq 'corporate_status')
+
+    if ($status) {
+        $rowHeight = $script:StatusRowHeight
+    } else {
+        # Taller rows when a cell carries a lot of text, so a Notes column
+        # does not spill out of its row. Clamped: a 0.3" row is unreadable
+        # and a 1.6" row wastes most of the slide.
+        $longest = 0
+        foreach ($row in $Rows) {
+            foreach ($name in $Names) {
+                $len = ([string] $row.$name).Length
+                if ($len -gt $longest) { $longest = $len }
+            }
+        }
+        if ($MaxLength -gt 0 -and $longest -gt $MaxLength) { $longest = $MaxLength }
+        $rowHeight = [int](0.34 * $script:Emu) + [int](($longest / 46) * 0.17 * $script:Emu)
+        $rowHeight = [Math]::Max([int](0.34 * $script:Emu), [Math]::Min([int](1.6 * $script:Emu), $rowHeight))
+    }
+
+    $available = $script:TableBottom - $script:TableTop
+
+    function Get-RowLines {
+        <# Lines a row's text will wrap to, at the width it is given. #>
+        param([int] $Length, [int] $PerLine)
+        return [Math]::Max(1, [int][Math]::Ceiling($Length / [double] $PerLine))
+    }
+
+    # Height each row really needs: the specified minimum, or more when the
+    # text wraps. Measured per row so one long Notes field does not set the
+    # height of every other row on the slide.
+    $rowHeights = @()
+    foreach ($row in $Rows) {
+        if ($status) {
+            $text = Get-StatusRowText -Row $row -Names $Names -MaxLength $MaxLength
+            $chars = ($text.Label + ': ' + $text.Detail).Length
+            $lines = Get-RowLines -Length $chars -PerLine 150
+            $rowHeights += [Math]::Max($rowHeight, [int]($lines * 0.26 * $script:Emu))
+        } else {
+            $rowHeights += $rowHeight
+        }
+    }
+    $headerHeight = $rowHeight
+
+    # Column widths: the Word report's proportional share, rescaled to EMU.
+    $gridWidths = @()
+    if (-not $status) {
+        $twips = Get-ColumnWidths -Rows $Rows -Names $Names
+        $tableWidth = $script:SlideWidth - (2 * $script:SlideMargin)
+        foreach ($t in $twips) {
+            $gridWidths += [int]($tableWidth * $t / $script:TableWidth)
+        }
+        $gridWidths[-1] += $tableWidth - (($gridWidths | Measure-Object -Sum).Sum)
+    }
+
+    $deckTitle = $Title
+    $subtitleLabel = $Subtitle
+    if ($status) {
+        # Judge on what the USER passed, not on $Title: by here it already
+        # holds the workbook's file name, so "-not $Title" is never true and
+        # the specified title would never appear.
+        if (-not $UserTitle) { $deckTitle = '' }
+        if (-not $UserSubtitle) { $subtitleLabel = '' }
+        if (-not $deckTitle) {
+            $monday = Get-WeekCommencing
+            $deckTitle = 'Activities/Tasks and Results ' + [char]0x2013 +
+                         ' Week of ' + $monday.ToString('MMMM d, yyyy')
+        }
+        if (-not $subtitleLabel) { $subtitleLabel = 'Overview' }
+    }
+
+    $slides = @()
+    $firstId = 1
+    $slideNumber = 1
+    $offset = 0
+    while ($offset -lt $Rows.Count) {
+        # Take rows until the next one would not fit under the header.
+        $used = $headerHeight
+        $take = 0
+        while (($offset + $take) -lt $Rows.Count) {
+            $next = $rowHeights[$offset + $take]
+            if ($take -gt 0 -and ($used + $next) -gt $available) { break }
+            $used += $next
+            $take++
+        }
+        $chunk = @($Rows[$offset..($offset + $take - 1)])
+        if ($status) {
+            $body = New-StatusSlideXml -Chunk $chunk -Names $Names -Title $deckTitle `
+                -SubtitleLabel $subtitleLabel -FirstId $firstId -Number $slideNumber `
+                -Style $Style -MaxLength $MaxLength
+        } else {
+            $caption = $subtitleLabel
+            if ($slideNumber -eq 1 -and $Note) { $caption = ($subtitleLabel + '    ' + $Note).Trim() }
+            $body = New-GridSlideXml -Chunk $chunk -Names $Names -Widths $gridWidths `
+                -Title $deckTitle -Subtitle $caption -Number $slideNumber `
+                -Style $Style -Striped $Striped -RowHeight $rowHeight -MaxLength $MaxLength
+        }
+        $slides += ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+            'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">' +
+            '<p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>' +
+            '<a:effectLst/></p:bgPr></p:bg><p:spTree>' +
+            '<p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>' +
+            '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +
+            '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>' +
+            $body + '</p:spTree></p:cSld>' +
+            '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>')
+        $firstId += $chunk.Count
+        $slideNumber++
+        $offset += $take
+    }
+
+    Write-CgsInfo ("{0} slide(s) for {1} row(s)" -f $slides.Count, $Rows.Count)
+    return (Write-PptxPackage -Slides $slides -Path $Path)
+}
+
+function Write-PptxPackage {
+    <# .SYNOPSIS Zip the slides and the fixed parts into a .pptx.
+       .OUTPUTS [string] the path written.
+       .NOTES  A deck needs more scaffolding than a document: a master, a
+               layout and a theme, each with its own relationships, even
+               when every slide draws its own shapes. PowerPoint refuses the
+               file outright if any of them is missing. #>
+    param([string[]] $Slides, [string] $Path)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+    $emptyTree = '<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/>' +
+        '<p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>' +
+        '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld>'
+    $ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ' +
+          'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ' +
+          'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    $rel = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    $pkg = 'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"'
+    $head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+
+    $solid = '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+    $theme = $head + '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office">' +
+        '<a:themeElements><a:clrScheme name="Office">' +
+        '<a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>' +
+        '<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>' +
+        '<a:dk2><a:srgbClr val="1E2761"/></a:dk2><a:lt2><a:srgbClr val="EEECE1"/></a:lt2>' +
+        '<a:accent1><a:srgbClr val="4472C4"/></a:accent1><a:accent2><a:srgbClr val="ED7D31"/></a:accent2>' +
+        '<a:accent3><a:srgbClr val="A5A5A5"/></a:accent3><a:accent4><a:srgbClr val="FFC000"/></a:accent4>' +
+        '<a:accent5><a:srgbClr val="5B9BD5"/></a:accent5><a:accent6><a:srgbClr val="70AD47"/></a:accent6>' +
+        '<a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink>' +
+        '</a:clrScheme><a:fontScheme name="Office">' +
+        '<a:majorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>' +
+        '<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont>' +
+        '</a:fontScheme><a:fmtScheme name="Office">' +
+        '<a:fillStyleLst>' + $solid + $solid + $solid + '</a:fillStyleLst>' +
+        '<a:lnStyleLst><a:ln w="6350">' + $solid + '</a:ln><a:ln w="12700">' + $solid +
+        '</a:ln><a:ln w="19050">' + $solid + '</a:ln></a:lnStyleLst>' +
+        '<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle>' +
+        '<a:effectStyle><a:effectLst/></a:effectStyle>' +
+        '<a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst>' +
+        '<a:bgFillStyleLst>' + $solid + $solid + $solid + '</a:bgFillStyleLst>' +
+        '</a:fmtScheme></a:themeElements></a:theme>'
+
+    $parts = [ordered] @{}
+    $overrides = ''
+    $slideIds  = ''
+    $slideRels = ''
+    for ($i = 0; $i -lt $Slides.Count; $i++) {
+        $n = $i + 1
+        $parts['ppt/slides/slide' + $n + '.xml'] = $Slides[$i]
+        $parts['ppt/slides/_rels/slide' + $n + '.xml.rels'] = $head +
+            '<Relationships ' + $pkg + '><Relationship Id="rId1" Type="' + $rel +
+            '/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>'
+        $overrides += '<Override PartName="/ppt/slides/slide' + $n + '.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+        $slideIds  += '<p:sldId id="' + (255 + $n) + '" r:id="rId' + ($n + 1) + '"/>'
+        $slideRels += '<Relationship Id="rId' + ($n + 1) + '" Type="' + $rel +
+            '/slide" Target="slides/slide' + $n + '.xml"/>'
+    }
+
+    $parts['[Content_Types].xml'] = $head +
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>' +
+        '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>' +
+        '<Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>' +
+        '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>' +
+        $overrides + '</Types>'
+    $parts['_rels/.rels'] = $head + '<Relationships ' + $pkg + '>' +
+        '<Relationship Id="rId1" Type="' + $rel + '/officeDocument" Target="ppt/presentation.xml"/></Relationships>'
+    $parts['ppt/presentation.xml'] = $head + '<p:presentation ' + $ns + '>' +
+        '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>' +
+        '<p:sldIdLst>' + $slideIds + '</p:sldIdLst>' +
+        '<p:sldSz cx="' + $script:SlideWidth + '" cy="' + $script:SlideHeight + '"/>' +
+        '<p:notesSz cx="6858000" cy="9144000"/></p:presentation>'
+    $parts['ppt/_rels/presentation.xml.rels'] = $head + '<Relationships ' + $pkg + '>' +
+        '<Relationship Id="rId1" Type="' + $rel + '/slideMaster" Target="slideMasters/slideMaster1.xml"/>' +
+        $slideRels +
+        '<Relationship Id="rId' + ($Slides.Count + 2) + '" Type="' + $rel + '/theme" Target="theme/theme1.xml"/></Relationships>'
+    $parts['ppt/slideMasters/slideMaster1.xml'] = $head + '<p:sldMaster ' + $ns + '>' + $emptyTree +
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" ' +
+        'accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
+        '<p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst></p:sldMaster>'
+    $parts['ppt/slideMasters/_rels/slideMaster1.xml.rels'] = $head + '<Relationships ' + $pkg + '>' +
+        '<Relationship Id="rId1" Type="' + $rel + '/slideLayout" Target="../slideLayouts/slideLayout1.xml"/>' +
+        '<Relationship Id="rId2" Type="' + $rel + '/theme" Target="../theme/theme1.xml"/></Relationships>'
+    $parts['ppt/slideLayouts/slideLayout1.xml'] = $head + '<p:sldLayout ' + $ns +
+        ' type="blank" preserve="1">' + $emptyTree + '</p:sldLayout>'
+    $parts['ppt/slideLayouts/_rels/slideLayout1.xml.rels'] = $head + '<Relationships ' + $pkg + '>' +
+        '<Relationship Id="rId1" Type="' + $rel + '/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>'
+    $parts['ppt/theme/theme1.xml'] = $theme
+
+    $parent = Split-Path -Parent $Path
+    if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+        [void](New-Item -ItemType Directory -Path $parent -Force)
+    }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::CreateNew)
+    try {
+        $archive = New-Object System.IO.Compression.ZipArchive(
+            $stream, [System.IO.Compression.ZipArchiveMode]::Create, $true)
+        try {
+            # UTF-8 with NO byte-order mark: PowerPoint rejects a BOM inside parts.
+            $encoding = New-Object System.Text.UTF8Encoding($false)
+            foreach ($name in $parts.Keys) {
+                $entry = $archive.CreateEntry($name,
+                    [System.IO.Compression.CompressionLevel]::Optimal)
+                $entryStream = $entry.Open()
+                try {
+                    $bytes = $encoding.GetBytes($parts[$name])
+                    $entryStream.Write($bytes, 0, $bytes.Length)
+                } finally { $entryStream.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
+    return $Path
+}
+
 function Invoke-Main {
     <# .SYNOPSIS Read, select, render. .OUTPUTS [int] exit code. #>
     # Before the required-parameter checks: -Preflight is asked on its own,
@@ -868,10 +1380,10 @@ function Invoke-Main {
             (Get-Date).ToString('dd MMM yyyy HH:mm') }
 
     $extension = [System.IO.Path]::GetExtension($OutputPath).ToLowerInvariant()
-    if ($extension -notin @('.docx','.pdf','.html','.htm')) {
+    if ($extension -notin @('.docx','.pdf','.html','.htm','.pptx')) {
         Write-CgsError ("unsupported output extension '$extension'. " +
-                        "Use .docx, .pdf, .html or .htm -- the extension " +
-                        "chooses the renderer.")
+                        "Use .docx, .pdf, .pptx, .html or .htm -- the " +
+                        "extension chooses the renderer.")
         return 2
     }
 
@@ -887,6 +1399,12 @@ function Invoke-Main {
             $written = New-DocxBytes -Rows $rows -Names $names -Widths $widths `
                 -Style $style -Striped $striped -Title $banner -Subtitle $second `
                 -Path $OutputPath -MaxLength $MaxCellLength -Note $note
+        }
+        '.pptx' {
+            $written = New-PptxBytes -Rows $rows -Names $names -Style $style `
+                -Striped $striped -Title $banner -Subtitle $second `
+                -Path $OutputPath -MaxLength $MaxCellLength -Note $note `
+                -FormatName $format_name -UserTitle $Title -UserSubtitle $Subtitle
         }
         '.pdf' {
             $libreOffice = $null
