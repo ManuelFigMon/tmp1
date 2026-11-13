@@ -1,6 +1,6 @@
-# DMW — IT Management Solution v1.5Beta
+# DMW — IT Management Solution v1.6Beta
 
-`dmw_it_management_v1_5Beta.html` (version **1.5Beta**, shown in the page header
+`dmw_it_management_v1_6Beta.html` (version **1.6Beta**, shown in the page header
 beside the database name). Adds a Home SLA overview, a report-performance
 Data Pipeline Performance tab, a Security diagram, an embedded Ask DMW agent, column
 metadata with an "i" icon on every column, and an editable `JobName`.
@@ -16,7 +16,7 @@ Keep this structure. Every path below is relative to the HTML file.
 
 ```
 v2/
-├── dmw_it_management_v1_5Beta.html     the application
+├── dmw_it_management_v1_6Beta.html     the application
 ├── column_metadata.csv           34 column definitions — MUST sit beside the HTML
 ├── dmw_update.sas        stored process: the only thing that writes
 ├── scripts/ag-grid-community.min.js
@@ -60,7 +60,7 @@ cd v2
 python -m http.server 8080
 ```
 
-then open `http://localhost:8080/dmw_it_management_v1_5Beta.html`.
+then open `http://localhost:8080/dmw_it_management_v1_6Beta.html`.
 
 ### Step 2 — Check the configuration block
 
@@ -164,7 +164,7 @@ column with no row gets a greyed-out "i" icon rather than an error.
 
 | Tab | What it shows |
 |---|---|
-| **Home** | Home SLA Overview: server monitor, services monitor with `OverallStatus`, uptime report, services reliability. Works with no SAS session. |
+| **Home** | Home SLA Overview (Uptime): server monitor, services monitor with `OverallStatus`, uptime report, services reliability. Works with no SAS session. |
 | **Data Grid** | The joined 34-column result. "i" icon on every column, pencil on `JobName`. |
 | **SQL** | Edit and re-run the statement. `SELECT` only. |
 | **Scheduler Overview** | KPI tiles plus row counts by `DASHBOARD_GROUP_BY`. Populates automatically when the query returns. |
@@ -182,8 +182,8 @@ column with no row gets a greyed-out "i" icon rather than an error.
 
 ### Home tab specifics
 
-- **Server monitor** — one card per endpoint per environment, from the most
-  recent sweep. `UP` / `DEGRADED` / `DOWN`. A reachable but slow endpoint is
+- **Server monitor** — one card per endpoint, grouped into a row per
+  environment with **PROD first**, from the most recent sweep. `UP` / `DEGRADED` / `DOWN`. A reachable but slow endpoint is
   DEGRADED, so you see amber before anything breaks.
 - **Services monitor** — the `OverallStatus` per environment is the headline:
   `HEALTHY`, `DEGRADED`, `CRITICAL` or `UNKNOWN`. It is the worst state among
@@ -413,6 +413,29 @@ Two notes on behaviour:
 Chart sizes on this tab: the donut's viewBox went from 420×190 to **560×330**
 with the centre following the radius, and the CPU time series from 230 to
 **330** high.
+
+## 3.8 The SLA note on the Home tab
+
+Beside the server tiles sits a short explainer: what an SLA commits to
+(availability, response, controlled and auditable access), where each half of
+that commitment is measured in this page, and why measuring it continuously
+is what makes it real. It closes with one sentence on Lean Six Sigma — the
+same record supplies the **Measure** phase with a baseline nobody has to
+reconstruct, and the **Control** phase with the monitoring that stops an
+improved process drifting back.
+
+It is there because the tiles answer *"is it up?"* without saying what
+"up enough" would mean, and the people who ask for this page are not always
+the people who wrote the agreement.
+
+Tiles are grouped one row per environment with **PROD first**, rather than
+flowing alphabetically into a single row. Production is what the SLA is
+written against, so it should not sit mixed in among the lower environments.
+Any environment not named in the order list follows in its own row, so adding
+TEST or DEV needs no code change.
+
+The note sits to the right of the tiles above 1180px and stacks beneath them
+below that, before the tiles would be squeezed under a readable width.
 
 ## 4. Replacing the sample data
 
