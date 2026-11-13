@@ -1,0 +1,3641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Stop a stale copy being served after you edit the CONFIG block below. -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <title>DMW -- IT Management Solution v1.7Beta</title>
+
+<!-- =============================================================================
+     CONFIGURATION BLOCK
+     =============================================================================
+     Deliberately placed in the document head, above all CSS and markup, so it is
+     the first thing you see when you open this file. Nothing below this block
+     needs to be edited to point the application at a different server, database
+     or query.
+     ========================================================================== -->
+<script>
+/* =============================================================================
+ * DMW (Data Mart Workbench) -- IT Management Solution
+ * CONFIGURATION
+ * =============================================================================
+ *
+ * HOW THIS APPLICATION REACHES THE DATABASE
+ * -----------------------------------------
+ * A browser cannot connect to Microsoft SQL Server. SQL Server speaks the TDS
+ * protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw
+ * TCP socket API -- only HTTP(S), WebSocket and WebRTC. Windows Authentication
+ * additionally needs OS-level credential delegation that a sandboxed page is
+ * never granted.
+ *
+ * This page therefore calls the SAS Stored Process Web Application, which you
+ * already run. The stored process dmw_run.sas holds the OLE DB connection and
+ * returns the result set as a JSON array:
+ *
+ *     This page  --HTTPS + &dmq_query=<SQL>-->  dmw_run (SAS)  --OLEDB-->  SQL Server
+ *
+ * Nothing is installed on the workstation. Registering dmw_run in SAS Management
+ * Console is a configuration task; see DMW_UNIT/v2/README_V2.md.
+ *
+ * TWO BROWSER REQUIREMENTS
+ * ------------------------
+ *   1. You need an active SAS session in this browser. Press "Logon" in the top
+ *      right; the page then sends your SAS session cookie automatically. No
+ *      password is ever collected or stored by this page.
+ *   2. The page must be served over http(s), ideally from the same web server as
+ *      SAS. Opening it from file:// will always be blocked by browser origin
+ *      rules for the live call.
+ *
+ * EDITING
+ * -------
+ *   1. Change the values in CONFIG below.
+ *   2. Save the file.
+ *   3. Refresh the browser (Ctrl+F5, or use Clear Cache & Reload in the header).
+ * ============================================================================= */
+const CONFIG = {
+
+    /* -------------------------------------------------------------------------
+     * APPLICATION IDENTITY
+     * ---------------------------------------------------------------------- */
+    APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
+    APP_VERSION: "1.7Beta",
+    APP_SUBTITLE:"Scheduler job monitoring, SLA overview and report performance",
+
+    /* =========================================================================
+     * 1. SQL SERVER TARGET
+     * =========================================================================
+     * These values are displayed in the interface and written into the SAS
+     * OLEDB snippet shown on the Connection tab. The connection itself is made
+     * by the stored process, so THESE MUST MATCH the DMW_* macro variables at
+     * the top of dmw_run.sas. Changing them here alone does not re-point the
+     * database connection.
+     * ====================================================================== */
+
+    /* Server Name: host or fully qualified domain name of the SQL Server. */
+    SERVER_HOST: "A70TUCGSDATA012.A70ADMED.COM",
+
+    /* Listening port. SQL Server defaults to 1433. */
+    PORT: 1433,
+
+    /* Database Name (Initial Catalog). */
+    INITIAL_CATALOG: "OHM_CGSScheduler",
+
+    /* Authentication mode shown in the interface.
+       Windows Authentication means the stored process connects with
+       Integrated Security = SSPI, as the SAS server process account. */
+    AUTH_MODE: "Windows Authentication (SSPI)",
+
+    /* User Name the DATABASE connection is made as. Display only -- this page
+       never sends or stores credentials.
+
+       NOTE: this is NOT the person signed in to the web application. With
+       Integrated Security the stored process connects as the SAS Stored
+       Process Server service account, confirmed from the SAS log as
+       A70ADMED\SVC_CGSUSASSRV in UNIT. That account must hold a SQL Server
+       login and SELECT on the target view, or every request fails with
+       "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'". See README.md. */
+    AUTH_USER: "A70ADMED\\SVC_CGSUSASSRV",
+
+    /* =========================================================================
+     * 2. SAS STORED PROCESS BRIDGE
+     * =========================================================================
+     * SAS_BASE_URL   Stored Process Web Application entry point. Must end in
+     *                "_program=". This is the same base URL the existing DMQ
+     *                query builder uses.
+     *
+     * SAS_PROGRAM    SMC metadata path of the stored process. Register
+     *                dmw_run.sas here. Copy the path from SMC exactly,
+     *                including capitalisation and spaces.
+     *
+     * SAS_QUERY_PARAM  Name of the query-string parameter carrying the SQL.
+     *                dmw_run.sas reads "dmq_query"; keep this value unless you
+     *                rename the parameter in the stored process as well.
+     *
+     * SAS_LOGON_PROGRAM  Stored process that performs the SAS logon redirect
+     *                and returns here with ?userid=...&sasAuth=1. Leave as-is
+     *                if you already use sas_auth_redirect.
+     *
+     * SAS_LOGOUT_URL SAS Logon logout endpoint, used by Sign out.
+     *
+     * SAS_DEBUG      0 or 1. When 1 the stored process writes the statement,
+     *                row count and elapsed time to the SAS log.
+     * ====================================================================== */
+    SAS_BASE_URL:       "https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=",
+    SAS_PROGRAM:        "/User Folders/731o/My Folder/dmw_run",
+    SAS_QUERY_PARAM:    "dmq_query",
+    SAS_LOGON_PROGRAM:  "/User Folders/731o/My Folder/sas_auth_redirect",
+    SAS_LOGOUT_URL:     "https://cgssaswebu.a70admed.com/SASLogon/logout",
+    SAS_DEBUG:          0,
+
+    /* Milliseconds to wait for the stored process before aborting. Raise this
+       for queries over large views. */
+    REQUEST_TIMEOUT_MS: 60000,
+
+    /* When true, every request carries a cache-busting parameter and a
+       no-store directive so a response is never reused. */
+    DISABLE_CACHE: true,
+
+    /* Run the initial query automatically as soon as a SAS session is detected.
+       Set false to require an explicit "Run Query" press. */
+    AUTO_RUN_ON_LOGON: true,
+
+    /* =========================================================================
+     * 3. INITIAL SQL STATEMENT
+     * =========================================================================
+     * This statement is sent to dmw_run on start-up (and whenever Run Query is
+     * pressed). It is fully editable in the SQL pane at run time; this value is
+     * simply the default that loads.
+     *
+     * Keep it to a SELECT -- the stored process rejects anything else and
+     * returns an empty array.
+     * ====================================================================== */
+    INITIAL_SQL: `SELECT TOP (1000)
+       v.[RequestID]
+      ,v.[JobID]
+      ,v.[JobName]
+      ,v.[Frequency]
+      ,v.[Status]
+      ,v.[RequestedBy]
+      ,v.[RequestedDatetime]
+      ,v.[LastUpdateDatetime]
+      ,v.[CompletedDatetime]
+      ,v.[ResponseMessage]
+      ,v.[JobLogFile]
+      ,v.[ProgramLogFile]
+      ,v.[LoggingInstanceID]
+      ,v.[Timeout]
+      ,v.[AdHocID]
+      ,v.[AlertID]
+      ,j.[JobTimeOfDay]
+      ,j.[JobDayOfWeek]
+      ,j.[JobDayOfMonth]
+      ,j.[RunsOnBusinessDay]
+      ,j.[RunsOnHoliday]
+      ,j.[JobMonthOfYear]
+      ,j.[Interval]
+      ,j.[IntervalType]
+      ,j.[ExecutionWindowStart]
+      ,j.[ExecutionWindowEnd]
+      ,j.[EffectiveStart]
+      ,j.[EffectiveEnd]
+      ,j.[LastRunDatetime]
+      ,j.[Enabled]
+      ,j.[RunOnNextValidWorkday]
+      ,j.[LineOfBusiness]
+      ,j.[TypeOfJob]
+      ,j.[RunOnExactTime]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard] v
+  LEFT JOIN [OHM_CGSScheduler].[dbo].[Job] j
+         ON j.[JobID] = v.[JobID]
+ ORDER BY v.[RequestedDatetime] DESC`,
+
+    /* =========================================================================
+     * 4. SAVED QUERIES
+     * =========================================================================
+     * Appear in the "Saved Queries" dropdown on the toolbar. Index 0 is the
+     * entry that corresponds to INITIAL_SQL. Add objects with a name and a sql
+     * property to extend the list.
+     * ====================================================================== */
+    SAVED_QUERIES: [
+        {
+            name: "1. Scheduler Dashboard - All Jobs (Top 1000)",
+            sql: null   /* null means: use INITIAL_SQL above */
+        },
+        {
+            name: "2. Failed Jobs Only",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [CompletedDatetime], [ResponseMessage]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [Status] LIKE '%Fail%' OR [Status] LIKE '%Error%'
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "3. Currently Running / In Progress",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [LastUpdateDatetime], [Timeout]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [CompletedDatetime] IS NULL
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "4. Job Volume by Status",
+            sql: `SELECT [Status], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Status]
+ ORDER BY JobCount DESC`
+        },
+        {
+            name: "5. Job Volume by Frequency",
+            sql: `SELECT [Frequency], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Frequency]
+ ORDER BY JobCount DESC`
+        }
+    ],
+
+    /* =========================================================================
+     * 5. GRID BEHAVIOUR  (AG Grid)
+     * =========================================================================
+     * GRID_PAGE_SIZE       Rows per page in the results grid.
+     * GRID_PAGE_SIZES      Options offered in the page-size selector.
+     * GRID_THEME           AG Grid CSS theme class. ag-theme-alpine ships in
+     *                      the styles/ folder beside this file.
+     * DASHBOARD_GROUP_BY   Column the "Generate Dashboard" view summarises by.
+     * VISUALIZE_GROUP_BY   Column the Chart tab's bar chart counts by.
+     *                      (Key name kept for compatibility with edited copies.)
+     * ====================================================================== */
+    GRID_PAGE_SIZE: 50,
+    GRID_PAGE_SIZES: [25, 50, 100, 500, 1000],
+    GRID_THEME: "ag-theme-alpine",
+    DASHBOARD_GROUP_BY: "Status",
+    VISUALIZE_GROUP_BY: "Status",
+
+    /* =========================================================================
+     * 6. COLUMN METADATA  (the "i" icon beside every column name)
+     * =========================================================================
+     * METADATA_CSV_PATH is resolved RELATIVE TO THIS HTML FILE. The CSV is an
+     * external file that must sit in the SAME FOLDER as this page -- it is not
+     * embedded, so it can be maintained by the data stewards without anyone
+     * editing HTML.
+     *
+     * Format is identical to query_builder_with_metadata_csv_v1_21.html:
+     *   LOB, PHYSICAL_COLUMN_NAME, LOGICAL_COLUMN_NAME, TABLE_COLUMN_NAME,
+     *   DESCRIPTION, LONG_DESCRIPTION, LOAD_FREQUENCY
+     * Rows are matched to grid columns on PHYSICAL_COLUMN_NAME, case-insensitively.
+     * ====================================================================== */
+    METADATA_CSV_PATH: "column_metadata.csv",
+    METADATA_ENABLED: true,
+
+    /* =========================================================================
+     * 7. EDITABLE COLUMNS  (the pencil icon)
+     * =========================================================================
+     * Columns listed here get a pencil icon in the header and open an editor
+     * when clicked. Each needs a stored process that accepts no SQL.
+     * JobName is written to [dbo].[Job] keyed on JobID -- see
+     * dmw_update.sas for why the view itself is not updated.
+     * ====================================================================== */
+    EDITABLE_COLUMNS: {
+        JobName: {
+            program:   "/User Folders/731o/My Folder/dmw_update",
+            keyColumn: "JobID",
+            maxLength: 200,
+            label:     "Job Name"
+        }
+    },
+
+    /* If the POST comes back as HTML rather than JSON, retry the same save as
+       a GET before giving up. Some SAS Stored Process Web Application setups
+       accept the read path but not a form POST, and the read path is already
+       proven to work here.
+
+       The tradeoff is real: a GET puts the new job name in the query string,
+       so it is written verbatim into the web server log, and a browser refresh
+       can re-submit it. The page logs a warning to the Console tab whenever
+       the fallback is used, so this never happens silently. Set false to
+       require POST and fail loudly instead. */
+    EDIT_FALLBACK_TO_GET: true,
+
+    /* =========================================================================
+     * 8. HOME TAB -- SLA OVERVIEW DATA SOURCES
+     * =========================================================================
+     * Both files are written by the PowerShell scanners in ps1\ and are read
+     * straight from disk by this page. No stored process is involved, so the
+     * Home tab works before any SAS session exists.
+     *
+     *   SERVER_STATUS_CSV   <- Check-SASServers_v2.0.ps1
+     *   SERVICE_STATUS_CSV  <- Check-ObjectSpawner_v1.0.ps1
+     * ====================================================================== */
+    SERVER_STATUS_CSV:  "data/sas_server_status.csv",
+
+    /* Daily pre-aggregated percentiles, written by
+       ps1\Export-ServerLatencyDaily.ps1 -- one row per endpoint per day
+       instead of one per check. The Charts tab reads this for its time series
+       and summary, so a year of history costs ~1,500 rows rather than
+       ~420,000. The per-check file is then fetched only if you ask for the
+       scatter, which is the one view that genuinely needs every point.
+       Leave the path empty to go back to computing everything from raw. */
+    SERVER_LATENCY_DAILY_CSV: "data/sas_server_latency_daily.csv",
+    SERVICE_STATUS_CSV: "data/objectspawner_status.csv",
+
+    /* Hours of history to chart on the Home tab. */
+    UPTIME_WINDOW_HOURS: 336,          /* 14 days */
+    /* A sweep older than this makes the Home tab show the data as stale. */
+    STATUS_STALE_MINUTES: 30,
+    /* Auto-refresh the Home tab, in seconds. 0 disables. */
+    HOME_REFRESH_SECONDS: 300,
+
+    /* =========================================================================
+     * 9. VISUALIZE PERFORMANCE TAB -- TWO SOURCES, TWO GRAINS
+     * =========================================================================
+     * The tab reads two independent CSVs. They are complementary, not
+     * alternatives, and neither derives the other.
+     *
+     *   SAS_LOG_ROLLUP_CSV   <- ps1\Export-SasLogRollup.ps1
+     *        One row per LOG FILE. Session totals plus memory, step counts
+     *        and error/warning counts.
+     *        Answers: which programs cost the most, and which are failing.
+     *
+     *   SAS_LOG_STEPS_CSV    <- ps1\Export-SasLogSteps.ps1, which runs the
+     *        cgs_ai tool  cgs_ai\src\ps\scanFileSystem.ps1
+     *                       -metric_profile sas_log
+     *        and flattens its Metrics sheet to CSV. One row per SAS STEP,
+     *        in the cgs_ai column names:
+     *          FullPath, ProgramName, StepIndex, StepLabel,
+     *          RealTimeSec, CpuTimeSec
+     *        Answers: where does the time go inside a program.
+     *
+     * The step source is OPTIONAL. If the file is absent the tab renders the
+     * rollup view and explains how to produce the other half.
+     * ====================================================================== */
+    SAS_LOG_ROLLUP_CSV: "data/sas_log_rollup.csv",
+    SAS_LOG_STEPS_CSV:  "data/sas_log_steps.csv",
+    VIZ_TOP_N: 12,                     /* programs shown in the CPU breakdown */
+    VIZ_TOP_STEPS: 15,                 /* rows in the slowest-steps table */
+
+    /* =========================================================================
+     * 10. ASK DMW  -- Copilot Studio agent, embedded
+     * =========================================================================
+     * Short-term demo: the agent is embedded as an iframe rather than wired in
+     * through an API, so there is no integration code, no API key and no CORS
+     * configuration in this page.
+     *
+     * NOTE ON LICENSING: an embeddable agent requires Copilot Studio. The free
+     * agent builder included with M365 Copilot cannot be embedded -- it only
+     * runs inside the Microsoft 365 Copilot app.
+     * ====================================================================== */
+    ASK_DMW_ENABLED: true,
+    ASK_DMW_URL: "https://www.office365.us/chat/?titleId=T_6bf356fc-aeac-71f5-1498-5ac17ec0a62e&source=embedded-builder",
+
+    /* =========================================================================
+     * 11. SECURITY TAB
+     * =========================================================================
+     * The software delivery and hotfix flow, drawn inline as SVG so the page
+     * stays air-gapped and the diagram scales without an image asset.
+     * ====================================================================== */
+    SECURITY_ENABLED: true
+};
+</script>
+
+    <link rel="stylesheet" href="styles/ag-grid.css">
+    <link rel="stylesheet" href="styles/ag-theme-alpine.css">
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            font-size: 11px;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ---- Header (reused from the DMW Query Builder) ---- */
+        .header {
+            background: #4a7ba7;
+            color: #fff;
+            padding: 15px 20px;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 16px; font-weight: 600; }
+        .header p  { font-size: 11px; opacity: .95; margin-top: 3px; }
+
+        .top-nav {
+            position: absolute; top: 15px; right: 70px;
+            display: flex; gap: 15px; align-items: center;
+        }
+        .top-nav a {
+            color: #fff; text-decoration: none; font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 3px; transition: background .2s;
+        }
+        .top-nav a:hover { background: rgba(255,255,255,.15); }
+
+        #nav-welcome {
+            color: #d4f5d4; font-size: 11px; font-weight: 700;
+            padding: 5px 10px; display: none;
+        }
+
+        /* ---- Hamburger + dropdown (reused) ---- */
+        .hamburger-container { position: absolute; top: 15px; right: 20px; }
+        .hamburger {
+            width: 30px; height: 30px; background: transparent; border: none;
+            cursor: pointer; padding: 5px; display: flex; flex-direction: column;
+            justify-content: center; gap: 4px; border-radius: 3px; transition: background .2s;
+        }
+        .hamburger:hover { background: rgba(255,255,255,.15); }
+        .hamburger span { display: block; width: 20px; height: 2px; background: #fff; transition: all .3s; }
+        .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+
+        .dropdown-menu {
+            position: absolute; top: 50px; right: 20px; background: #fff;
+            border: 1px solid #c0c0c0; border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15);
+            min-width: 210px; display: none; z-index: 1000;
+        }
+        .dropdown-menu.active { display: block; }
+        .dropdown-menu a {
+            display: block; padding: 12px 20px; color: #333; text-decoration: none;
+            font-size: 11px; font-weight: 600; border-bottom: 1px solid #f0f0f0;
+            transition: background .2s;
+        }
+        .dropdown-menu a:last-child { border-bottom: none; }
+        .dropdown-menu a:hover { background: #f8f8f8; }
+        .dropdown-menu a.dashboard-item { color: #4a7ba7; }
+        .dropdown-menu a.visualize-item { color: #7b4aa7; }
+        .dropdown-menu a.export-item    { color: #2e7d32; }
+
+        /* ---- Toolbar ---- */
+        .toolbar {
+            background: #fff; border-bottom: 1px solid #d0d7de;
+            padding: 8px 16px; display: flex; gap: 8px; align-items: center;
+            flex-wrap: wrap; flex-shrink: 0;
+        }
+        .btn {
+            padding: 6px 12px; font-size: 11px; border: 1px solid transparent;
+            border-radius: 4px; cursor: pointer; font-weight: 600;
+            font-family: inherit;
+        }
+        .btn-primary   { background: #4a7ba7; color: #fff; }
+        .btn-primary:hover { background: #3a6b97; }
+        .btn-run       { background: #16a34a; color: #fff; }
+        .btn-run:hover { background: #22c55e; }
+        .btn-secondary { background: #e6e9ed; color: #222; border-color: #c0c7cf; }
+        .btn-secondary:hover { background: #d6dae0; }
+        .btn-warn      { background: #92400e; color: #fff; border-color: #b45309; }
+        .btn-warn:hover{ background: #b45309; }
+        .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .toolbar input[type="search"] {
+            padding: 6px 10px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 12px; min-width: 240px;
+        }
+        .toolbar select {
+            padding: 5px 8px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 11px; background: #fff; max-width: 300px;
+        }
+        .toolbar label { font-size: 11px; color: #555; font-weight: 600; }
+
+        /* ---- Info pills ---- */
+        .info-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; padding: 7px 16px;
+            background: #fafbfc; border-bottom: 1px solid #e1e4e8; font-size: 11px;
+            flex-shrink: 0; align-items: center;
+        }
+        .pill { background: #fff; border: 1px solid #d0d7de; border-radius: 14px; padding: 3px 10px; }
+        .pill strong { color: #4a7ba7; }
+        .pill.ok strong   { color: #2e7d32; }
+        .pill.warn strong { color: #b45309; }
+        .pill.err strong  { color: #c0392b; }
+
+        /* ---- Tabs ---- */
+        .tab-bar {
+            display: flex; gap: 2px; padding: 0 16px; background: #eef2f6;
+            border-bottom: 1px solid #d0d7de; flex-shrink: 0;
+        }
+        .tab-btn {
+            padding: 7px 14px; font-size: 11px; font-weight: 600; border: none;
+            background: transparent; color: #556; cursor: pointer;
+            border-bottom: 2px solid transparent; font-family: inherit;
+        }
+        .tab-btn:hover  { color: #222; }
+        .tab-btn.active { color: #4a7ba7; background: #fff; border-bottom-color: #4a7ba7; }
+
+        /* ---- Panels ---- */
+        .panel-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .panel { display: none; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px; }
+        .panel.active { display: flex; flex-direction: column; }
+
+        #gridPanel.active { padding: 0 16px 12px; }
+        #dmwGrid { flex: 1 1 auto; min-height: 300px; width: 100%; }
+
+        /* ---- SQL editor ---- */
+        .sql-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+        #sqlEditor {
+            flex: 1 1 auto; min-height: 180px; width: 100%;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+            line-height: 1.5; padding: 10px; border: 1px solid #c0c7cf;
+            border-radius: 4px; resize: none; outline: none; tab-size: 4;
+            background: #1e1e1e; color: #d4d4d4; caret-color: #fff;
+        }
+        #sqlEditor:focus { border-color: #4a7ba7; }
+        .sql-hint { font-size: 11px; color: #666; }
+
+        /* ---- Console ---- */
+        #consoleOut {
+            flex: 1 1 auto; font-family: 'Consolas','Courier New',monospace;
+            font-size: 11px; white-space: pre-wrap; line-height: 1.6;
+            background: #1e1e1e; color: #ccc; padding: 12px; border-radius: 4px;
+            overflow: auto; min-height: 200px;
+        }
+        .c-ok  { color: #22c55e; font-weight: 700; }
+        .c-err { color: #ef4444; font-weight: 700; }
+        .c-warn{ color: #f59e0b; font-weight: 700; }
+        .c-dim { color: #888; }
+
+        /* ---- Connection detail cards ---- */
+        .conn-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 820px) { .conn-grid { grid-template-columns: 1fr 1fr; } }
+        .card {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px;
+        }
+        .card h3 {
+            font-size: 12px; color: #4a7ba7; margin-bottom: 8px;
+            padding-bottom: 6px; border-bottom: 1px solid #eef0f2;
+        }
+        .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; }
+        .kv span:first-child { color: #777; }
+        .kv span:last-child  { font-family: 'Consolas',monospace; color: #222; text-align: right; word-break: break-all; }
+        .code-pre {
+            background: #1e1e1e; color: #22c55e; padding: 10px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; overflow-x: auto;
+            white-space: pre; margin-top: 8px;
+        }
+
+        /* ---- Dashboard / Chart ---- */
+        .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+        .kpi {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+            padding: 12px 16px; min-width: 130px;
+        }
+        .kpi .v { font-size: 22px; font-weight: 700; color: #4a7ba7; line-height: 1; }
+        .kpi .l { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+        .kpi .v.ok  { color: #2e7d32; }
+        .kpi .v.err { color: #c0392b; }
+        .kpi .v.warn{ color: #b45309; }
+
+        table.sum { width: 100%; border-collapse: collapse; font-size: 11px; background: #fff; }
+        table.sum th {
+            background: #eef2f6; border-bottom: 2px solid #4a7ba7; padding: 7px 10px;
+            text-align: left; white-space: nowrap;
+        }
+        table.sum td { padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
+        table.sum tr:nth-child(even) td { background: #fafbfc; }
+
+        .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+        .bar-label { width: 190px; text-align: right; color: #444; flex-shrink: 0; word-break: break-word; }
+        .bar-track { flex: 1 1 auto; background: #eef2f6; border-radius: 3px; height: 20px; position: relative; }
+        .bar-fill  { background: #4a7ba7; height: 100%; border-radius: 3px; min-width: 2px; }
+        .bar-val   { width: 70px; color: #222; font-weight: 600; flex-shrink: 0; }
+
+        /* ---- Modals (reused) ---- */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+            z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: #fff; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.3);
+            max-width: 620px; width: 90%; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header {
+            background: #4a7ba7; color: #fff; padding: 13px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: 600; font-size: 13px;
+        }
+        .modal-close {
+            background: none; border: none; color: #fff; font-size: 22px;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-body {
+            padding: 18px; overflow-y: auto; font-size: 12px; line-height: 1.6; color: #333;
+        }
+        .modal-body p  { margin-bottom: 11px; }
+        .modal-body h4 { font-size: 12px; color: #222; margin: 14px 0 6px; }
+        .modal-body ol, .modal-body ul { padding-left: 22px; margin-bottom: 11px; }
+        .modal-body li { margin-bottom: 5px; }
+        .modal-body code {
+            background: #f4f4f4; padding: 2px 5px; border-radius: 3px;
+            font-family: 'Consolas',monospace; color: #a3324a;
+        }
+        .modal-body .cfgbox {
+            background: #1e1e1e; color: #ccc; padding: 11px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; white-space: pre; overflow-x: auto;
+        }
+
+        /* ========== v2: Home / SLA, Visualize Performance, Security ========== */
+        .sla-head { display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap; }
+        .sla-head h2 { font-size:15px; color:#1f3864; }
+        .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
+        .sla-stale { background:#fff3cd; border:1px solid #f0ad4e; color:#8a6d3b;
+                     padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+        .head-side { margin-left:auto; display:flex; flex-direction:column; gap:7px;
+                     align-items:stretch; max-width:340px; }
+        .login-nudge { background:#eef4fa; border:1px solid #cfe0ef;
+                       padding:8px 12px; border-radius:4px; font-size:11px; }
+        .sla-link {
+            background:#eef4fa; border:1px solid #cfe0ef; border-radius:4px;
+            padding:9px 12px; font-size:11px; font-weight:600; color:#1f3864;
+            cursor:pointer; text-align:left; display:flex; align-items:center; gap:8px;
+            font-family:inherit; transition:background .15s, border-color .15s;
+        }
+        .sla-link:hover { background:#dce9f5; border-color:#a8c6e0; }
+        .sla-link-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:16px; height:16px; border-radius:50%; background:#4a7ba7; color:#fff;
+            font-size:10px; font-weight:700; flex-shrink:0;
+        }
+        .sla-body h4 { font-size:11px; color:#1f3864; margin:14px 0 6px; }
+        .sla-body p  { font-size:11px; line-height:1.65; margin-bottom:8px; }
+        .sla-body .sum { margin-bottom:4px; }
+        .sla-body .sum td { font-size:11px; line-height:1.55; }
+        .sla-caveat { border-top:1px solid #e2e8ee; padding-top:9px; margin-top:12px;
+                      color:#666; font-style:italic; }
+        .login-nudge strong { color:#1f3864; }
+        .login-nudge button { margin-left:8px; }
+
+        .sec-title { font-size:12px; font-weight:700; color:#1f3864; margin:18px 0 8px;
+                     padding-bottom:4px; border-bottom:2px solid #dce6f1; }
+
+        .svc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+
+        /* One row of tiles per environment. */
+        .env-row { margin-bottom:10px; }
+        .env-row-label {
+            font-size:9px; font-weight:700; letter-spacing:.8px; color:#7a8794;
+            text-transform:uppercase; margin:0 0 5px 2px;
+        }
+        .svc-card { border:1px solid #d8dfe6; border-radius:4px; padding:10px 12px; background:#fff;
+                    border-left-width:5px; }
+        .svc-card.up       { border-left-color:#2e7d32; }
+        .svc-card.degraded { border-left-color:#f0ad4e; }
+        .svc-card.down     { border-left-color:#c00000; }
+        .svc-card.unknown  { border-left-color:#999; }
+        .svc-name { font-weight:700; font-size:12px; color:#222; }
+        .svc-env  { display:inline-block; font-size:9px; font-weight:700; padding:1px 6px;
+                    border-radius:8px; background:#eceff3; color:#555; margin-left:6px; vertical-align:middle; }
+        .svc-env.PROD { background:#1f3864; color:#fff; }
+        .svc-state { font-size:16px; font-weight:700; margin:4px 0 2px; }
+        .svc-card.up .svc-state       { color:#2e7d32; }
+        .svc-card.degraded .svc-state { color:#b07400; }
+        .svc-card.down .svc-state     { color:#c00000; }
+        .svc-card.unknown .svc-state  { color:#777; }
+        .svc-meta { font-size:10px; color:#666; line-height:1.5; }
+
+        .kpi-row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+        .kpi { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:10px 16px; min-width:120px; }
+        .kpi .v { font-size:22px; font-weight:700; color:#1f3864; }
+        .kpi .l { font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:#777; margin-top:2px; }
+        .kpi.bad  .v { color:#c00000; }
+        .kpi.warn .v { color:#b07400; }
+        .kpi.good .v { color:#2e7d32; }
+
+        .chart-box { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:12px; margin-bottom:12px; }
+        .chart-box h4 { font-size:11px; color:#1f3864; margin-bottom:8px; }
+        .chart-legend { display:flex; gap:10px; flex-wrap:wrap; font-size:10px; color:#555; margin-top:8px; align-items:center; }
+        .chart-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+        .lg-item { cursor:pointer; padding:2px 7px; border-radius:10px; border:1px solid #dde3e9;
+                   background:#fff; user-select:none; transition:background .12s, opacity .12s; }
+        .lg-item:hover { background:#eef4fa; border-color:#b9cde0; }
+        .lg-item.off   { opacity:.4; text-decoration:line-through; background:#f4f6f8; }
+        .lg-static { padding:2px 7px; color:#777; }
+        .lg-reset  { font-size:10px; padding:2px 8px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#4a7ba7; }
+        .lg-reset:hover { background:#eef4fa; }
+
+        /* One shared tooltip that follows the cursor. Replaces per-point
+           <title>, which the browser delays by about a second. */
+        .chart-tip {
+            position:fixed; z-index:9999; display:none; pointer-events:none;
+            background:rgba(24,34,48,.95); color:#fff; font-size:11px; line-height:1.5;
+            padding:6px 9px; border-radius:4px; max-width:280px;
+            box-shadow:0 4px 14px rgba(0,0,0,.28); font-family:'Segoe UI',sans-serif;
+        }
+        .chart-tip strong { color:#9ec8f0; }
+
+        .filter-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                      background:#f7f9fb; border:1px solid #e2e8ee; border-radius:4px;
+                      padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .filter-bar label { color:#555; font-weight:600; }
+        .filter-bar input[type=date] { font-size:11px; padding:3px 6px; border:1px solid #ccd4db; border-radius:3px; }
+        .range-btn { font-size:10px; padding:3px 9px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#444; }
+        .range-btn:hover  { background:#eef4fa; }
+        .range-btn.active { background:#4a7ba7; color:#fff; border-color:#4a7ba7; }
+        .filter-note { color:#777; margin-left:auto; font-family:Consolas,monospace; font-size:10px; }
+
+        /* Active cross-filters. A filter you cannot see is a filter you will
+           misread the whole tab through, so every one is listed with the way
+           to remove it. */
+        .chipbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                   background:#fff8e1; border:1px solid #f0d9a0; border-radius:4px;
+                   padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .chipbar .lbl { font-weight:700; color:#8a6d3b; }
+        .chip { background:#fff; border:1px solid #e0cfa0; border-radius:12px;
+                padding:2px 6px 2px 9px; display:inline-flex; align-items:center; gap:6px; }
+        .chip b { font-weight:600; color:#333; }
+        .chip button { border:none; background:none; cursor:pointer; color:#a06a00;
+                       font-size:13px; line-height:1; padding:0 2px; }
+        .chip button:hover { color:#c00000; }
+        .chip-clear { font-size:10px; padding:3px 9px; border:1px solid #e0cfa0;
+                      background:#fff; border-radius:10px; cursor:pointer; color:#8a6d3b; }
+        .chip-clear:hover { background:#fff3d6; }
+        .viz-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        @media (max-width:1100px){ .viz-2col { grid-template-columns:1fr; } }
+
+        /* ---- metadata "i" icon + pencil in grid headers ---- */
+        .hdr-wrap { display:inline-flex; align-items:center; gap:5px; }
+        .hdr-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:14px; height:14px; border-radius:50%; font-size:9px; font-weight:700;
+            cursor:pointer; border:none; padding:0; line-height:1; flex-shrink:0;
+        }
+        .hdr-ico.info   { background:#4a7ba7; color:#fff; }
+        .hdr-ico.info:hover { background:#1f3864; }
+        .hdr-ico.info.off { background:#c8d2da; color:#fff; cursor:default; }
+        .hdr-sort { font-size:9px; color:#c3ccd4; margin-left:2px; user-select:none; }
+        .hdr-sort.active { color:#1f3864; font-size:10px; }
+        .hdr-ico.edit   { background:none; color:#b07400; font-size:11px; width:auto; }
+        .hdr-ico.edit:hover { color:#8a5600; }
+        .cell-editable { cursor:pointer; border-bottom:1px dotted #b07400; }
+        .cell-editable:hover { background:#fff8e1; }
+
+        /* ---- metadata modal (matches query_builder v1_21 behaviour) ---- */
+        .meta-field { margin-bottom:10px; }
+        .meta-label { font-size:9px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+                      color:#777; margin-bottom:3px; }
+        .meta-value { border:1px solid #ccd4db; border-radius:3px; background:#f8fafc;
+                      padding:7px 9px; font-size:11px; line-height:1.55; color:#222; }
+        .meta-value.mono { font-family:Consolas,monospace; color:#A31515; }
+        .meta-value.scroll { max-height:120px; overflow-y:auto; }
+        .meta-chip { display:inline-block; background:#dce6f1; color:#1f3864; font-family:Consolas,monospace;
+                     font-size:11px; padding:2px 8px; border-radius:3px; margin-left:8px; }
+
+        /* ---- Ask DMW ---- */
+        .ask-wrap { display:flex; flex-direction:column; height:100%; }
+        .ask-note { background:#eef4fa; border:1px solid #cfe0ef; padding:8px 12px;
+                    font-size:10px; color:#334; margin-bottom:8px; line-height:1.6; }
+        .ask-frame { flex:1; min-height:520px; border:1px solid #d8dfe6; border-radius:4px; background:#fff; }
+        .ask-frame iframe { width:100%; height:100%; min-height:520px; border:none; display:block; }
+
+        /* ---- Security diagram ---- */
+        .sec-wrap { background:#fff; border:1px solid #d8dfe6; border-radius:4px; padding:16px; }
+        .sec-wrap svg { width:100%; height:auto; display:block; }
+
+        .modal-footer {
+            padding: 11px 18px; background: #f5f7f9; border-top: 1px solid #e1e4e8;
+            display: flex; justify-content: flex-end;
+        }
+
+        /* ---- Footer / session bar ---- */
+        .session-bar {
+            padding: 6px 16px; border-top: 1px solid #ddd; background: #f8f8f8;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 11px; color: #666; flex-shrink: 0;
+        }
+        .session-ind { display: flex; align-items: center; gap: 7px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex-shrink: 0; }
+        .dot.active { background: #22c55e; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+        #footer-signout { color: #c0392b; text-decoration: none; display: none; }
+        #footer-signout:hover { text-decoration: underline; }
+
+        .loading-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+            z-index: 9999; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            border: 5px solid #f3f3f3; border-top: 5px solid #4a7ba7; border-radius: 50%;
+            width: 54px; height: 54px; animation: spin 1s linear infinite; margin-bottom: 16px;
+        }
+        @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+        .loading-overlay .txt { color: #fff; font-size: 14px; font-weight: 500; }
+
+        .empty-note {
+            padding: 36px; text-align: center; color: #666; font-size: 13px;
+            background: #fff; border: 1px dashed #d0d7de; border-radius: 4px;
+        }
+        .empty-note h2 { color: #4a7ba7; margin-bottom: 9px; font-size: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="txt" id="loadingText">Executing query against SQL Server…</div>
+</div>
+
+<!-- ===================== HEADER ===================== -->
+<div class="header">
+    <h1 id="appTitle">DMW (Data Mart Workbench) -- IT Management Solution</h1>
+    <p id="appSubtitle">—</p>
+
+    <!-- Top nav: Logon (executes the query), About, Help -->
+    <div class="top-nav">
+        <a id="nav-logon" href="#" title="Sign in to SAS, then run the query">Logon</a>
+        <span id="nav-welcome"></span>
+        <a id="nav-about" href="#">About</a>
+        <a id="nav-help" href="#">Help</a>
+    </div>
+
+    <!-- Hamburger: Generate Dashboard, Chart Data, Export to CSV -->
+    <div class="hamburger-container">
+        <button class="hamburger" id="hamburgerBtn" title="Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="dropdown-menu" id="dropdownMenu">
+            <a href="#" class="dashboard-item" id="menuDashboard">Scheduler Overview</a>
+            <a href="#" class="visualize-item" id="menuVisualize">Server Performance</a>
+            <a href="#" class="export-item"    id="menuExport">Export to CSV</a>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== TOOLBAR ===================== -->
+<div class="toolbar">
+    <button class="btn btn-run" id="runBtn" title="Execute the SQL below against SQL Server (Ctrl+Enter)">Run Query</button>
+
+    <label for="savedQuery">Saved Queries:</label>
+    <select id="savedQuery"></select>
+
+    <input type="search" id="quickSearch" placeholder="Quick search across all columns…">
+    <button class="btn btn-secondary" id="clearFiltersBtn">Clear Filters</button>
+    <button class="btn btn-secondary" id="autoSizeBtn">Auto-Size</button>
+    <button class="btn btn-primary"   id="exportBtn">Export CSV</button>
+    <button class="btn btn-warn"      id="cacheBtn" style="margin-left:auto;" title="Clear browser-held state and hard reload">Clear Cache &amp; Reload</button>
+</div>
+
+<!-- ===================== INFO PILLS ===================== -->
+<div class="info-bar">
+    <span class="pill">Server: <strong id="infoServer">—</strong></span>
+    <span class="pill">Database: <strong id="infoDb">—</strong></span>
+    <span class="pill">Auth: <strong id="infoAuth">—</strong></span>
+    <span class="pill">Rows: <strong id="infoRows">0</strong></span>
+    <span class="pill">Columns: <strong id="infoCols">0</strong></span>
+    <span class="pill">Filtered: <strong id="infoFiltered">0</strong></span>
+    <span class="pill" id="pillElapsed">Elapsed: <strong id="infoElapsed">—</strong></span>
+</div>
+
+<!-- ===================== TABS ===================== -->
+<div class="tab-bar">
+    <button class="tab-btn active" data-panel="homePanel">Home</button>
+    <button class="tab-btn" data-panel="gridPanel">Data Grid</button>
+    <button class="tab-btn" data-panel="sqlPanel">SQL</button>
+    <button class="tab-btn" data-panel="dashPanel">Scheduler Overview</button>
+    <button class="tab-btn" data-panel="vizPanel">Server Performance</button>
+    <button class="tab-btn" data-panel="vizPerfPanel">Data Pipeline Performance</button>
+    <button class="tab-btn" data-panel="securityPanel">Security</button>
+    <button class="tab-btn" data-panel="askPanel">Ask DMW Agent</button>
+    <button class="tab-btn" data-panel="connPanel">Connection</button>
+    <button class="tab-btn" data-panel="consolePanel">Console</button>
+</div>
+
+<div class="panel-host">
+
+    <!-- ============ HOME: SLA Overview ============ -->
+    <div class="panel active" id="homePanel"></div>
+
+    <!-- Data Grid (AG Grid) -->
+    <div class="panel" id="gridPanel">
+        <div id="dmwGrid"></div>
+    </div>
+
+    <!-- SQL editor -->
+    <div class="panel" id="sqlPanel">
+        <div class="sql-wrap">
+            <div class="sql-hint">
+                Edit the statement and press <strong>Run Query</strong> (or <strong>Ctrl+Enter</strong>).
+                The default statement is <code>CONFIG.INITIAL_SQL</code> at the top of this file.
+                The stored process accepts <strong>SELECT statements only</strong>.
+            </div>
+            <textarea id="sqlEditor" spellcheck="false"></textarea>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="panel" id="dashPanel"></div>
+
+    <!-- Chart -->
+    <div class="panel" id="vizPanel"></div>
+
+    <!-- Connection -->
+    <!-- ============ VISUALIZATIONS: report performance ============ -->
+    <div class="panel" id="vizPerfPanel"></div>
+
+    <!-- ============ SECURITY: software delivery flow ============ -->
+    <div class="panel" id="securityPanel"></div>
+
+    <!-- ============ ASK DMW: embedded Copilot Studio agent ============ -->
+    <div class="panel" id="askPanel"></div>
+
+    <div class="panel" id="connPanel"></div>
+
+    <!-- Console -->
+    <div class="panel" id="consolePanel">
+        <div id="consoleOut">Initializing…</div>
+    </div>
+
+</div>
+
+<!-- ===================== SESSION BAR ===================== -->
+<div class="session-bar">
+    <div class="session-ind">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusLabel">No active SAS session</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+        <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
+        <a href="#" id="footer-signout">Sign out</a>
+    </div>
+</div>
+
+<!-- ===================== SLA INFO MODAL ===================== -->
+<div class="modal-overlay" id="slaModal">
+    <div class="modal-content" style="max-width:620px;">
+        <div class="modal-header">
+            <span>What an SLA commits to</span>
+            <button class="modal-close" data-close="slaModal">&times;</button>
+        </div>
+        <div class="modal-body sla-body">
+            <p>A service level agreement states, in measurable terms, what the business can expect
+               of this environment: how often it is <strong>available</strong>, how quickly it
+               <strong>responds</strong>, and that access to it stays <strong>controlled and
+               auditable</strong>. Each has a threshold and a review cadence, so &ldquo;the system is
+               slow&rdquo; becomes a number with an owner.</p>
+
+            <h4>Where each half is measured here</h4>
+            <table class="sum">
+                <thead><tr><th>Commitment</th><th>Where it is measured</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Available</strong> &mdash; is it up?</td>
+                        <td>The server and service tiles on this tab, from the most recent sweep,
+                            with the uptime history beneath them.</td></tr>
+                    <tr><td><strong>Responsive</strong> &mdash; is it quick enough?</td>
+                        <td><strong>Server Performance</strong>: response time per endpoint, with
+                            daily medians and 95th percentiles over months.</td></tr>
+                    <tr><td><strong>On time</strong> &mdash; did the work finish?</td>
+                        <td><strong>Scheduler Overview</strong> and <strong>Data Pipeline
+                            Performance</strong>: job outcomes, failures and run cost.</td></tr>
+                    <tr><td><strong>Controlled</strong> &mdash; who can do what?</td>
+                        <td><strong>Security</strong>: the software delivery and hotfix path.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Why it is measured continuously</h4>
+            <p>A commitment nobody measures is an intention. Every endpoint check, service state and
+               job outcome here is timestamped and retained, so a breach of the agreement is
+               <em>evidence</em> rather than recollection &mdash; and so is the absence of one.</p>
+
+            <h4>Lean Six Sigma</h4>
+            <p>That same record supplies the <strong>Measure</strong> phase with a baseline nobody
+               has to reconstruct, and the <strong>Control</strong> phase with the ongoing
+               monitoring that stops an improved process drifting back.</p>
+
+            <p class="sla-caveat">This page reports what the environment <em>did</em>. The
+               thresholds it should be judged against &mdash; the actual agreed numbers &mdash; live
+               in your SLA document, not in this tool.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="slaModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== COLUMN METADATA MODAL ===================== -->
+<div class="modal-overlay" id="metaModal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <span>Column Metadata <span class="meta-chip" id="metaChip">—</span></span>
+            <button class="modal-close" data-close="metaModal">&times;</button>
+        </div>
+        <div class="modal-body" id="metaBody"></div>
+        <div class="modal-footer">
+            <button class="btn" data-close="metaModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== EDIT JOBNAME MODAL ===================== -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <span>Edit <span class="meta-chip" id="editChip">—</span></span>
+            <button class="modal-close" data-close="editModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="meta-field">
+                <div class="meta-label">Job ID</div>
+                <div class="meta-value mono" id="editKey">—</div>
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">Current value</div>
+                <div class="meta-value mono" id="editOld">—</div>
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">New value</div>
+                <input type="text" id="editNew" maxlength="200"
+                       style="width:100%;padding:7px 9px;border:1px solid #ccd4db;border-radius:3px;font-size:11px;font-family:Consolas,monospace;">
+            </div>
+            <div class="meta-field">
+                <div class="meta-label">What happens when you save</div>
+                <div class="meta-value" style="font-size:10px;line-height:1.6;">
+                    The change is written to <code>[dbo].[Job].[JobName]</code> through the
+                    <code>dmw_update</code> stored process, keyed on JobID, and the grid reloads.
+                    Your SAS username is recorded server-side. If someone else renamed this job since the
+                    grid loaded, the save is refused rather than overwriting their change.
+                </div>
+            </div>
+            <div id="editStatus" class="notes-status" style="font-size:10px;"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn" data-close="editModal">Cancel</button>
+            <button class="btn btn-primary" id="editSaveBtn">Save change</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== ABOUT MODAL ===================== -->
+<div class="modal-overlay" id="aboutModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>About DMW -- IT Management Solution</span>
+            <button class="modal-close" data-close="aboutModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p><strong>DMW (Data Mart Workbench) -- IT Management Solution</strong> monitors SAS Scheduler job activity held in SQL Server. It executes a SQL statement through a SAS Stored Process and renders the returned JSON in an AG Grid, with dashboard, visualisation and CSV export views.</p>
+
+            <h4>How it reaches the database</h4>
+            <p>A browser cannot connect to SQL Server directly: SQL Server speaks the TDS protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw TCP socket API. Windows Authentication additionally requires OS-level credential delegation that a sandboxed page is never granted.</p>
+            <p>This page therefore calls the SAS Stored Process <code>dmw_run</code>, which holds the OLE DB connection and returns the result set as a JSON array. Nothing is installed on the workstation.</p>
+            <div class="cfgbox">Browser  --HTTPS &amp;dmq_query=&lt;SQL&gt;--&gt;  dmw_run (SAS)  --OLEDB--&gt;  SQL Server</div>
+
+            <h4>Current target</h4>
+            <ul>
+                <li>Server: <code id="aboutServer">—</code></li>
+                <li>Database: <code id="aboutDb">—</code></li>
+                <li>Authentication: <code id="aboutAuth">—</code></li>
+                <li>Runs as: <code id="aboutUser">—</code></li>
+                <li>Stored process: <code id="aboutProg">—</code></li>
+            </ul>
+
+            <h4>Configuration</h4>
+            <p>Every adjustable value lives in the <code>CONFIG</code> object in a <code>&lt;script&gt;</code> block at the very top of this HTML file, above the stylesheet and markup. The database connection itself is made by the stored process, so the <code>DMW_*</code> macro variables at the top of <code>dmw_run.sas</code> must describe the same target.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="aboutModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== HELP MODAL ===================== -->
+<div class="modal-overlay" id="helpModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>Help &amp; Support</span>
+            <button class="modal-close" data-close="helpModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <h4>Getting started</h4>
+            <ol>
+                <li>Press <strong>Logon</strong> in the top right. You are redirected to SAS, authenticated, and returned here. The query then runs automatically.</li>
+                <li>Results appear in the <strong>Data Grid</strong> tab. Sort, filter, reorder and resize columns directly in the grid.</li>
+                <li>Use the <strong>SQL</strong> tab to edit the statement, then press <strong>Run Query</strong> or <strong>Ctrl+Enter</strong>.</li>
+            </ol>
+
+            <h4>Hamburger menu (top right)</h4>
+            <ul>
+                <li><strong>Scheduler Overview</strong> — KPI tiles, a summary table and row counts grouped by <code>CONFIG.DASHBOARD_GROUP_BY</code>.</li>
+                <li><strong>Server Performance</strong> — response-time charts for the monitored HTTP endpoints.</li>
+                <li><strong>Export to CSV</strong> — downloads the rows currently visible after filtering.</li>
+            </ul>
+
+            <h4>Changing the configuration</h4>
+            <p>Open this file in any text editor. The <code>CONFIG</code> object is at the very top.</p>
+            <div class="cfgbox">SERVER_HOST:     "A70TUCGSDATA012.A70ADMED.COM",
+INITIAL_CATALOG: "OHM_CGSScheduler",
+PORT:            1433,
+SAS_PROGRAM:     "/User Folders/731o/My Folder/dmw_run",
+INITIAL_SQL:     `SELECT TOP (1000) ...`</div>
+            <p>After saving, press <strong>Clear Cache &amp; Reload</strong> so the browser does not serve a cached copy.</p>
+
+            <h4>Troubleshooting</h4>
+            <table class="sum">
+                <thead><tr><th>Symptom</th><th>Resolution</th></tr></thead>
+                <tbody>
+                    <tr><td>Returned a logon page instead of data</td><td>No active SAS session. Press <strong>Logon</strong>.</td></tr>
+                    <tr><td>Response was not valid JSON (HTML shown)</td><td>Stored process <em>Result type</em> is not <code>Streaming</code>. Correct it in SMC.</td></tr>
+                    <tr><td>Could not reach the stored process</td><td>Page opened from <code>file://</code>, or CORS. Serve it over http(s) from the SAS web server.</td></tr>
+                    <tr><td>HTTP 404</td><td><code>SAS_PROGRAM</code> does not match the SMC metadata path.</td></tr>
+                    <tr><td>HTTP 500</td><td>Stored process raised an error. Check the SAS log; often a missing OLE DB provider or no SELECT permission.</td></tr>
+                    <tr><td>Empty array returned</td><td>Statement contained no <code>SELECT</code>. The stored process rejects non-SELECT statements.</td></tr>
+                    <tr><td>Edits appear to have no effect</td><td>A cached copy is loaded. Press <strong>Clear Cache &amp; Reload</strong> and check the build stamp changed.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Contact</h4>
+            <p>For issues, questions or enhancement requests, please reach out. Typical response is within one business day.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="helpModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="scripts/ag-grid-community.min.js"></script>
+<script>
+/* =============================================================================
+ * APPLICATION RUNTIME
+ * -----------------------------------------------------------------------------
+ * No configuration below this line. Everything adjustable is in the CONFIG
+ * object at the top of this file.
+ * ========================================================================== */
+
+const BUILD_ID = (CONFIG.APP_VERSION || 'v1.0') + '-' + Date.now().toString(36);
+
+let gridApi = null;
+let currentRows = [];
+let currentCols = [];
+let lastElapsedMs = 0;
+
+window.session = { authenticated: false, userid: null, loginTime: null };
+
+/* ------------------------------ helpers ---------------------------------- */
+const $ = id => document.getElementById(id);
+
+function esc(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, ch =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+}
+
+function logConsole(html, append) {
+    const el = $('consoleOut');
+    if (append) el.innerHTML = html + '\n\n' + el.innerHTML;
+    else el.innerHTML = html;
+}
+
+function showLoading(on, text) {
+    $('loadingText').textContent = text || 'Executing query against SQL Server…';
+    $('loadingOverlay').classList.toggle('active', !!on);
+}
+
+function bust(url) {
+    if (!CONFIG.DISABLE_CACHE) return url;
+    return url + (url.includes('?') ? '&' : '?') +
+           '_cb=' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+/* ------------------------- SAS session / auth ----------------------------
+   Reused from the DMW Query Builder (query_builder_with_metadata_csv_v1_21.html).
+   The logon stored process authenticates the user and redirects back here with
+   ?userid=<id>&sasAuth=1, which this page consumes and then removes from the
+   address bar.
+-------------------------------------------------------------------------- */
+function sasGetParam(name) {
+    return new URLSearchParams(window.location.search).get(name);
+}
+
+function sasCleanUrl() {
+    history.replaceState({}, document.title, window.location.pathname);
+}
+
+function sasRenderLoggedIn() {
+    $('nav-logon').style.display = 'none';
+    const w = $('nav-welcome');
+    w.style.display = 'inline';
+    w.textContent = 'Welcome, ' + window.session.userid + '!';
+    $('statusDot').classList.add('active');
+    $('statusLabel').textContent = 'SAS session active — ' + window.session.userid;
+    $('footer-signout').style.display = 'inline';
+}
+
+function sasRenderLoggedOut() {
+    $('nav-logon').style.display = 'inline';
+    $('nav-welcome').style.display = 'none';
+    $('statusDot').classList.remove('active');
+    $('statusLabel').textContent = 'No active SAS session';
+    $('footer-signout').style.display = 'none';
+}
+
+/* "Logon" authenticates to SAS, which is what makes executing the query
+   possible. On return, the query runs automatically when AUTO_RUN_ON_LOGON. */
+function handleLogon(e) {
+    if (e) e.preventDefault();
+    const returnUrl = encodeURIComponent(window.location.origin + window.location.pathname);
+    const target = CONFIG.SAS_BASE_URL
+                 + encodeURIComponent(CONFIG.SAS_LOGON_PROGRAM)
+                 + '&returnUrl=' + returnUrl;
+    window.location.href = target;
+}
+
+function handleSignOut(e) {
+    if (e) e.preventDefault();
+    window.session = { authenticated: false, userid: null, loginTime: null };
+    try { localStorage.removeItem('dmw_sas_session'); } catch (_) {}
+    sasRenderLoggedOut();
+    window.location.href = CONFIG.SAS_LOGOUT_URL +
+        '?returnUrl=' + encodeURIComponent(window.location.origin + window.location.pathname);
+}
+
+(function sasInit() {
+    const userid = sasGetParam('userid');
+    const sasAuth = sasGetParam('sasAuth');
+    if (userid && sasAuth === '1') {
+        window.session = {
+            authenticated: true,
+            userid: decodeURIComponent(userid),
+            loginTime: new Date().toLocaleTimeString()
+        };
+        try { localStorage.setItem('dmw_sas_session', JSON.stringify(window.session)); } catch (_) {}
+        sasCleanUrl();
+    } else {
+        try {
+            const raw = localStorage.getItem('dmw_sas_session');
+            const stored = raw ? JSON.parse(raw) : null;
+            if (stored && stored.authenticated && stored.userid) window.session = stored;
+        } catch (_) {}
+    }
+})();
+
+/* --------------------------- stored process ------------------------------ */
+function buildStoredProcessUrl(sqlText) {
+    if (!CONFIG.SAS_BASE_URL) throw new Error('CONFIG.SAS_BASE_URL is empty.');
+    if (!CONFIG.SAS_PROGRAM)  throw new Error('CONFIG.SAS_PROGRAM is empty.');
+    let url = CONFIG.SAS_BASE_URL
+            + encodeURIComponent(CONFIG.SAS_PROGRAM)
+            + '&' + encodeURIComponent(CONFIG.SAS_QUERY_PARAM || 'dmq_query')
+            + '=' + encodeURIComponent(sqlText);
+    if (CONFIG.SAS_DEBUG) url += '&debug_mode=1';
+    return url;
+}
+
+/* Accepts the bare JSON array dmw_run returns, and the common wrapper shapes,
+   so an alternative stored process can be substituted without code changes. */
+function normalizePayload(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) throw new Error('The stored process returned an empty response body.');
+
+    if (/^<(!doctype|html)/i.test(trimmed) && /logon|login|password/i.test(trimmed.slice(0, 4000))) {
+        throw new Error('SAS returned a logon page instead of data: this browser has no active SAS session. ' +
+                        'Press "Logon" in the top right, then run the query again.');
+    }
+    if (/^<(!doctype|html)/i.test(trimmed)) {
+        throw new Error('SAS returned HTML instead of JSON. The stored process Result type is probably not set to ' +
+                        '"Streaming", so SAS wrapped the output in ODS HTML. Response began: ' + trimmed.slice(0, 160));
+    }
+
+    let payload;
+    try { payload = JSON.parse(trimmed); }
+    catch (_) { throw new Error('Response was not valid JSON. It began: ' + trimmed.slice(0, 240)); }
+
+    if (payload && payload.error) throw new Error(String(payload.error));
+
+    if (Array.isArray(payload)) return payload;
+    for (const k of ['rows', 'data', 'records', 'results']) {
+        if (Array.isArray(payload && payload[k])) return payload[k];
+    }
+    if (payload && typeof payload === 'object') {
+        for (const k of Object.keys(payload)) {
+            if (k.startsWith('SASJSON')) continue;
+            if (Array.isArray(payload[k])) return payload[k];
+        }
+    }
+    throw new Error('Could not find a row array in the response. Keys seen: ' +
+                    Object.keys(payload || {}).join(', '));
+}
+
+/* A stored process that is missing, unauthenticated, or registered without
+   Result type = Streaming answers with an HTML page. Handing that to
+   JSON.parse produces "Unexpected token '<', \"<!DOCTYPE \"... is not valid
+   JSON", which tells the user nothing. This turns each case into a sentence
+   that names the cause. */
+function parseSasJson(text, what, context) {
+    const trimmed = String(text || '').trim();
+    const label = what || 'The stored process';
+    const where = context ? ('\n\nProgram: ' + context) : '';
+
+    if (!trimmed) {
+        throw new Error(label + ' returned an empty response. Check that it is registered and that its Result type is "Streaming".' + where);
+    }
+
+    if (/^<!DOCTYPE|^<html|^<\?xml/i.test(trimmed)) {
+
+        /* ORDER MATTERS, AND SO DOES PRECISION.
+           An earlier version tested for the string "SASLogon" first. A SAS
+           "Stored Process Error" page carries the standard SAS chrome, which
+           includes a SASLogon logout link -- so a stored process that simply
+           was not found got reported as an expired session, and the user was
+           told to sign in while already signed in.
+
+           So: identify the specific failures first, and recognise a logon
+           page only by something a logon page actually has, which is a
+           password field or a form posting to SASLogon. */
+
+        if (/Stored\s*Process\s*Error|Unable to locate|not found in metadata|No such (stored )?process/i.test(trimmed)) {
+            throw new Error(label + ' could not be run. The usual cause is that it is not registered at this ' +
+                'metadata path, or that you may not execute it. Open the path in SAS Management Console to ' +
+                'confirm, and press "Show SAS Log" on the SAS error page for the exact reason.' + where);
+        }
+
+        const looksLikeLogon =
+            /<input[^>]+type\s*=\s*["']?password/i.test(trimmed) ||
+            /name\s*=\s*["']j_password/i.test(trimmed) ||
+            /<form[^>]+action\s*=\s*["'][^"']*SASLogon/i.test(trimmed);
+        if (looksLikeLogon) {
+            throw new Error('Your SAS session has expired or was never established. Press "Logon" in the top right, then try again.');
+        }
+
+        if (/ODS|<table/i.test(trimmed)) {
+            throw new Error(label + ' returned ODS HTML instead of JSON. Its Result type is not set to ' +
+                '"Streaming" in SAS Management Console.' + where);
+        }
+
+        throw new Error(label + ' returned an HTML page instead of JSON. Check the Console tab for what came ' +
+            'back. The usual causes are a wrong metadata path, Result type not set to "Streaming", or an ' +
+            'expired session.' + where);
+    }
+
+    try { return JSON.parse(trimmed); }
+    catch (_) {
+        throw new Error(label + ' returned something that is not JSON. It began: ' + trimmed.slice(0, 200) + where);
+    }
+}
+
+async function executeQuery() {
+    const sqlText = $('sqlEditor').value.trim();
+
+    if (!sqlText) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The SQL buffer is empty. Enter a SELECT statement on the SQL tab.');
+        return;
+    }
+    if (!/\bselect\b/i.test(sqlText)) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The statement contains no SELECT. The stored process accepts SELECT statements only and would return an empty array.');
+        return;
+    }
+    if (!window.session.authenticated) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">NOT SIGNED IN:</span> Press "Logon" in the top right to authenticate to SAS.\n' +
+                   'The query cannot execute without an active SAS session.');
+    }
+
+    const url = buildStoredProcessUrl(sqlText);
+    if (url.length > 7500) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The generated URL is ' + url.length +
+                   ' characters, beyond what most servers accept on a GET request (~8000).\n' +
+                   'Shorten the statement, or change the stored process to read the SQL from the request body.');
+        return;
+    }
+
+    $('runBtn').disabled = true;
+    showLoading(true);
+    const started = performance.now();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+
+    try {
+        const res = await fetch(bust(url), {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'include',      /* carry the SAS session cookie */
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
+
+        const text = await res.text();
+        if (!res.ok) {
+            throw new Error('Stored process returned HTTP ' + res.status + ' ' + res.statusText + '. ' +
+                describeHttp(res.status) + (text ? ' Response began: ' + text.slice(0, 200) : ''));
+        }
+
+        const rows = normalizePayload(text);
+        lastElapsedMs = Math.round(performance.now() - started);
+
+        currentRows = rows;
+        currentCols = rows.length ? Object.keys(rows[0]) : [];
+
+        renderGrid(currentCols, currentRows);
+        renderConnectionPanel();
+        updatePills();
+
+        /* Build the Dashboard and Charts panels as soon as there is data, so
+           both are populated when the user opens them instead of waiting for
+           a hamburger action. Neither switches the active panel. */
+        try { generateDashboard({ stayOnPanel: true }); } catch (_) {}
+        try { visualizeData({ stayOnPanel: true }); } catch (_) {}
+
+        logConsole(
+            '<span class="c-ok">OUTPUT:</span> Query executed successfully.\n' +
+            'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+            'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+            'Rows    : ' + rows.length + '\n' +
+            'Columns : ' + esc(currentCols.join(', ')) + '\n' +
+            'Elapsed : ' + lastElapsedMs + ' ms\n' +
+            'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+            '<span class="c-dim">First row:</span>\n' +
+            esc(JSON.stringify(rows[0] || {}, null, 2))
+        );
+
+        switchPanel('gridPanel');
+    } catch (err) {
+        lastElapsedMs = Math.round(performance.now() - started);
+        const msg = (err && err.name === 'AbortError')
+            ? 'The stored process did not respond within ' + CONFIG.REQUEST_TIMEOUT_MS + ' ms.'
+            : (err && err.message ? err.message : String(err));
+
+        switchPanel('consolePanel');
+        logConsole(
+            '<span class="c-err">ERROR:</span> ' + esc(msg) + '\n\n' +
+            '<span class="c-dim">Checklist:</span>\n' +
+            '  1. Is there an active SAS session in this browser? Press "Logon".\n' +
+            '  2. Is this page served over http(s)? A file:// page cannot make this call.\n' +
+            '  3. Does CONFIG.SAS_PROGRAM match the SMC metadata path exactly?\n' +
+            '  4. Is the stored process Result type set to "Streaming"?\n' +
+            '  5. Does the SAS identity hold SELECT on the target view?\n\n' +
+            '<span class="c-dim">URL attempted:</span>\n' + esc(url.slice(0, 500))
+        );
+        updatePills(true);
+    } finally {
+        clearTimeout(timer);
+        showLoading(false);
+        $('runBtn').disabled = false;
+    }
+}
+
+function describeHttp(status) {
+    if (status === 401 || status === 403) return 'Authentication or authorization failed — sign in to SAS and confirm you may execute this stored process.';
+    if (status === 404) return 'The stored process path was not found — check CONFIG.SAS_PROGRAM against the SMC path.';
+    if (status === 500) return 'The stored process raised an error — check the SAS log.';
+    return '';
+}
+
+/* ------------------------------ AG Grid ---------------------------------- */
+function renderGrid(cols, rows) {
+    const host = $('dmwGrid');
+    host.className = CONFIG.GRID_THEME;
+
+    const columnDefs = cols.map(c => {
+        const def = {
+            field: c,
+            headerName: c,
+            sortable: true,
+            filter: true,
+            resizable: true,
+            floatingFilter: true,
+            minWidth: 120,
+            /* Custom header draws the metadata "i" and, for editable columns,
+               the pencil. See the DmwHeader class. */
+            headerComponent: DmwHeader,
+            tooltipValueGetter: p => {
+                if (p.value === null || p.value === undefined) return '';
+                const m = Meta.get(c);
+                return m ? (m.LOGICAL_COLUMN_NAME + ' — ' + m.DESCRIPTION) : String(p.value);
+            }
+        };
+
+        /* Editable column: the cell itself opens the editor. */
+        if (CONFIG.EDITABLE_COLUMNS && CONFIG.EDITABLE_COLUMNS[c]) {
+            def.minWidth = 220;
+            def.cellRenderer = p => {
+                if (!p.data) return '';
+                const span = document.createElement('span');
+                span.className = 'cell-editable';
+                span.textContent = (p.value === null || p.value === undefined) ? '' : String(p.value);
+                span.title = 'Click to edit ' + c;
+                span.addEventListener('click', ev => { ev.stopPropagation(); Editor.open(c, p.data); });
+                return span;
+            };
+        }
+        return def;
+    });
+
+    const options = {
+        theme: 'legacy',               /* required for the CSS-file themes on AG Grid v33+ */
+        columnDefs: columnDefs,
+        rowData: rows,
+        defaultColDef: { flex: 1, minWidth: 110, sortable: true, filter: true, resizable: true },
+        pagination: true,
+        paginationPageSize: CONFIG.GRID_PAGE_SIZE,
+        paginationPageSizeSelector: CONFIG.GRID_PAGE_SIZES,
+        animateRows: false,
+        rowSelection: 'multiple',
+        suppressDragLeaveHidesColumns: true,
+        onFilterChanged: updateFilteredCount,
+        onGridReady: p => { gridApi = p.api; updateFilteredCount(); }
+    };
+
+    host.innerHTML = '';
+    if (gridApi && gridApi.destroy) { try { gridApi.destroy(); } catch (_) {} gridApi = null; }
+    agGrid.createGrid(host, options);
+}
+
+function updateFilteredCount() {
+    if (!gridApi) return;
+    let n = 0;
+    gridApi.forEachNodeAfterFilter(() => n++);
+    $('infoFiltered').textContent = n.toLocaleString('en-US');
+}
+
+function visibleRows() {
+    if (!gridApi) return currentRows.slice();
+    const out = [];
+    gridApi.forEachNodeAfterFilterAndSort(node => out.push(node.data));
+    return out;
+}
+
+/* --------------------------- info pills ---------------------------------- */
+function updatePills(failed) {
+    $('infoServer').textContent = CONFIG.SERVER_HOST;
+    $('infoDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('infoAuth').textContent   = CONFIG.AUTH_MODE;
+    $('infoRows').textContent   = currentRows.length.toLocaleString('en-US');
+    $('infoCols').textContent   = currentCols.length;
+    $('infoElapsed').textContent = failed ? 'failed' : (lastElapsedMs ? lastElapsedMs + ' ms' : '—');
+    $('pillElapsed').className  = 'pill ' + (failed ? 'err' : (lastElapsedMs ? 'ok' : ''));
+    if (!gridApi) $('infoFiltered').textContent = currentRows.length.toLocaleString('en-US');
+}
+
+/* --------------------- Generate Dashboard (hamburger) -------------------- */
+function generateDashboard(opts) {
+    if (!(opts && opts.stayOnPanel)) switchPanel('dashPanel');
+    const el = $('dashPanel');
+
+    if (!currentRows.length) { el.innerHTML = emptyNote('No data to summarise', 'Run the query first.'); return; }
+
+    const key = CONFIG.DASHBOARD_GROUP_BY;
+    const hasKey = currentCols.includes(key);
+
+    const counts = {};
+    if (hasKey) currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    const lower = s => String(s || '').toLowerCase();
+    const okCount   = Object.keys(counts).filter(k => /complete|success|finish/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const errCount  = Object.keys(counts).filter(k => /fail|error|abort/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const openCount = currentCols.includes('CompletedDatetime')
+        ? currentRows.filter(r => r.CompletedDatetime === null || r.CompletedDatetime === undefined || r.CompletedDatetime === '').length
+        : 0;
+    const distinctJobs = currentCols.includes('JobName')
+        ? new Set(currentRows.map(r => r.JobName)).size : 0;
+
+    let html = '<div class="kpi-row">' +
+        kpi(currentRows.length.toLocaleString('en-US'), 'Rows Returned', '') +
+        kpi(String(distinctJobs), 'Distinct Jobs', '') +
+        kpi(okCount.toLocaleString('en-US'), 'Completed / Success', 'ok') +
+        kpi(errCount.toLocaleString('en-US'), 'Failed / Error', 'err') +
+        kpi(openCount.toLocaleString('en-US'), 'Not Yet Completed', 'warn') +
+        '</div>';
+
+    if (hasKey) {
+        /* The bar card below carries the same numbers with a share column and
+           a visual scale, so the plain table that used to sit here was simply
+           the same thing twice. */
+    } else {
+        html += emptyNote('Group-by column not present',
+            'CONFIG.DASHBOARD_GROUP_BY is "' + esc(key) + '", which is not in the result set. ' +
+            'Change it at the top of this file to one of: ' + esc(currentCols.join(', ')));
+    }
+
+    /* Row counts moved here from the old Chart tab: they summarise the query
+       result, which is what this tab is for. */
+    html += rowCountByGroupHtml();
+
+    el.innerHTML = html;
+}
+
+function kpi(value, label, cls) {
+    return '<div class="kpi"><div class="v ' + (cls || '') + '">' + esc(value) + '</div>' +
+           '<div class="l">' + esc(label) + '</div></div>';
+}
+
+/* ------------------- Chart Data (hamburger / Chart tab) ------------------ */
+function visualizeData(opts) {
+    if (!(opts && opts.stayOnPanel)) switchPanel('vizPanel');
+    /* The Server Performance tab is now exclusively about the monitored HTTP
+       endpoints. Row counts moved to Scheduler Overview, where the rest of the
+       query-result summaries already live -- one tab answers "how is the
+       scheduler doing", the other "how are the servers doing". */
+    const el = $('vizPanel');
+    el.innerHTML = '<div id="latencyCharts"></div>';
+    ServerLatency.render('latencyCharts');
+}
+
+/* Row count by <group-by>, rendered into Scheduler Overview. */
+function rowCountByGroupHtml() {
+    const key = CONFIG.VISUALIZE_GROUP_BY;
+    if (!currentRows.length) return '';
+    if (!currentCols.includes(key)) {
+        return '<div class="card"><h3>Row count by ' + esc(key) + '</h3>' +
+               '<p class="notes-empty">CONFIG.VISUALIZE_GROUP_BY is "' + esc(key) +
+               '", which is not in the result set.</p></div>';
+    }
+    const counts = {};
+    currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 1;
+    const total = currentRows.length;
+    return '<div class="card"><h3>Row count by ' + esc(key) + ' (' + entries.length + ' distinct values)</h3>' +
+        entries.map(([k, v]) => {
+            const share = total ? (v / total * 100).toFixed(1) : '0.0';
+            return '<div class="bar-row" title="' + esc(k) + ': ' + v.toLocaleString('en-US') +
+                   ' rows (' + share + '% of ' + total.toLocaleString('en-US') + ')">' +
+                '<div class="bar-label">' + esc(k) + '</div>' +
+                '<div class="bar-track"><div class="bar-fill" style="width:' + (v / max * 100).toFixed(2) + '%"></div></div>' +
+                '<div class="bar-val">' + v.toLocaleString('en-US') +
+                '<span style="color:#888;font-weight:400;"> · ' + share + '%</span></div>' +
+            '</div>';
+        }).join('') + '</div>';
+}
+
+/* =========================================================================
+ * SERVER RESPONSE TIME  -- the two charts below "Row count by Status"
+ * =========================================================================
+ * Source: data/sas_server_status.csv, the same file the Home tab reads, so
+ * there is one definition of "how the servers are behaving".
+ *
+ * WHY ResponseTimeMs AND NOT A STORED LOG COLUMN
+ * ----------------------------------------------
+ * ResponseTimeMs already carries what these charts need. A second column
+ * holding its logarithm would be a presentation choice written into the data:
+ * it duplicates state that can drift from the value it was derived from, it
+ * loses precision, and it cannot be read in milliseconds by anyone opening
+ * the CSV. The log belongs to the axis, not to the row -- so the scale is
+ * transformed here and the tick labels still read in real milliseconds.
+ *
+ * WHY TIMED-OUT CHECKS ARE SEPARATED
+ * ----------------------------------
+ * A DOWN check records roughly the timeout ceiling, not a measurement. Left
+ * in the average it drags the mean toward 30 000 ms and hides the real
+ * change in healthy latency. They are drawn in red on the scatter so the
+ * outages stay visible, and excluded from the percentile lines.
+ * ====================================================================== */
+/* =========================================================================
+ * DATE RANGE FILTER
+ * =========================================================================
+ * One implementation shared by Server Performance and Data Pipeline
+ * Performance. State is kept per panel key, so switching tabs does not reset
+ * the other one's range.
+ *
+ * The presets do the work day to day; the two date inputs are there for the
+ * case the presets do not cover, such as "the week of the outage". "All"
+ * reports the real span so the reader knows what they are looking at rather
+ * than assuming it is everything.
+ * ====================================================================== */
+const DateFilter = (function () {
+    const state = {};                       /* key -> {preset, from, to} */
+    const PRESETS = [['7d', 7], ['30d', 30], ['90d', 90], ['6m', 182], ['all', 0]];
+
+    const get = key => (state[key] = state[key] || { preset: 'all', from: '', to: '' });
+    const iso = d => d.toISOString().slice(0, 10);
+
+    /* Resolve the active range to concrete bounds, given the data's own span. */
+    function bounds(key, minD, maxD) {
+        const st = get(key);
+        if (st.from || st.to) {
+            return { lo: st.from ? new Date(st.from + 'T00:00:00') : minD,
+                     hi: st.to   ? new Date(st.to   + 'T23:59:59') : maxD };
+        }
+        const days = (PRESETS.find(p => p[0] === st.preset) || ['all', 0])[1];
+        if (!days) return { lo: minD, hi: maxD };
+        return { lo: new Date(+maxD - days * 86400000), hi: maxD };
+    }
+
+    function html(key, minD, maxD, shownCount, totalCount) {
+        const st = get(key);
+        const custom = !!(st.from || st.to);
+        /* Show the range actually in effect, not the span of the whole file.
+           Printing the full span next to a filtered row count reads as if the
+           filter had not applied. */
+        const act = bounds(key, minD, maxD);
+        return '<div class="filter-bar" data-dfkey="' + key + '">' +
+            '<label>Date range</label>' +
+            PRESETS.map(([k, d]) =>
+                '<button class="range-btn' + (!custom && st.preset === k ? ' active' : '') +
+                '" data-preset="' + k + '">' +
+                (k === 'all' ? 'All' : k === '6m' ? '6 months' : 'Last ' + d + ' days') + '</button>').join('') +
+            '<span style="color:#bbb;">|</span>' +
+            '<label>From</label><input type="date" data-df="from" value="' + esc(st.from) +
+                '" min="' + iso(minD) + '" max="' + iso(maxD) + '">' +
+            '<label>To</label><input type="date" data-df="to" value="' + esc(st.to) +
+                '" min="' + iso(minD) + '" max="' + iso(maxD) + '">' +
+            (custom ? '<button class="range-btn" data-preset="all">clear</button>' : '') +
+            '<span class="filter-note">' + shownCount.toLocaleString('en-US') + ' of ' +
+                totalCount.toLocaleString('en-US') + ' rows · showing ' +
+                esc(iso(act.lo)) + ' → ' + esc(iso(act.hi)) +
+                (shownCount < totalCount ? ' · data runs ' + esc(iso(minD)) + ' → ' + esc(iso(maxD)) : '') +
+                '</span>' +
+            '</div>';
+    }
+
+    function bind(root, key, onChange) {
+        const bar = root.querySelector('.filter-bar[data-dfkey="' + key + '"]');
+        if (!bar) return;
+        const st = get(key);
+        bar.querySelectorAll('.range-btn').forEach(b => b.addEventListener('click', () => {
+            st.preset = b.dataset.preset; st.from = ''; st.to = ''; onChange();
+        }));
+        bar.querySelectorAll('input[data-df]').forEach(i => i.addEventListener('change', () => {
+            st[i.dataset.df] = i.value; onChange();
+        }));
+    }
+
+    return { get, bounds, html, bind };
+})();
+
+const ServerLatency = (function () {
+    let raw = null, daily = null, dailyTried = false;
+
+    const parseTs = v => { const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; };
+    const fmtMs = v => v >= 1000 ? (v / 1000).toFixed(v >= 10000 ? 0 : 1) + ' s' : Math.round(v) + ' ms';
+    const num = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? null : v; };
+
+    /* Nearest-rank, identical to Get-Percentile in
+       Export-ServerLatencyDaily.ps1. If one changes, change both. */
+    function pct(sorted, p) {
+        if (!sorted.length) return 0;
+        return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+    }
+
+    async function loadDaily() {
+        if (dailyTried) return daily;
+        dailyTried = true;
+        if (!CONFIG.SERVER_LATENCY_DAILY_CSV) return (daily = null);
+        try { daily = await fetchCSV(CONFIG.SERVER_LATENCY_DAILY_CSV); }
+        catch (e) {
+            daily = null;
+            logConsole('<span class="c-warn">LATENCY:</span> no daily roll-up (' + esc(e.message) +
+                       '). Falling back to the per-check file. Produce it with ' +
+                       'ps1\\Export-ServerLatencyDaily.ps1.');
+        }
+        return daily;
+    }
+
+    async function loadRaw() {
+        if (!raw) raw = await fetchCSV(CONFIG.SERVER_STATUS_CSV);
+        return raw;
+    }
+
+    /* ---- summary from the daily roll-up -------------------------------
+       Percentiles do NOT average. The 95th percentile of a quarter is not
+       the mean of 90 daily 95th percentiles, and presenting it as one would
+       be quietly wrong. So the columns say what they actually are: a typical
+       day, the worst day, and the true maximum -- which is the one figure
+       that does survive aggregation. For an exact quarter-wide percentile,
+       load the per-check detail below. */
+    function summariseDaily(rows) {
+        const by = {};
+        rows.forEach(r => {
+            const k = r.Environment + ' ' + r.ServiceName;
+            (by[k] = by[k] || []).push(r);
+        });
+        return Object.keys(by).sort().map(k => {
+            const a = by[k];
+            const checks   = a.reduce((x, r) => x + (num(r, 'Checks') || 0), 0);
+            const timeouts = a.reduce((x, r) => x + (num(r, 'Timeouts') || 0), 0);
+            const p50s = a.map(r => num(r, 'P50Ms')).filter(v => v !== null).sort((x, y) => x - y);
+            const p95s = a.map(r => num(r, 'P95Ms')).filter(v => v !== null).sort((x, y) => x - y);
+            const maxs = a.map(r => num(r, 'MaxMs')).filter(v => v !== null);
+            return {
+                name: k, days: a.length, checks: checks, outages: timeouts,
+                availability: checks ? ((checks - timeouts) / checks) * 100 : 0,
+                typicalP50: p50s.length ? pct(p50s, 0.5) : 0,
+                worstP50:   p50s.length ? p50s[p50s.length - 1] : 0,
+                worstP95:   p95s.length ? p95s[p95s.length - 1] : 0,
+                max:        maxs.length ? Math.max.apply(null, maxs) : 0
+            };
+        });
+    }
+
+    function summaryTableDaily(rows) {
+        return '<div class="chart-box"><h4>Latency summary &mdash; from the daily roll-up, ' +
+            'timed-out checks excluded</h4>' +
+            '<table class="sum"><thead><tr><th>Endpoint</th><th>Days</th><th>Checks</th>' +
+            '<th>Timed out</th><th>Availability</th><th>Typical day p50</th>' +
+            '<th>Worst day p50</th><th>Worst day p95</th><th>Worst single check</th></tr></thead><tbody>' +
+            summariseDaily(rows).map(r =>
+              '<tr><td>' + esc(r.name) + '</td><td>' + r.days + '</td>' +
+              '<td>' + r.checks.toLocaleString('en-US') + '</td>' +
+              '<td style="color:' + (r.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.outages + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + r.availability.toFixed(2) + '%</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.typicalP50) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.worstP50) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.worstP95) + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + fmtMs(r.max) + '</td></tr>').join('') +
+            '</tbody></table>' +
+            '<div style="font-size:10px;color:#777;margin-top:6px;">Percentiles do not average, so these ' +
+            'are per-day figures rather than one percentile over the whole period. ' +
+            '&ldquo;Worst single check&rdquo; is exact. For an exact period-wide percentile, load the ' +
+            'per-check detail.</div></div>';
+    }
+
+    async function render(hostId) {
+        const host = $(hostId);
+        if (!host) return;
+        host.innerHTML = '<div class="card"><p>Loading server response times…</p></div>';
+
+        const all = await loadDaily();
+
+        /* ---------- preferred path: the daily roll-up ---------- */
+        if (all && all.length) {
+            const dates = all.map(r => new Date(r.Date + 'T00:00:00')).filter(x => !isNaN(x));
+            const minD = new Date(Math.min.apply(null, dates));
+            const maxD = new Date(Math.max.apply(null, dates));
+            const b = DateFilter.bounds('srv', minD, maxD);
+            const d = all.filter(r => {
+                const x = new Date(r.Date + 'T00:00:00');
+                return !isNaN(x) && x >= b.lo && x <= b.hi;
+            });
+
+            if (!d.length) {
+                host.innerHTML = '<div class="card">' +
+                    DateFilter.html('srv', minD, maxD, 0, all.length) +
+                    '<p class="notes-empty">No days in the selected range.</p></div>';
+                DateFilter.bind(host, 'srv', () => render(hostId));
+                return;
+            }
+
+            const keys = [...new Set(d.map(r => r.Environment + ' ' + r.ServiceName))].sort();
+            const mk = field => keys.map(k => ({
+                name: k,
+                points: d.filter(r => (r.Environment + ' ' + r.ServiceName) === k && num(r, field) !== null)
+                         .map(r => ({ x: new Date(r.Date + 'T00:00:00'), y: num(r, field) }))
+                         .sort((a, b2) => a.x - b2.x)
+            })).filter(sr => sr.points.length);
+
+            const days = new Set(d.map(r => r.Date)).size;
+            const checks = d.reduce((a, r) => a + (num(r, 'Checks') || 0), 0);
+
+            host.innerHTML =
+              '<div class="card">' +
+              '<div class="sla-head"><h2>Server response time</h2>' +
+              '<span class="sla-stamp">' + d.length.toLocaleString('en-US') + ' daily rows covering ' +
+              checks.toLocaleString('en-US') + ' checks over ' + days + ' days &middot; source ' +
+              esc(CONFIG.SERVER_LATENCY_DAILY_CSV) + '</span></div>' +
+
+              DateFilter.html('srv', minD, maxD, d.length, all.length) +
+
+              '<div class="chart-box"><h4>Daily median (p50) by endpoint &mdash; log scale. ' +
+              'Is normal latency drifting?</h4>' +
+              Chart.line(mk('P50Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12,
+                  tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                      esc(new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })) +
+                      '<br>Median (p50): ' + esc(fmtMs(p.y)) }) + '</div>' +
+
+              '<div class="chart-box"><h4>Daily 95th percentile by endpoint &mdash; what the slowest ' +
+              'one check in twenty looks like</h4>' +
+              Chart.line(mk('P95Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12,
+                  tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                      esc(new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })) +
+                      '<br>95th percentile: ' + esc(fmtMs(p.y)) }) + '</div>' +
+
+              summaryTableDaily(d) +
+
+              '<div class="chart-box" id="scatterBox">' +
+              '<h4>Every individual check</h4>' +
+              '<p style="font-size:11px;color:#555;line-height:1.6;">The charts above read the daily ' +
+              'roll-up, which is about 4 rows per day instead of 288 per endpoint. Plotting every ' +
+              'check needs the full per-check file (<code>' + esc(CONFIG.SERVER_STATUS_CSV) +
+              '</code>), so it is fetched only when you ask for it.</p>' +
+              '<button class="btn btn-primary" id="loadScatterBtn">Load per-check detail</button>' +
+              '</div></div>';
+
+            Chart.mount(host);
+            DateFilter.bind(host, 'srv', () => render(hostId));
+
+            $('loadScatterBtn').addEventListener('click', async () => {
+                const box = $('scatterBox');
+                box.innerHTML = '<h4>Every individual check</h4><p>Loading…</p>';
+                try {
+                    const r = await loadRaw();
+                    const rr = r.filter(row => {
+                        const t = parseTs(row.Timestamp);
+                        return t && t >= b.lo && t <= b.hi;
+                    });
+                    box.innerHTML = '<h4>Every check, by endpoint &mdash; log scale, timed-out checks in red. ' +
+                        'Click a legend entry to hide an endpoint.</h4>' +
+                        Chart.scatter(scatterSeries(rr), { height: 340, logY: true, yFloor: 10,
+                            yFormat: fmtMs, markLabel: 'timed out', xTicks: 12, tipDateTime: true,
+                            tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                esc(new Date(p.x).toLocaleString('en-US')) +
+                                '<br>Response: ' + esc(fmtMs(p.y)) +
+                                (p.down ? '<br><span style="color:#ff9b9b">timed out</span>' : '') });
+                    Chart.mount(box);
+                } catch (e) {
+                    box.innerHTML = '<h4>Every individual check</h4>' +
+                        '<div class="notes-warn">Could not load ' + esc(CONFIG.SERVER_STATUS_CSV) +
+                        '. ' + esc(e.message) + '</div>';
+                }
+            });
+            return;
+        }
+
+        /* ---------- fallback: compute everything from the per-check file ---------- */
+        let r;
+        try { r = await loadRaw(); }
+        catch (e) {
+            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>No server data.</strong> ' +
+                esc(e.message) + '<br>Produce it with <code>ps1\\Check-SASServers_v2.0.ps1</code>, then ' +
+                '<code>ps1\\Export-ServerLatencyDaily.ps1</code> for the cheaper daily roll-up.</div></div>';
+            return;
+        }
+
+        const pts = toPoints(r);
+        if (!pts.length) { host.innerHTML = '<div class="card"><p class="notes-empty">No checks recorded.</p></div>'; return; }
+        const keys = [...new Set(pts.map(p => p.key))].sort();
+        const days = Math.round((Math.max.apply(null, pts.map(p => +p.t)) -
+                                 Math.min.apply(null, pts.map(p => +p.t))) / 86400000);
+
+        const byDay = {};
+        pts.filter(p => !p.down).forEach(p => {
+            const dd = p.t.toISOString().slice(0, 10);
+            (byDay[p.key] = byDay[p.key] || {});
+            (byDay[p.key][dd] = byDay[p.key][dd] || []).push(p.ms);
+        });
+        const medianSeries = keys.map(k => ({
+            name: k,
+            points: Object.keys(byDay[k] || {}).sort().map(dd => {
+                const a = byDay[k][dd].slice().sort((x, y) => x - y);
+                return { x: new Date(dd + 'T00:00:00'), y: pct(a, 0.5) };
+            })
+        }));
+
+        const summary = keys.map(k => {
+            const all = pts.filter(p => p.key === k);
+            const good = all.filter(p => !p.down).map(p => p.ms).sort((a, b) => a - b);
+            return { name: k, checks: all.length, outages: all.filter(p => p.down).length,
+                     p50: pct(good, 0.5), p95: pct(good, 0.95), p99: pct(good, 0.99),
+                     max: good.length ? good[good.length - 1] : 0 };
+        });
+
+        host.innerHTML =
+            '<div class="card">' +
+            '<div class="sla-head"><h2>Server response time</h2>' +
+            '<span class="sla-stamp">' + pts.length.toLocaleString('en-US') + ' checks across ' +
+            keys.length + ' endpoints over ' + days + ' days &middot; computed from ' +
+            esc(CONFIG.SERVER_STATUS_CSV) + '</span></div>' +
+            '<div class="notes-warn" style="margin-bottom:10px;">No daily roll-up found, so every check ' +
+            'is being downloaded and aggregated in the browser. Run ' +
+            '<code>ps1\\Export-ServerLatencyDaily.ps1</code> to do this once on the server instead.</div>' +
+            '<div class="chart-box"><h4>Every check, by endpoint &mdash; log scale, timed-out checks in red</h4>' +
+            Chart.scatter(scatterSeries(r), { height: 340, logY: true, yFloor: 10, xTicks: 12,
+                                              tipDateTime: true,
+                                              yFormat: fmtMs, markLabel: 'timed out' }) + '</div>' +
+            '<div class="chart-box"><h4>Daily median response time &mdash; timed-out checks excluded</h4>' +
+            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12 }) + '</div>' +
+            '<div class="chart-box"><h4>Latency summary &mdash; healthy checks only</h4>' +
+            '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Timed out</th>' +
+            '<th>p50</th><th>p95</th><th>p99</th><th>Worst</th></tr></thead><tbody>' +
+            summary.map(x =>
+              '<tr><td>' + esc(x.name) + '</td><td>' + x.checks.toLocaleString('en-US') + '</td>' +
+              '<td style="color:' + (x.outages ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + x.outages + '</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p50) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p95) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.p99) + ' ms</td>' +
+              '<td style="font-family:Consolas,monospace;">' + Math.round(x.max) + ' ms</td></tr>').join('') +
+            '</tbody></table></div></div>';
+
+        Chart.mount(host);
+    }
+
+    function toPoints(rows) {
+        return rows.map(r => ({
+            t: parseTs(r.Timestamp),
+            key: r.Environment + ' ' + r.ServiceName,
+            ms: parseFloat(r.ResponseTimeMs) || 0,
+            down: r.Status === 'DOWN'
+        })).filter(p => p.t);
+    }
+
+    function scatterSeries(rows) {
+        const pts = toPoints(rows);
+        const keys = [...new Set(pts.map(p => p.key))].sort();
+        return keys.map(k => ({
+            name: k,
+            points: pts.filter(p => p.key === k).map(p => ({ x: p.t, y: p.ms, down: p.down }))
+        }));
+    }
+
+    return { render };
+})();
+
+/* ------------------------ Export to CSV (hamburger) ---------------------- */
+function exportCSV() {
+    const rows = visibleRows();
+    if (!rows.length) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">OUTPUT:</span> No rows to export. Run the query first, or relax the grid filters.');
+        return;
+    }
+    const cols = currentCols.length ? currentCols : Object.keys(rows[0]);
+    const cell = v => {
+        if (v === null || v === undefined) return '';
+        const s = String(v);
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\n');
+
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const stamp = p(d.getMonth() + 1) + p(d.getDate()) + d.getFullYear() + '_' +
+                  p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'DMW_' + CONFIG.INITIAL_CATALOG + '_' + stamp + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+
+    logConsole('<span class="c-ok">OUTPUT:</span> Exported ' + rows.length +
+               ' row(s) to ' + esc(a.download) + '.', true);
+}
+
+/* --------------------------- Connection panel ---------------------------- */
+function renderConnectionPanel() {
+    const integrated = /integrated|sspi|windows/i.test(CONFIG.AUTH_MODE);
+    const connStr = 'Provider=MSOLEDBSQL19;' +
+        (integrated ? 'Integrated Security=SSPI;' : 'User ID=' + CONFIG.AUTH_USER + ';Password=***;') +
+        'Persist Security Info=True;Initial Catalog=' + CONFIG.INITIAL_CATALOG +
+        ';Data Source=' + CONFIG.SERVER_HOST + ',' + CONFIG.PORT + ';';
+
+    const sasSnippet =
+        '/* Equivalent SAS OLEDB pass-through used by dmw_run.sas */\n' +
+        'proc sql noprint;\n' +
+        '    connect to oledb as myconn (init_string=\n' +
+        '        "' + connStr + '");\n' +
+        '    create table work.dmw_result as\n' +
+        '    select * from connection to myconn ( <your SELECT> );\n' +
+        '    disconnect from myconn;\n' +
+        'quit;';
+
+    $('connPanel').innerHTML =
+        '<div class="conn-grid">' +
+            '<div class="card"><h3>SQL Server Target</h3>' +
+                kv('Server Name', CONFIG.SERVER_HOST) +
+                kv('Port', CONFIG.PORT) +
+                kv('Database Name', CONFIG.INITIAL_CATALOG) +
+                kv('Authentication', CONFIG.AUTH_MODE) +
+                kv('Runs As', CONFIG.AUTH_USER) +
+            '</div>' +
+            '<div class="card"><h3>SAS Stored Process Bridge</h3>' +
+                kv('Base URL', CONFIG.SAS_BASE_URL) +
+                kv('Program', CONFIG.SAS_PROGRAM) +
+                kv('SQL Parameter', CONFIG.SAS_QUERY_PARAM) +
+                kv('Debug Mode', CONFIG.SAS_DEBUG ? '1 (SAS log)' : '0') +
+                kv('Timeout', CONFIG.REQUEST_TIMEOUT_MS + ' ms') +
+            '</div>' +
+            '<div class="card"><h3>Last Execution</h3>' +
+                kv('Rows Returned', currentRows.length.toLocaleString('en-US')) +
+                kv('Columns', currentCols.length) +
+                kv('Elapsed', lastElapsedMs ? lastElapsedMs + ' ms' : '—') +
+                kv('SAS Session', window.session.authenticated ? window.session.userid : 'not signed in') +
+                kv('Cache Policy', CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') +
+            '</div>' +
+            '<div class="card"><h3>Build</h3>' +
+                kv('Application', CONFIG.APP_NAME) +
+                kv('Version', CONFIG.APP_VERSION) +
+                kv('Build Stamp', BUILD_ID) +
+                kv('Grid Theme', CONFIG.GRID_THEME) +
+            '</div>' +
+        '</div>' +
+        '<div class="card" style="margin-top:12px;"><h3>Connection String (used by the stored process)</h3>' +
+            '<div class="code-pre">' + esc(sasSnippet) + '</div>' +
+            '<p style="font-size:11px;color:#777;margin-top:8px;">The connection is made by ' +
+            '<code>dmw_run.sas</code>, not by this page. Its <code>DMW_*</code> macro variables must describe ' +
+            'the same target as the CONFIG block above.</p>' +
+        '</div>';
+}
+
+function kv(k, v) {
+    return '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>';
+}
+
+function emptyNote(title, body) {
+    return '<div class="empty-note"><h2>' + esc(title) + '</h2><p>' + esc(body) + '</p></div>';
+}
+
+/* ------------------------------- panels ---------------------------------- */
+function switchPanel(id) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === id));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === id));
+    /* The v2 tabs render on first view rather than at start-up, so a slow
+       CSV read never delays the initial paint. */
+    if (id === 'homePanel')     Home.show();
+    if (id === 'vizPerfPanel')  Viz.show();
+    if (id === 'securityPanel') renderSecurity();
+    if (id === 'askPanel')      renderAskDmw();
+
+    /* Dashboard and Charts are normally built when a query returns. Before the
+       first query they would otherwise be blank, and the Charts tab has
+       server-latency content that does not need query results at all, so
+       build them on first view too. */
+    if (id === 'dashPanel' && !$('dashPanel').children.length) generateDashboard({ stayOnPanel: true });
+    if (id === 'vizPanel'  && !$('vizPanel').children.length)  visualizeData({ stayOnPanel: true });
+}
+
+/* ------------------------------- modals ---------------------------------- */
+function openModal(id)  { $(id).classList.add('active'); }
+function closeModal(id) { $(id).classList.remove('active'); }
+function toggleMenu()   { $('dropdownMenu').classList.toggle('active'); $('hamburgerBtn').classList.toggle('active'); }
+function closeMenu()    { $('dropdownMenu').classList.remove('active'); $('hamburgerBtn').classList.remove('active'); }
+
+/* ---------------------------- cache control ------------------------------ */
+async function clearCacheAndReload() {
+    if (!confirm('Clear sessionStorage, localStorage and the Cache Storage API, then hard-reload this page?')) return;
+    try { sessionStorage.clear(); } catch (_) {}
+    try { localStorage.clear(); } catch (_) {}
+    try {
+        if (window.caches && caches.keys) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+        }
+    } catch (_) {}
+    const base = window.location.href.split('?')[0].split('#')[0];
+    window.location.replace(base + '?_cb=' + Date.now());
+}
+
+/* -------------------------------- boot ----------------------------------- */
+function populateSavedQueries() {
+    const sel = $('savedQuery');
+    sel.innerHTML = '';
+    (CONFIG.SAVED_QUERIES || []).forEach((q, i) => {
+        const o = document.createElement('option');
+        o.value = i; o.textContent = q.name;
+        sel.appendChild(o);
+    });
+}
+
+function loadSavedQuery(index) {
+    const q = (CONFIG.SAVED_QUERIES || [])[index];
+    if (!q) return;
+    $('sqlEditor').value = (q.sql === null || q.sql === undefined) ? CONFIG.INITIAL_SQL : q.sql;
+}
+
+
+/* =========================================================================
+ * v2 ADDITIONS
+ * =========================================================================
+ * Column metadata, editable JobName, the Home SLA overview, the report
+ * performance Visualize Performance tab (two sources), the Security diagram and the embedded
+ * Ask DMW agent. Everything below is dependency-free: the charts are inline
+ * SVG, so the page stays air-gapped.
+ * ====================================================================== */
+
+/* ---------------------------------------------------------------- CSV ---- */
+/* RFC4180-ish parser: handles quoted fields, embedded commas, doubled quotes
+   and embedded newlines, all of which occur in column_metadata.csv. */
+function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQ = false;
+    text = String(text).replace(/^﻿/, '');          /* strip UTF-8 BOM */
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQ) {
+            if (c === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; }
+                else inQ = false;
+            } else field += c;
+        } else if (c === '"') inQ = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (c !== '\r') field += c;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    if (!rows.length) return [];
+    const head = rows.shift().map(h => h.trim());
+    return rows.filter(r => r.some(v => String(v).trim() !== ''))
+               .map(r => { const o = {}; head.forEach((h, i) => o[h] = (r[i] === undefined ? '' : r[i])); return o; });
+}
+
+async function fetchCSV(path) {
+    const res = await fetch(bust(path), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + path);
+    return parseCSV(await res.text());
+}
+
+/* --------------------------------------------------------- METADATA ------ */
+const Meta = (function () {
+    let map = {}, loaded = false, count = 0, pending = null;
+
+    /* The grid builds its headers once, reading Meta.has() as it goes. If the
+       CSV resolves after that, every icon would stay greyed for the life of
+       the page. Rebuilding the header when the metadata lands makes the fix
+       independent of which finishes first, so no call site has to remember
+       to await. */
+    function refreshGridHeaders() {
+        if (gridApi && typeof gridApi.refreshHeader === 'function') {
+            try { gridApi.refreshHeader(); } catch (_) {}
+        }
+    }
+
+    /* Idempotent: repeated calls share one request rather than re-fetching. */
+    function load() {
+        if (pending) return pending;
+        pending = doLoad();
+        return pending;
+    }
+
+    async function doLoad() {
+        if (!CONFIG.METADATA_ENABLED) { loaded = true; return; }
+        try {
+            const rows = await fetchCSV(CONFIG.METADATA_CSV_PATH);
+            map = {};
+            rows.forEach(m => {
+                const k = (m.PHYSICAL_COLUMN_NAME || '').trim().toUpperCase();
+                if (k) map[k] = m;
+            });
+            count = Object.keys(map).length;
+            loaded = true;
+            refreshGridHeaders();
+            logConsole('<span class="c-ok">METADATA:</span> loaded ' + count +
+                       ' column definitions from ' + esc(CONFIG.METADATA_CSV_PATH));
+        } catch (e) {
+            loaded = true;
+            refreshGridHeaders();
+            logConsole('<span class="c-warn">METADATA:</span> ' + esc(e.message) +
+                       '\nThe "i" icons will be greyed out. The CSV must sit in the same folder as this page ' +
+                       'and the page must be served over http(s) — a file:// page cannot fetch it.');
+        }
+    }
+
+    const has = col => !!map[String(col || '').trim().toUpperCase()];
+    const get = col => map[String(col || '').trim().toUpperCase()] || null;
+
+    function show(col) {
+        const m = get(col);
+        $('metaChip').textContent = col;
+        const body = $('metaBody');
+        if (!m) {
+            body.innerHTML = '<div class="meta-value">No metadata available for this column.<br><br>' +
+                'Add a row to <code>' + esc(CONFIG.METADATA_CSV_PATH) + '</code> with ' +
+                '<code>PHYSICAL_COLUMN_NAME</code> set to <code>' + esc(col) + '</code>.</div>';
+            openModal('metaModal');
+            return;
+        }
+        const f = (label, value, cls) =>
+            '<div class="meta-field"><div class="meta-label">' + esc(label) + '</div>' +
+            '<div class="meta-value ' + (cls || '') + '">' + (esc(value) || '&mdash;') + '</div></div>';
+
+        body.innerHTML =
+            f('Logical column name', m.LOGICAL_COLUMN_NAME) +
+            f('Physical / table column name', m.TABLE_COLUMN_NAME || m.PHYSICAL_COLUMN_NAME, 'mono') +
+            f('Description', m.DESCRIPTION) +
+            f('Long description', m.LONG_DESCRIPTION, 'scroll') +
+            f('Load frequency', m.LOAD_FREQUENCY) +
+            f('Line of business (LOB)', m.LOB);
+        openModal('metaModal');
+    }
+
+    /* ready() lets a caller wait without triggering a second fetch. */
+    const ready = () => pending || Promise.resolve();
+
+    return { load, ready, has, get, show, isLoaded: () => loaded, size: () => count };
+})();
+
+/* ----------------------------------------------- GRID HEADER COMPONENT --- */
+/* Renders:  ColumnName  (i)  [pencil]
+   The "i" opens the metadata panel; the pencil marks the column editable. */
+class DmwHeader {
+    init(params) {
+        this.params = params;
+        const col = params.column.getColId();
+        const e = document.createElement('div');
+        e.className = 'hdr-wrap';
+
+        const label = document.createElement('span');
+        label.textContent = params.displayName;
+        e.appendChild(label);
+
+        /* A custom header replaces AG Grid's own cell, sort arrows included.
+           Without this the column still sorts but gives no feedback, so the
+           user cannot see which column is sorted or in which direction. */
+        this.sortable = params.enableSorting !== false;
+        if (this.sortable) {
+            this.sortEl = document.createElement('span');
+            this.sortEl.className = 'hdr-sort';
+            e.appendChild(this.sortEl);
+
+            this.onSortChanged = () => {
+                const dir = params.column.getSort();
+                this.sortEl.textContent = dir === 'asc' ? '\u25B2' : dir === 'desc' ? '\u25BC' : '\u21C5';
+                this.sortEl.classList.toggle('active', !!dir);
+                this.sortEl.title = dir === 'asc'  ? 'Sorted ascending'
+                                  : dir === 'desc' ? 'Sorted descending'
+                                  : 'Click to sort';
+            };
+            params.column.addEventListener('sortChanged', this.onSortChanged);
+            this.onSortChanged();
+        }
+
+        if (CONFIG.METADATA_ENABLED) {
+            const i = document.createElement('button');
+            const known = Meta.has(col);
+            i.className = 'hdr-ico info' + (known ? '' : ' off');
+            i.textContent = 'i';
+            i.title = known ? 'Column metadata' : 'No metadata available for ' + col;
+            if (known) i.addEventListener('click', ev => { ev.stopPropagation(); Meta.show(col); });
+            else i.addEventListener('click', ev => ev.stopPropagation());
+            e.appendChild(i);
+        }
+
+        if (CONFIG.EDITABLE_COLUMNS && CONFIG.EDITABLE_COLUMNS[col]) {
+            const p = document.createElement('span');
+            p.className = 'hdr-ico edit';
+            p.textContent = '✎';
+            p.title = 'Editable — click a cell in this column to change it';
+            e.appendChild(p);
+        }
+
+        /* Keep AG Grid's own sort behaviour on the label and the indicator. */
+        if (this.sortable) {
+            const sort = ev => params.progressSort(ev.shiftKey);
+            label.style.cursor = 'pointer';
+            label.addEventListener('click', sort);
+            this.sortEl.style.cursor = 'pointer';
+            this.sortEl.addEventListener('click', sort);
+        }
+
+        this.gui = e;
+    }
+    getGui() { return this.gui; }
+    refresh() { return false; }
+    /* Without this the listener outlives the header cell, and every
+       refreshHeader() would leak another one. */
+    destroy() {
+        if (this.onSortChanged && this.params) {
+            try { this.params.column.removeEventListener('sortChanged', this.onSortChanged); } catch (_) {}
+        }
+    }
+}
+
+/* ------------------------------------------------------ EDIT JOBNAME ----- */
+const Editor = (function () {
+    let col = null, key = null, oldVal = '';
+
+    function open(column, rowData) {
+        const cfg = CONFIG.EDITABLE_COLUMNS[column];
+        if (!cfg) return;
+        col = column;
+        key = rowData[cfg.keyColumn];
+        oldVal = rowData[column] === null || rowData[column] === undefined ? '' : String(rowData[column]);
+
+        $('editChip').textContent = cfg.label || column;
+        $('editKey').textContent = (key === null || key === undefined) ? '—' : String(key);
+        $('editOld').textContent = oldVal || '—';
+        $('editNew').value = oldVal;
+        $('editNew').maxLength = cfg.maxLength || 200;
+        setStatus('');
+        openModal('editModal');
+        setTimeout(() => $('editNew').focus(), 60);
+    }
+
+    function setStatus(msg, cls) {
+        const el = $('editStatus');
+        el.textContent = msg || '';
+        el.className = 'notes-status' + (cls ? ' ' + cls : '');
+    }
+
+    async function save() {
+        const cfg = CONFIG.EDITABLE_COLUMNS[col];
+        const v = ($('editNew').value || '').trim();
+        if (!v)            { setStatus('The new value is empty.', 'err'); return; }
+        if (v === oldVal)  { setStatus('The value is unchanged.', 'err'); return; }
+        if (v.length > (cfg.maxLength || 200)) {
+            setStatus('Too long by ' + (v.length - (cfg.maxLength || 200)) + ' characters.', 'err'); return;
+        }
+
+        $('editSaveBtn').disabled = true;
+        setStatus('Saving…');
+
+        /* POST, not GET: a name reaches the web server log verbatim in a query
+           string, and a refresh can silently re-submit a GET. The username is
+           NOT sent — the stored process reads _METAPERSON server-side. */
+        const body = new URLSearchParams();
+        body.append('job_id',   key);
+        body.append('new_name', v);
+        body.append('old_name', oldVal);
+        body.append('debug_mode', CONFIG.SAS_DEBUG ? 1 : 0);
+
+        try {
+            const base = CONFIG.SAS_BASE_URL + encodeURIComponent(cfg.program);
+
+            /* Try POST first: it keeps the new name out of the URL and out of
+               the web server log, and a refresh cannot re-submit it. */
+            let res  = await fetch(bust(base), {
+                method: 'POST', cache: 'no-store', credentials: 'include',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded',
+                           'Accept': 'application/json' },
+                body: body.toString()
+            });
+            let text = await res.text();
+            let via  = 'POST';
+
+            /* Whatever came back, put it in the Console before interpreting it.
+               When a save fails, what the server actually said is the thing
+               worth seeing -- an interpretation can be wrong, the bytes cannot. */
+            logConsole('<span class="c-dim">EDIT ' + via + ':</span> ' + esc(base) +
+                       '\nHTTP ' + res.status + ' ' + esc(res.statusText) +
+                       ' · content-type: ' + esc(res.headers.get('content-type') || '(none)') +
+                       '\nResponse began: ' + esc(String(text).trim().slice(0, 300)));
+
+            const looksHtml = /^\s*(<!DOCTYPE|<html|<\?xml)/i.test(text);
+
+            if ((looksHtml || !res.ok) && CONFIG.EDIT_FALLBACK_TO_GET) {
+                /* Retry on the read path, which is known to work in this
+                   deployment. See CONFIG.EDIT_FALLBACK_TO_GET for the tradeoff. */
+                const getUrl = base + '&' + body.toString();
+                logConsole('<span class="c-warn">EDIT:</span> the POST did not return JSON, retrying as GET. ' +
+                           'Note that this puts the new value in the query string, where the web server logs it. ' +
+                           'Set CONFIG.EDIT_FALLBACK_TO_GET to false to require POST.');
+                res  = await fetch(bust(getUrl), {
+                    method: 'GET', cache: 'no-store', credentials: 'include',
+                    headers: { 'Accept': 'application/json' }
+                });
+                text = await res.text();
+                via  = 'GET';
+                logConsole('<span class="c-dim">EDIT ' + via + ':</span> HTTP ' + res.status + ' ' +
+                           esc(res.statusText) + '\nResponse began: ' + esc(String(text).trim().slice(0, 300)));
+            }
+
+            if (!res.ok) {
+                throw new Error('HTTP ' + res.status + ' ' + res.statusText + '. ' + describeHttp(res.status));
+            }
+            const data = parseSasJson(text, 'The dmw_update stored process', cfg.program);
+
+            if (data.error) throw new Error(data.error);
+            if (data.status === 'CONFLICT') {
+                setStatus(data.message || 'Changed by someone else.', 'err');
+                $('editOld').textContent = data.current_name || oldVal;
+                return;
+            }
+            if (data.status !== 'OK') throw new Error(data.message || 'The change was not applied.');
+
+            setStatus('Saved by ' + (data.changed_by || '?') + ' (via ' + via + '). Reloading…', 'ok');
+            logConsole('<span class="c-ok">EDIT:</span> ' + esc(col) + ' for ' +
+                       esc(cfg.keyColumn) + ' ' + esc(String(key)) + ' changed to "' + esc(v) + '"');
+            setTimeout(() => { closeModal('editModal'); executeQuery(); }, 700);
+        } catch (e) {
+            setStatus(e.message, 'err');
+            logConsole('<span class="c-err">EDIT:</span> ' + esc(e.message) +
+                       '\nThe full response is above. If it names a stored process that could not be run, ' +
+                       'confirm the path in CONFIG.EDITABLE_COLUMNS matches SAS Management Console.');
+        } finally {
+            $('editSaveBtn').disabled = false;
+        }
+    }
+
+    function init() {
+        $('editSaveBtn').addEventListener('click', save);
+        $('editNew').addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); save(); }
+        });
+    }
+    return { init, open };
+})();
+
+/* ------------------------------------------------------- SVG CHARTS ------ */
+/* Small hand-rolled chart helpers. No library, so nothing is fetched. */
+const Chart = (function () {
+    const PALETTE = ['#4a7ba7','#2e7d32','#b07400','#8e44ad','#c0392b','#16a085',
+                     '#2c3e50','#d35400','#7f8c8d','#27ae60','#2980b9','#c0392b',
+                     '#9b59b6','#f39c12','#1abc9c','#34495e'];
+    const color = i => PALETTE[i % PALETTE.length];
+
+    /* =====================================================================
+     * WHY THIS IS NOT <title>
+     * =====================================================================
+     * v1.3Beta used a native SVG <title> on every point. That is free to
+     * write and awful to use: the browser waits about a second before
+     * showing it, it vanishes while you move, and a dense scatter needs one
+     * DOM node per point -- 968 of them on the sample data.
+     *
+     * So: no per-point nodes. Each chart keeps a plain array of its plotted
+     * points, one mousemove listener finds the nearest, and a single shared
+     * div follows the cursor. The tooltip appears on the same frame as the
+     * movement, and the SVG holds a few hundred fewer elements.
+     * ================================================================== */
+
+    let seq = 0;
+    const reg = {};                     /* id -> spec, including its point index */
+
+    function tipEl() {
+        let t = document.getElementById('chartTip');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'chartTip';
+            t.className = 'chart-tip';
+            document.body.appendChild(t);
+        }
+        return t;
+    }
+    function hideTip() { const t = document.getElementById('chartTip'); if (t) t.style.display = 'none'; }
+
+    function register(kind, series, opts) {
+        const id = 'chart' + (++seq);
+        reg[id] = { id: id, kind: kind, series: series, opts: opts || {},
+                    hidden: new Set(), pts: [], mounted: false };
+        return '<div class="chart-host" id="' + id + '"></div>';
+    }
+
+    /* Public entry points keep their old signatures, so every existing call
+       site works unchanged; they now return a placeholder that mount() fills. */
+    const line    = (series, opts) => register('line', series, opts);
+    const scatter = (series, opts) => register('scatter', series, opts);
+    const donut   = (items,  opts) => register('donut', items, opts);
+
+    function bars(items, opts) {
+        opts = opts || {};
+        if (!items.length) return '<div class="notes-empty">No data.</div>';
+        const max = Math.max.apply(null, items.map(i => i.value)) || 1;
+        const fmt = v => opts.format ? opts.format(v) : v.toLocaleString('en-US');
+        return '<table class="sum" style="margin-top:4px;"><tbody>' + items.map((it, i) =>
+            '<tr title="' + esc(it.name) + ': ' + esc(fmt(it.value)) + '">' +
+            '<td style="width:210px;">' + esc(it.name) + '</td>' +
+            '<td><div style="background:' + color(i) + ';height:13px;border-radius:2px;width:' +
+            Math.max(1, (it.value / max) * 100).toFixed(1) + '%;"></div></td>' +
+            '<td style="width:90px;text-align:right;font-family:Consolas,monospace;">' +
+            esc(fmt(it.value)) + '</td></tr>').join('') + '</tbody></table>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Draw one registered chart into its placeholder.                   */
+    function draw(id) {
+        const spec = reg[id];
+        const host = document.getElementById(id);
+        if (!spec || !host) return;
+        spec.pts = [];
+        host.innerHTML = (spec.kind === 'donut') ? drawDonut(spec) : drawXY(spec);
+        wire(host, spec);
+        spec.mounted = true;
+    }
+
+    /* Call after any innerHTML that contains chart placeholders. */
+    function mount(root) {
+        const scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.chart-host').forEach(h => { if (h.id && reg[h.id]) draw(h.id); });
+    }
+
+    /* ---------------------------------------------------------------- */
+    function drawXY(spec) {
+        const o = spec.opts;
+        const isScatter = spec.kind === 'scatter';
+        const W = o.width || 980, H = o.height || (isScatter ? 300 : 250);
+        const m = { t: 12, r: 16, b: 34, l: 54 };
+        const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+        const vis = spec.series.map((s, i) => ({ s: s, i: i }))
+                               .filter(x => !spec.hidden.has(x.i));
+
+        let xs = [], ys = [];
+        vis.forEach(v => v.s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
+        if (!xs.length) {
+            return '<div class="notes-empty" style="height:' + (H - 40) + 'px;display:flex;' +
+                   'align-items:center;justify-content:center;">Every series is hidden. ' +
+                   'Click a legend entry to bring one back.</div>' + legendHtml(spec);
+        }
+
+        const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+        const useLog = !!o.logY;
+        const floor = Math.max(1, o.yFloor || 1);
+        const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
+        const tv = ys.map(tf);
+        const y0 = o.yMin !== undefined ? tf(o.yMin) : Math.min.apply(null, tv);
+        const y1 = o.yMax !== undefined ? tf(o.yMax) : Math.max.apply(null, tv);
+        const sx = v => m.l + (x1 === x0 ? iw / 2 : ((+v - x0) / (x1 - x0)) * iw);
+        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
+
+        let g = '';
+        const yTicks = [];
+        if (useLog) { for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) yTicks.push(Math.pow(10, d)); }
+        else { for (let i = 0; i <= 4; i++) yTicks.push(y0 + ((y1 - y0) * i / 4)); }
+        yTicks.forEach(yv => {
+            const yy = sy(yv);
+            if (yy < m.t - 1 || yy > m.t + ih + 1) return;
+            g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + yy.toFixed(1) +
+                 '" stroke="#eceff3" stroke-width="1"/>' +
+                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" fill="#999" text-anchor="end">' +
+                 esc(o.yFormat ? o.yFormat(yv) : Math.round(yv)) + '</text>';
+        });
+
+        /* More x labels than before, and the density adapts to the span so
+           they stay readable instead of overlapping. */
+        const spanDays = (x1 - x0) / 86400000;
+        const nTicks = Math.max(2, Math.min(o.xTicks || 10, Math.round(iw / 95)));
+        const fmtX = v => {
+            const d = new Date(v);
+            if (spanDays <= 2)   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            if (spanDays <= 14)  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            if (spanDays <= 400) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        };
+        for (let i = 0; i <= nTicks; i++) {
+            const xv = x0 + (x1 - x0) * (i / nTicks);
+            const px = sx(xv);
+            g += '<line x1="' + px.toFixed(1) + '" y1="' + m.t + '" x2="' + px.toFixed(1) + '" y2="' + (m.t + ih) +
+                 '" stroke="#f4f6f8" stroke-width="1"/>' +
+                 '<text x="' + px.toFixed(1) + '" y="' + (H - 18) + '" font-size="9" fill="#999" text-anchor="' +
+                 (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' + esc(fmtX(xv)) + '</text>';
+            if (spanDays > 14 && spanDays <= 400) {
+                g += '<text x="' + px.toFixed(1) + '" y="' + (H - 7) + '" font-size="8" fill="#bbb" text-anchor="' +
+                     (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' +
+                     esc(new Date(xv).getFullYear()) + '</text>';
+            }
+        }
+
+        vis.forEach(v => {
+            const c = color(v.i);
+            const pts = v.s.points.slice().sort((a, b) => a.x - b.x);
+            if (!isScatter) {
+                const d = pts.map((p, i) => (i ? 'L' : 'M') + sx(p.x).toFixed(1) + ' ' + sy(p.y).toFixed(1)).join(' ');
+                g += '<path d="' + d + '" fill="none" stroke="' + c + '" stroke-width="1.7" ' +
+                     'stroke-linejoin="round" stroke-linecap="round"/>';
+            }
+            pts.forEach(p => {
+                const px = sx(p.x), py = sy(p.y);
+                if (isScatter) {
+                    const down = !!p.down;
+                    g += '<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="' + (down ? 2.6 : 1.7) +
+                         '" fill="' + (down ? '#c00000' : c) + '" fill-opacity="' + (down ? 0.95 : 0.5) + '"/>';
+                }
+                /* The point index the tooltip reads. No DOM node per point. */
+                spec.pts.push({ px: px, py: py, x: p.x, y: p.y, down: !!p.down, name: v.s.name, ci: v.i });
+            });
+        });
+
+        g += '<circle id="' + spec.id + '-hl" r="4.5" fill="none" stroke="#1f3864" stroke-width="1.8" ' +
+             'style="display:none;pointer-events:none;"/>';
+
+        return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;height:auto;display:block;cursor:crosshair;">' + g + '</svg>' + legendHtml(spec);
+    }
+
+    /* ---------------------------------------------------------------- */
+    function drawDonut(spec) {
+        const o = spec.opts;
+        const items = spec.series;
+        const W = o.width || 420, H = o.height || 190;
+        const R = o.radius || 64, r = o.inner || 36;
+        /* Centre follows the radius. A fixed centre clips the ring as soon as
+           the radius grows past it. */
+        const cx = o.cx || (R + 14), cy = H / 2;
+        const vis = items.map((it, i) => ({ it: it, i: i })).filter(x => !spec.hidden.has(x.i));
+        const total = vis.reduce((a, b) => a + b.it.value, 0);
+        if (!total) return '<div class="notes-empty">Nothing selected.</div>' + legendHtml(spec, true);
+
+        let a0 = -Math.PI / 2, g = '';
+        vis.forEach(v => {
+            const frac = v.it.value / total, a1 = a0 + frac * Math.PI * 2;
+            const large = frac > 0.5 ? 1 : 0;
+            const pt = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+            const [x1, y1] = pt(a0, R), [x2, y2] = pt(a1, R), [x3, y3] = pt(a1, r), [x4, y4] = pt(a0, r);
+            g += '<path class="donut-seg" data-idx="' + v.i + '" style="cursor:pointer;" ' +
+                 'd="M' + x1 + ' ' + y1 + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x2 + ' ' + y2 +
+                 ' L' + x3 + ' ' + y3 + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + x4 + ' ' + y4 + ' Z" ' +
+                 'fill="' + color(v.i) + '" stroke="#fff" stroke-width="1"/>';
+            a0 = a1;
+        });
+        const fsV = Math.max(13, Math.round(R * 0.26)), fsL = Math.max(8, Math.round(R * 0.13));
+        g += '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="' + fsV +
+             '" font-weight="700" fill="#1f3864">' + esc(o.centerValue || '') + '</text>' +
+             '<text x="' + cx + '" y="' + (cy + fsL + 6) + '" text-anchor="middle" font-size="' + fsL +
+             '" fill="#888">' + esc(o.centerLabel || '') + '</text>';
+
+        return '<svg class="chart-svg donut" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;max-width:' + W + 'px;height:auto;display:block;">' + g + '</svg>' +
+               legendHtml(spec, true);
+    }
+
+    /* ---------------------------------------------------------------- */
+    function legendHtml(spec, isDonut) {
+        const src = spec.series;
+        const items = src.map((s, i) => {
+            const off = spec.hidden.has(i);
+            const label = isDonut ? s.name : s.name;
+            return '<span class="lg-item' + (off ? ' off' : '') + '" data-idx="' + i + '" ' +
+                   'title="' + (off ? 'Hidden — click to show' : 'Click to hide') + '">' +
+                   '<i style="background:' + color(i) + '"></i>' + esc(label) + '</span>';
+        }).join('');
+        const anyHidden = spec.hidden.size > 0;
+        return '<div class="chart-legend" data-for="' + spec.id + '">' + items +
+               (spec.opts.markLabel ? '<span class="lg-static"><i style="background:#c00000"></i>' +
+                    esc(spec.opts.markLabel) + '</span>' : '') +
+               (anyHidden ? '<button class="lg-reset" data-for="' + spec.id + '">show all</button>' : '') +
+               '</div>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    function wire(host, spec) {
+        /* Legend: click to filter. Works for lines, scatters and the donut. */
+        host.querySelectorAll('.lg-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const i = Number(el.dataset.idx);
+                if (spec.kind === 'donut' && spec.opts.onSegmentClick) {
+                    spec.opts.onSegmentClick(spec.series[i], i); return;
+                }
+                if (spec.hidden.has(i)) spec.hidden.delete(i); else spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+        });
+        const reset = host.querySelector('.lg-reset');
+        if (reset) reset.addEventListener('click', () => {
+            spec.hidden.clear(); draw(spec.id);
+            if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+        });
+
+        /* Donut segments are clickable too, which is the natural gesture. */
+        host.querySelectorAll('.donut-seg').forEach(seg => {
+            seg.addEventListener('click', () => {
+                const i = Number(seg.dataset.idx);
+                /* When the host supplies onSegmentClick it owns the filter, so
+                   the selection can drive a whole panel rather than just this
+                   chart. Hiding the slice internally would scope the filter to
+                   the donut and leave the rest of the tab disagreeing with it. */
+                if (spec.opts.onSegmentClick) { spec.opts.onSegmentClick(spec.series[i], i); return; }
+                spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+            seg.addEventListener('mousemove', ev => {
+                const it = spec.series[Number(seg.dataset.idx)];
+                const total = spec.series.filter((s, i) => !spec.hidden.has(i))
+                                         .reduce((a, b) => a + b.value, 0) || 1;
+                showTip(ev, '<strong>' + esc(it.name) + '</strong><br>' +
+                    esc(spec.opts.valueFormat ? spec.opts.valueFormat(it.value) : it.value.toLocaleString('en-US')) +
+                    '<br><span style="color:#aab">' + ((it.value / total) * 100).toFixed(1) +
+                    '% · click to hide</span>');
+            });
+            seg.addEventListener('mouseleave', hideTip);
+        });
+
+        /* XY tooltip: one listener, nearest-point lookup, no per-point nodes. */
+        const svg = host.querySelector('svg.chart-svg:not(.donut)');
+        if (!svg || !spec.pts.length) return;
+        const hl = document.getElementById(spec.id + '-hl');
+        const vb = svg.getAttribute('viewBox').split(/\s+/).map(Number);
+
+        svg.addEventListener('mousemove', ev => {
+            const r = svg.getBoundingClientRect();
+            if (!r.width) return;
+            const mx = ((ev.clientX - r.left) / r.width) * vb[2];
+            const my = ((ev.clientY - r.top) / r.height) * vb[3];
+
+            let best = null, bestD = Infinity;
+            const pts = spec.pts;
+            for (let i = 0; i < pts.length; i++) {
+                const dx = pts[i].px - mx, dy = pts[i].py - my;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = pts[i]; }
+            }
+            if (!best || bestD > 900) { hideTip(); if (hl) hl.style.display = 'none'; return; }
+
+            if (hl) {
+                hl.setAttribute('cx', best.px); hl.setAttribute('cy', best.py);
+                hl.setAttribute('stroke', best.down ? '#c00000' : color(best.ci));
+                hl.style.display = '';
+            }
+            const f = spec.opts.tipFormat;
+            showTip(ev, f ? f(best) : defaultTip(best, spec.opts));
+        });
+        svg.addEventListener('mouseleave', () => { hideTip(); if (hl) hl.style.display = 'none'; });
+    }
+
+    function visibleNames(spec) {
+        return spec.series.filter((s, i) => !spec.hidden.has(i)).map(s => s.name);
+    }
+
+    function defaultTip(p, o) {
+        const d = new Date(p.x);
+        const when = (o.tipDateTime)
+            ? d.toLocaleString('en-US')
+            : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        return '<strong>' + esc(p.name) + '</strong><br>' + esc(when) + '<br>' +
+               esc(o.yFormat ? o.yFormat(p.y) : p.y) + (p.down ? ' <span style="color:#ff9b9b">(timed out)</span>' : '');
+    }
+
+    function showTip(ev, html) {
+        const t = tipEl();
+        t.innerHTML = html;
+        t.style.display = 'block';
+        const pad = 14;
+        let x = ev.clientX + pad, y = ev.clientY + pad;
+        const r = t.getBoundingClientRect();
+        if (x + r.width > window.innerWidth - 8)  x = ev.clientX - r.width - pad;
+        if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - pad;
+        t.style.left = x + 'px';
+        t.style.top  = y + 'px';
+    }
+
+    return { line, scatter, donut, bars, color, mount, hideTip };
+})();
+
+/* ===================================================================== HOME */
+const Home = (function () {
+    let serverRows = [], serviceRows = [], timer = null, lastLoad = null;
+
+    const cls = st => ({ UP:'up', HEALTHY:'up', DEGRADED:'degraded',
+                         DOWN:'down', CRITICAL:'down', UNKNOWN:'unknown' })[st] || 'unknown';
+
+    const parseTs = v => { const d = new Date(String(v).replace(' ', 'T')); return isNaN(d) ? null : d; };
+
+    function withinWindow(rows) {
+        const cut = Date.now() - CONFIG.UPTIME_WINDOW_HOURS * 3600 * 1000;
+        return rows.filter(r => { const d = parseTs(r.Timestamp); return d && +d >= cut; });
+    }
+
+    async function load() {
+        const errs = [];
+        try { serverRows = await fetchCSV(CONFIG.SERVER_STATUS_CSV); }
+        catch (e) { serverRows = []; errs.push('server status: ' + e.message); }
+        try { serviceRows = await fetchCSV(CONFIG.SERVICE_STATUS_CSV); }
+        catch (e) { serviceRows = []; errs.push('service status: ' + e.message); }
+        lastLoad = new Date();
+        return errs;
+    }
+
+    function latestPer(rows, keyFn) {
+        const best = {};
+        rows.forEach(r => {
+            const k = keyFn(r), d = parseTs(r.Timestamp);
+            if (!d) return;
+            if (!best[k] || +d > +parseTs(best[k].Timestamp)) best[k] = r;
+        });
+        return best;
+    }
+
+    function render(errs) {
+        const host = $('homePanel');
+        const authed = !!(window.session && window.session.authenticated);
+
+        /* ---- freshness ---- */
+        const allTs = serverRows.concat(serviceRows).map(r => parseTs(r.Timestamp)).filter(Boolean);
+        const newest = allTs.length ? new Date(Math.max.apply(null, allTs.map(Number))) : null;
+        const ageMin = newest ? Math.round((Date.now() - +newest) / 60000) : null;
+        const stale = ageMin !== null && ageMin > CONFIG.STATUS_STALE_MINUTES;
+
+        let h = '<div class="card">';
+        h += '<div class="sla-head"><h2>Home SLA Overview (Uptime)</h2>';
+        h += '<span class="sla-stamp">' + (newest
+                ? 'Last sweep ' + esc(newest.toLocaleString('en-US')) + ' (' + ageMin + ' min ago)'
+                : 'No monitoring data found') + '</span>';
+        if (stale) h += '<span class="sla-stale">STALE — the scanner may not be running</span>';
+
+        /* ---- upper right: session box, then the SLA link beneath it ---- */
+        h += '<div class="head-side"><div class="login-nudge">';
+        if (authed) {
+            h += '<strong>Signed in as ' + esc(window.session.userid) + '.</strong> ' +
+                 'Job-level detail is available in the Data Grid.';
+        } else {
+            h += '<strong>Sign in for more.</strong> This page shows environment health without a ' +
+                 'SAS session. Logon to query job history, edit job names and use Ask DMW.' +
+                 '<button class="btn btn-primary" style="margin-top:6px;" onclick="handleLogon(event)">Logon</button>';
+        }
+        h += '</div>';
+        /* The SLA explanation used to sit inline beside the tiles, where it
+           was the largest thing on a screen whose job is to show status at a
+           glance. It is reference material -- read once, then rarely -- so it
+           moves behind a link and the tiles get the width back. */
+        h += '<button class="sla-link" id="slaInfoBtn" title="What an SLA commits to, and how this page measures it">' +
+             '<span class="sla-link-ico">i</span> Click here for SLA Info</button>';
+        h += '</div></div>';
+
+        if (errs && errs.length) {
+            h += '<div class="notes-warn"><strong>Monitoring data unavailable.</strong> ' +
+                 esc(errs.join(' · ')) + '<br>Run the scanners in <code>ps1\\</code> ' +
+                 'or check that the CSV paths in <code>CONFIG</code> are correct. ' +
+                 'A <code>file://</code> page cannot fetch them — serve over http(s).</div>';
+        }
+
+        /* ================= SERVER MONITOR ================= */
+        h += '<div class="sec-title">Server monitor &mdash; HTTP endpoints</div>';
+        const latestSrv = latestPer(serverRows, r => r.Environment + '|' + r.ServiceName);
+        const srvKeys = Object.keys(latestSrv).sort();
+        if (!srvKeys.length) {
+            h += '<div class="notes-empty">No server checks recorded. Run <code>Check-SASServers_v2.0.ps1</code>.</div>';
+        } else {
+            const card = r =>
+                '<div class="svc-card ' + cls(r.Status) + '">' +
+                '<div class="svc-name">' + esc(r.ServiceName) +
+                '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
+                '<div class="svc-state">' + esc(r.Status) + '</div>' +
+                '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
+                esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+
+            /* One row per environment, PROD first, rather than a single flowing
+               grid. Production is what the SLA is written against, so it should
+               not be mixed in among the lower environments by alphabet. Any
+               environment not named here follows in its own row. */
+            const envOrder = ['PROD', 'UNIT'];
+            const envs = [...new Set(srvKeys.map(k => latestSrv[k].Environment))]
+                .sort((a, b) => {
+                    const ia = envOrder.indexOf(a), ib = envOrder.indexOf(b);
+                    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+                });
+
+            envs.forEach(e => {
+                h += '<div class="env-row"><div class="env-row-label">' + esc(e) + '</div>' +
+                     '<div class="svc-grid">' +
+                     srvKeys.filter(k => latestSrv[k].Environment === e)
+                            .map(k => card(latestSrv[k])).join('') +
+                     '</div></div>';
+            });
+
+        }
+
+        /* ================= SERVICES / OBJECT SPAWNER ================= */
+        h += '<div class="sec-title">Services monitor &mdash; OverallStatus from the most recent sweep</div>';
+        const latestSvc = latestPer(serviceRows, r => r.Environment + '|' + r.ServiceName);
+        const svcKeys = Object.keys(latestSvc).sort();
+        if (!svcKeys.length) {
+            h += '<div class="notes-empty">No service checks recorded. Run <code>Check-ObjectSpawner_v1.0.ps1</code>.</div>';
+        } else {
+            /* OverallStatus per environment first — this is the headline number */
+            const envs = {};
+            svcKeys.forEach(k => { const r = latestSvc[k]; envs[r.Environment] = r.OverallStatus; });
+            h += '<div class="svc-grid" style="margin-bottom:10px;">';
+            Object.keys(envs).sort().forEach(e => {
+                h += '<div class="svc-card ' + cls(envs[e]) + '">' +
+                     '<div class="svc-name">OverallStatus<span class="svc-env ' + esc(e) + '">' + esc(e) + '</span></div>' +
+                     '<div class="svc-state">' + esc(envs[e]) + '</div>' +
+                     '<div class="svc-meta">Worst state among monitored services in ' + esc(e) + '</div></div>';
+            });
+            h += '</div>';
+
+            h += '<table class="sum"><thead><tr><th>Environment</th><th>Service</th><th>Host</th>' +
+                 '<th>State</th><th>Critical</th><th>Checked</th></tr></thead><tbody>';
+            svcKeys.forEach(k => {
+                const r = latestSvc[k];
+                const bad = r.State !== 'Running';
+                h += '<tr' + (bad ? ' style="background:#fdf2f2;"' : '') + '>' +
+                     '<td>' + esc(r.Environment) + '</td><td>' + esc(r.Label || r.ServiceName) + '</td>' +
+                     '<td>' + esc(r.ComputerName) + '</td>' +
+                     '<td style="font-weight:700;color:' + (bad ? '#c00000' : '#2e7d32') + '">' + esc(r.State) + '</td>' +
+                     '<td>' + (String(r.Critical).toLowerCase() === 'true' ? 'Yes' : 'No') + '</td>' +
+                     '<td>' + esc(r.Timestamp) + '</td></tr>';
+            });
+            h += '</tbody></table>';
+        }
+
+        /* ================= UPTIME REPORT ================= */
+        h += '<div class="sec-title">Uptime report &mdash; last ' +
+             Math.round(CONFIG.UPTIME_WINDOW_HOURS / 24) + ' days</div>';
+        const win = withinWindow(serverRows);
+        if (!win.length) {
+            h += '<div class="notes-empty">No checks inside the window.</div>';
+        } else {
+            const byKey = {};
+            win.forEach(r => {
+                const k = r.Environment + ' ' + r.ServiceName;
+                (byKey[k] = byKey[k] || []).push(r);
+            });
+            const series = Object.keys(byKey).sort().map(k => ({
+                name: k,
+                points: byKey[k]
+                    .map(r => ({ x: parseTs(r.Timestamp), y: r.Status === 'DOWN' ? 0 : (r.Status === 'DEGRADED' ? 0.5 : 1) }))
+                    .filter(p => p.x).sort((a, b) => a.x - b.x)
+            }));
+            h += '<div class="chart-box"><h4>Availability over time &mdash; 1 = up, 0.5 = degraded, 0 = down. ' +
+                 'Red dots mark failed checks.</h4>' +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, xTicks: 10, tipDateTime: true,
+                                      yFormat: v => (v >= 0.95 ? 'up' : v <= 0.05 ? 'down' : ''),
+                                      tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                          esc(new Date(p.x).toLocaleString('en-US')) + '<br>' +
+                                          (p.y >= 0.95 ? 'UP' : p.y <= 0.05 ? 'DOWN' : 'DEGRADED') }) +
+                 '</div>';
+
+            /* availability % per endpoint */
+            const rows = Object.keys(byKey).sort().map(k => {
+                const a = byKey[k], up = a.filter(r => r.Status !== 'DOWN').length;
+                return { name: k, value: (up / a.length) * 100, checks: a.length,
+                         down: a.length - up };
+            });
+            h += '<div class="chart-box"><h4>Availability by endpoint</h4>' +
+                 '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Failed</th>' +
+                 '<th>Availability</th></tr></thead><tbody>' +
+                 rows.map(r => '<tr><td>' + esc(r.name) + '</td><td>' + r.checks + '</td>' +
+                     '<td style="color:' + (r.down ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + r.down + '</td>' +
+                     '<td style="font-family:Consolas,monospace;">' + r.value.toFixed(2) + '%</td></tr>').join('') +
+                 '</tbody></table></div>';
+        }
+
+        /* ================= SERVICES RELIABILITY ================= */
+        h += '<div class="sec-title">Services reliability &mdash; UNIT and PROD</div>';
+        const swin = withinWindow(serviceRows);
+        if (!swin.length) {
+            h += '<div class="notes-empty">No service checks inside the window.</div>';
+        } else {
+            const byKey = {};
+            swin.forEach(r => {
+                const k = r.Environment + ' ' + (r.Label || r.ServiceName);
+                (byKey[k] = byKey[k] || []).push(r);
+            });
+            const series = Object.keys(byKey).sort().map(k => ({
+                name: k,
+                points: byKey[k].map(r => ({ x: parseTs(r.Timestamp), y: Number(r.IsRunning) || 0 }))
+                                .filter(p => p.x).sort((a, b) => a.x - b.x)
+            }));
+            h += '<div class="chart-box"><h4>Service state over time &mdash; 1 = running, 0 = stopped or unreachable</h4>' +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, xTicks: 10, tipDateTime: true,
+                                      yFormat: v => (v >= 0.95 ? 'run' : v <= 0.05 ? 'stop' : ''),
+                                      tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                          esc(new Date(p.x).toLocaleString('en-US')) + '<br>' +
+                                          (p.y >= 0.95 ? 'Running' : 'Stopped or unreachable') }) +
+                 '</div>';
+
+            const rel = Object.keys(byKey).sort().map(k => {
+                const a = byKey[k], up = a.filter(r => Number(r.IsRunning) === 1).length;
+                return { name: k, value: (up / a.length) * 100, out: a.length - up };
+            });
+            h += '<div class="chart-box"><h4>Uptime by service</h4>' +
+                 Chart.bars(rel, { format: v => v.toFixed(2) + '%' }) + '</div>';
+        }
+
+        h += '</div>';
+        host.innerHTML = h;
+        /* The chart helpers now emit placeholders that mount() fills, so every
+           innerHTML carrying a chart must be followed by this. */
+        Chart.mount(host);
+        const slaBtn = $('slaInfoBtn');
+        if (slaBtn) slaBtn.addEventListener('click', () => openModal('slaModal'));
+    }
+
+    async function show() {
+        $('homePanel').innerHTML = '<div class="card"><p>Loading environment status…</p></div>';
+        const errs = await load();
+        render(errs);
+        if (CONFIG.HOME_REFRESH_SECONDS > 0) {
+            clearInterval(timer);
+            timer = setInterval(async () => {
+                if (!$('homePanel').classList.contains('active')) return;
+                const e2 = await load(); render(e2);
+            }, CONFIG.HOME_REFRESH_SECONDS * 1000);
+        }
+    }
+    return { show };
+})();
+
+/* ========================================================== VISUALIZATIONS */
+const Viz = (function () {
+    let allRows = [], steps = [], loaded = false, stepsError = '';
+
+    /* =====================================================================
+     * CROSS-FILTER STATE
+     * =====================================================================
+     * Selecting a program on the donut used to hide one slice and leave the
+     * KPIs, the time series, the detail table and the step-level section
+     * reporting on everything -- so the tab quietly disagreed with itself.
+     *
+     * The selection now lives here, beside the date range, and every section
+     * is built from the same filtered set. Both filters are listed in a bar
+     * at the top with the means to undo them, because a filter you cannot
+     * see is a filter you will misread the whole tab through.
+     * ================================================================== */
+    const hiddenPrograms = new Set();
+
+    async function load() {
+        /* The rollup is required; the step source is optional, so a missing
+           step file degrades to half a tab rather than an empty one. */
+        allRows = await fetchCSV(CONFIG.SAS_LOG_ROLLUP_CSV);
+        try {
+            steps = await fetchCSV(CONFIG.SAS_LOG_STEPS_CSV);
+            stepsError = '';
+        } catch (e) {
+            steps = [];
+            stepsError = e.message;
+        }
+        loaded = true;
+    }
+
+    async function show() {
+        const host = $('vizPerfPanel');
+        host.innerHTML = '<div class="card"><p>Loading report performance…</p></div>';
+        try { if (!loaded) await load(); }
+        catch (e) {
+            host.innerHTML = '<div class="card"><div class="notes-warn"><strong>Could not load ' +
+                esc(CONFIG.SAS_LOG_ROLLUP_CSV) + '.</strong> ' + esc(e.message) +
+                '<br>Generate it with <code>ps1\\Export-SasLogRollup.ps1 -metric_profile sas_log</code>.</div></div>';
+            return;
+        }
+
+        let rows = allRows;
+        const num = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
+        const rowDate = r => { const d = new Date(String(r.LastModified).replace(' ', 'T')); return isNaN(d) ? null : d; };
+
+        /* Date range, shared implementation with Server Performance. */
+        const allDates = rows.map(rowDate).filter(Boolean);
+        const minD = allDates.length ? new Date(Math.min.apply(null, allDates)) : new Date();
+        const maxD = allDates.length ? new Date(Math.max.apply(null, allDates)) : new Date();
+        const b = DateFilter.bounds('viz', minD, maxD);
+        const inRange = rows.filter(r => { const d = rowDate(r); return d && d >= b.lo && d <= b.hi; });
+
+        if (!inRange.length) {
+            host.innerHTML = '<div class="card">' +
+                DateFilter.html('viz', minD, maxD, 0, allRows.length) +
+                '<p class="notes-empty">No runs in the selected range.</p></div>';
+            DateFilter.bind(host, 'viz', () => show());
+            return;
+        }
+        /* One filtered set feeds every section below. */
+        rows = inRange.filter(r => !hiddenPrograms.has(r.ProgramName));
+        const visibleSteps = steps.filter(r => !hiddenPrograms.has(r.ProgramName));
+        const ok = rows.filter(r => r.ParseStatus === 'OK');
+
+        if (!rows.length) {
+            host.innerHTML = '<div class="card">' +
+                DateFilter.html('viz', minD, maxD, 0, allRows.length) +
+                chipBarHtml() +
+                '<p class="notes-empty">Every program is filtered out. Clear a filter above.</p></div>';
+            DateFilter.bind(host, 'viz', () => show());
+            bindChips(host);
+            return;
+        }
+
+        /* KPI tiles */
+        const programs = {};
+        ok.forEach(r => { programs[r.ProgramName] = (programs[r.ProgramName] || 0) + num(r, 'CpuTimeSec'); });
+        const progCount = Object.keys(programs).length;
+        const runCount  = rows.length;
+        const totCpu    = ok.reduce((a, r) => a + num(r, 'CpuTimeSec'), 0);
+        const totReal   = ok.reduce((a, r) => a + num(r, 'RealTimeSec'), 0);
+        const errRuns   = rows.filter(r => Number(r.ErrorCount) > 0).length;
+
+        const fmtK = n => n >= 1000 ? (n / 1000).toFixed(0) + 'K' : String(Math.round(n));
+        const fmtH = s => (s / 3600).toFixed(1) + ' h';
+
+        let h = '<div class="card">';
+        h += '<div class="sla-head"><h2>Data Pipeline Performance</h2>' +
+             '<span class="sla-stamp">Per file: ' + esc(CONFIG.SAS_LOG_ROLLUP_CSV) +
+             (steps.length ? ' &middot; Per step: ' + esc(CONFIG.SAS_LOG_STEPS_CSV) : '') +
+             '</span></div>';
+
+        h += DateFilter.html('viz', minD, maxD, rows.length, allRows.length);
+        h += chipBarHtml();
+
+        h += '<div class="kpi-row">' +
+             '<div class="kpi"><div class="v">' + progCount + '</div><div class="l">Program Count</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtK(runCount) + '</div><div class="l">Run Count</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtH(totCpu) + '</div><div class="l">Total CPU Time</div></div>' +
+             '<div class="kpi"><div class="v">' + fmtH(totReal) + '</div><div class="l">Total Real Time</div></div>' +
+             '<div class="kpi ' + (errRuns ? 'bad' : 'good') + '"><div class="v">' + errRuns +
+             '</div><div class="l">Runs with Errors</div></div>' +
+             '</div>';
+
+        /* Donut: average CPU by program, top N */
+        const avg = Object.keys(programs).map(p => {
+            const runs = ok.filter(r => r.ProgramName === p);
+            return { name: p, value: runs.reduce((a, r) => a + num(r, 'CpuTimeSec'), 0) / runs.length };
+        }).sort((a, b) => b.value - a.value);
+        const topN = avg.slice(0, CONFIG.VIZ_TOP_N);
+        const rest = avg.slice(CONFIG.VIZ_TOP_N);
+        const donutItems = topN.concat(rest.length
+            ? [{ name: 'Other (' + rest.length + ')', value: rest.reduce((a, b) => a + b.value, 0) }] : []);
+
+        /* Line: CPU utilization over time */
+        const byDay = {};
+        ok.forEach(r => {
+            const d = new Date(String(r.LastModified).replace(' ', 'T'));
+            if (isNaN(d)) return;
+            const k = d.toISOString().slice(0, 10);
+            byDay[k] = (byDay[k] || 0) + num(r, 'CpuTimeSec');
+        });
+        const pts = Object.keys(byDay).sort().map(k => ({ x: new Date(k + 'T00:00:00'), y: byDay[k] }));
+
+        h += '<div class="viz-2col">';
+        h += '<div class="chart-box"><h4>Average CPU Time by SAS Program ' +
+             '<span style="font-weight:400;color:#777;">&mdash; click a segment or a legend entry to ' +
+             'filter the whole tab by that program</span></h4>' +
+             Chart.donut(donutItems, { centerValue: fmtH(totCpu), centerLabel: 'total CPU',
+                                       width: 560, height: 330, radius: 104, inner: 60,
+                                       valueFormat: v => v.toFixed(1) + ' s avg CPU',
+                                       onSegmentClick: it => {
+                                           /* The aggregate slice stands for several
+                                              programs, so there is nothing single to
+                                              filter on. */
+                                           if (/^Other \(/.test(it.name)) {
+                                               logConsole('<span class="c-dim">FILTER:</span> "' + esc(it.name) +
+                                                   '" is an aggregate of the programs outside the top ' +
+                                                   CONFIG.VIZ_TOP_N + '. Filter them from the detail table instead.');
+                                               return;
+                                           }
+                                           hiddenPrograms.add(it.name);
+                                           show();
+                                       } }) + '</div>';
+        h += '<div class="chart-box"><h4>CPU Utilization by Time</h4>' +
+             Chart.line([{ name: 'CPU seconds per day', points: pts }],
+                        { height: 330, xTicks: 12, yFormat: v => fmtK(v),
+                          tipFormat: p => '<strong>CPU seconds</strong><br>' +
+                              esc(new Date(p.x).toLocaleDateString('en-US',
+                                  { year:'numeric', month:'short', day:'numeric' })) +
+                              '<br>' + esc(p.y.toFixed(1)) + ' s across all programs' }) + '</div>';
+        h += '</div>';
+
+        /* Detail table */
+        h += '<div class="chart-box"><h4>Program detail &mdash; ranked by average CPU time</h4>' +
+             '<table class="sum"><thead><tr><th>Environment</th><th>SAS Program</th><th>Runs</th>' +
+             '<th>Avg CPU (s)</th><th>Avg Real (s)</th><th>Max CPU (s)</th><th>Steps</th>' +
+             '<th>Errors</th><th>Top PROC</th></tr></thead><tbody>';
+        avg.forEach(p => {
+            const runs = ok.filter(r => r.ProgramName === p.name);
+            const env  = runs[0] ? runs[0].Environment : '';
+            const maxC = Math.max.apply(null, runs.map(r => num(r, 'CpuTimeSec')));
+            const avgR = runs.reduce((a, r) => a + num(r, 'RealTimeSec'), 0) / runs.length;
+            const steps= Math.round(runs.reduce((a, r) => a + num(r, 'TotalStepCount'), 0) / runs.length);
+            const errs = runs.reduce((a, r) => a + (Number(r.ErrorCount) || 0), 0);
+            h += '<tr class="prog-row" data-prog="' + esc(p.name) + '" style="cursor:pointer;" ' +
+                 'title="Click to filter this program out of the whole tab">' +
+                 '<td>' + esc(env) + '</td><td>' + esc(p.name) + '</td><td>' + runs.length + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + p.value.toFixed(1) + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + avgR.toFixed(1) + '</td>' +
+                 '<td style="font-family:Consolas,monospace;">' + maxC.toFixed(1) + '</td>' +
+                 '<td>' + steps + '</td>' +
+                 '<td style="color:' + (errs ? '#c00000' : '#2e7d32') + ';font-weight:700;">' + errs + '</td>' +
+                 '<td>' + esc(runs[0] ? runs[0].TopProcedure : '') + '</td></tr>';
+        });
+        h += '</tbody></table></div>';
+
+        /* =================================================================
+           SECOND SOURCE -- per-step timings from the cgs_ai scanner.
+           Different grain, so it gets its own section rather than being
+           merged into the per-file numbers above.
+           ================================================================= */
+        h += '<div class="sec-title">Step-level detail &mdash; cgs_ai scanFileSystem.ps1' +
+             ' <span style="font-weight:400;color:#777;">(one row per SAS step)</span></div>';
+
+        if (!visibleSteps.length) {
+            h += '<div class="notes-warn"><strong>No step-level data.</strong> ' +
+                 (stepsError ? esc(stepsError) + '<br>' : '') +
+                 'This half of the tab is fed by <code>ps1\\Export-SasLogSteps.ps1</code>, which runs ' +
+                 '<code>cgs_ai\\src\\ps\\scanFileSystem.ps1 -metric_profile sas_log</code> and flattens its ' +
+                 'Metrics sheet to <code>' + esc(CONFIG.SAS_LOG_STEPS_CSV) + '</code>. ' +
+                 'The per-file view above is unaffected.</div>';
+        } else {
+            const sNum = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
+            const stepCpu = visibleSteps.reduce((a, r) => a + sNum(r, 'CpuTimeSec'), 0);
+            const progs   = new Set(visibleSteps.map(r => r.ProgramName)).size;
+            const labels  = new Set(visibleSteps.map(r => r.StepLabel)).size;
+
+            h += '<div class="kpi-row">' +
+                 '<div class="kpi"><div class="v">' + visibleSteps.length.toLocaleString('en-US') +
+                 '</div><div class="l">Step Rows</div></div>' +
+                 '<div class="kpi"><div class="v">' + progs + '</div><div class="l">Programs</div></div>' +
+                 '<div class="kpi"><div class="v">' + labels + '</div><div class="l">Distinct Step Types</div></div>' +
+                 '<div class="kpi"><div class="v">' + (stepCpu / 3600).toFixed(1) +
+                 ' h</div><div class="l">CPU Across Steps</div></div>' +
+                 '</div>';
+
+            /* CPU by step type -- one pass, not a filter per group. */
+            const byLabel = {};
+            visibleSteps.forEach(r => {
+                const k = r.StepLabel || '(unlabelled)';
+                byLabel[k] = (byLabel[k] || 0) + sNum(r, 'CpuTimeSec');
+            });
+            const labelItems = Object.keys(byLabel)
+                .map(k => ({ name: k, value: byLabel[k] }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, CONFIG.VIZ_TOP_N);
+
+            h += '<div class="viz-2col">';
+            h += '<div class="chart-box"><h4>CPU by step type</h4>' +
+                 Chart.bars(labelItems, { format: v => v.toFixed(1) + ' s' }) + '</div>';
+
+            const slowest = visibleSteps.slice()
+                .sort((a, b) => sNum(b, 'CpuTimeSec') - sNum(a, 'CpuTimeSec'))
+                .slice(0, CONFIG.VIZ_TOP_STEPS);
+            h += '<div class="chart-box"><h4>Slowest individual steps</h4>' +
+                 '<table class="sum"><thead><tr><th>Program</th><th>#</th><th>Step</th>' +
+                 '<th>CPU (s)</th><th>Real (s)</th></tr></thead><tbody>' +
+                 slowest.map(r =>
+                   '<tr><td>' + esc(r.ProgramName) + '</td>' +
+                   '<td>' + esc(r.StepIndex) + '</td>' +
+                   '<td>' + esc(r.StepLabel) + '</td>' +
+                   '<td style="font-family:Consolas,monospace;">' + sNum(r, 'CpuTimeSec').toFixed(2) + '</td>' +
+                   '<td style="font-family:Consolas,monospace;">' + sNum(r, 'RealTimeSec').toFixed(2) + '</td></tr>').join('') +
+                 '</tbody></table></div>';
+            h += '</div>';
+        }
+
+        h += '</div>';
+        host.innerHTML = h;
+        Chart.mount(host);
+        DateFilter.bind(host, 'viz', () => show());
+        bindChips(host);
+        host.querySelectorAll('.prog-row').forEach(tr => tr.addEventListener('click', () => {
+            hiddenPrograms.add(tr.dataset.prog);
+            show();
+        }));
+    }
+
+    /* Every active filter, with the way to remove it. */
+    function chipBarHtml() {
+        if (!hiddenPrograms.size) return '';
+        return '<div class="chipbar"><span class="lbl">Filtered out:</span>' +
+            [...hiddenPrograms].sort().map(nm =>
+                '<span class="chip"><b>' + esc(nm) + '</b>' +
+                '<button data-unchip="' + esc(nm) + '" title="Put this program back">&times;</button></span>').join('') +
+            '<button class="chip-clear" data-clearchips="1">clear all</button>' +
+            '<span class="filter-note">' + hiddenPrograms.size +
+            ' program' + (hiddenPrograms.size === 1 ? '' : 's') + ' hidden from every section of this tab</span>' +
+            '</div>';
+    }
+
+    function bindChips(root) {
+        root.querySelectorAll('[data-unchip]').forEach(b => b.addEventListener('click', () => {
+            hiddenPrograms.delete(b.dataset.unchip); show();
+        }));
+        const clr = root.querySelector('[data-clearchips]');
+        if (clr) clr.addEventListener('click', () => { hiddenPrograms.clear(); show(); });
+    }
+
+    return { show };
+})();
+
+/* ================================================================ SECURITY */
+function renderSecurity() {
+    const host = $('securityPanel');
+    if (host.dataset.done) return;
+    const B = (x, y, w, hh, title, body, fill, stroke) =>
+        '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hh + '" rx="6" fill="' + fill +
+        '" stroke="' + stroke + '" stroke-width="1.5"/>' +
+        '<text x="' + (x + 14) + '" y="' + (y + 24) + '" font-size="13" font-weight="700" fill="#17375e">' + title + '</text>' +
+        body.map((line, i) => '<text x="' + (x + 14) + '" y="' + (y + 44 + i * 15) + '" font-size="10.5" fill="#44546a">' +
+            line + '</text>').join('');
+    const ARROW = (x1, y1, x2, y2) =>
+        '<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2 +
+        '" stroke="#17375e" stroke-width="1.6" marker-end="url(#ah)"/>';
+
+    host.innerHTML =
+    '<div class="card"><div class="sla-head"><h2>Security &mdash; Software Delivery</h2>' +
+    '<span class="sla-stamp">Current state and the proposed hotfix cycle</span></div>' +
+    '<div class="sec-wrap"><svg viewBox="0 0 1040 520">' +
+      '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">' +
+      '<path d="M0 0 L10 5 L0 10 z" fill="#17375e"/></marker></defs>' +
+
+      '<text x="8" y="16" font-size="11" font-weight="700" fill="#2e75b6" letter-spacing="1">SOFTWARE DELIVERY</text>' +
+
+      B(8,  30, 250, 92, '1  Download once',
+        ['At the internet-connected HUB', '(about 20 GB)'], '#f2f7fc', '#9dc3e6') +
+      B(298, 30, 250, 92, '2  Scan for security',
+        ['Scanned once, before anything', 'is delivered'], '#f2f7fc', '#9dc3e6') +
+      B(588, 30, 190, 92, '3  Deliver',
+        ['Approved path only.', 'Scan on PC. Scan example', 'workstation.'], '#f2f7fc', '#9dc3e6') +
+
+      B(820, 14, 212, 76, 'CLIENT: Workstations',
+        ['(about 35)', 'Automatic through BigFix'], '#ffffff', '#2e7d4f') +
+      B(820, 100, 212, 76, 'SERVER: Servers and',
+        ['admin desktops (fewer than 10)', 'Installed by hand'], '#ffffff', '#2e7d4f') +
+
+      ARROW(258, 76, 296, 76) + ARROW(548, 76, 586, 76) +
+      ARROW(778, 70, 818, 52) + ARROW(778, 82, 818, 128) +
+
+      '<rect x="8" y="198" width="1024" height="212" rx="8" fill="#f7f9fc" stroke="#cfd8e3"/>' +
+      '<text x="24" y="224" font-size="11" font-weight="700" fill="#2e75b6" letter-spacing="1">HOTFIX CYCLE</text>' +
+      '<text x="24" y="244" font-size="10.5" fill="#44546a">Ad hoc today. Proposed: quarterly, plus urgent runs for security alerts.</text>' +
+
+      B(28,  262, 300, 92, 'A  Identify',
+        ['Which fixes are needed based on', 'the Nessus Scan and deployment.txt.'], '#ffffff', '#9dc3e6') +
+      B(368, 262, 300, 92, 'B  Obtain and prepare',
+        ['Download and scan at the hub (use', 'the powershell script. See NOTES.)'], '#ffffff', '#9dc3e6') +
+      B(708, 262, 300, 92, 'C  Deploy and verify',
+        ['Admin to deploy from workstation to', 'SERVER and/or CLIENT.'], '#ffffff', '#9dc3e6') +
+      ARROW(328, 308, 366, 308) + ARROW(668, 308, 706, 308) +
+
+      B(8,   436, 330, 56, 'Client side: scan passed', [], '#eaf5ec', '#2e7d4f') +
+      B(354, 436, 330, 56, 'Server side: next',        [], '#fdf3e7', '#d9822b') +
+      B(700, 436, 332, 56, 'Open: keep or trim the depot', [], '#fdf3e7', '#d9822b') +
+    '</svg></div>' +
+    '<div class="ask-note" style="margin-top:12px;">This diagram is drawn inline as SVG rather than ' +
+    'embedded as an image, so it scales cleanly, stays searchable, and adds no external asset to an ' +
+    'air-gapped deployment. Edit it in <code>renderSecurity()</code>.</div></div>';
+    host.dataset.done = '1';
+}
+
+/* ================================================================ ASK DMW */
+function renderAskDmw() {
+    const host = $('askPanel');
+    if (host.dataset.done) return;
+    host.dataset.done = '1';
+
+    if (!CONFIG.ASK_DMW_ENABLED) {
+        host.innerHTML = '<div class="card"><p>Ask DMW Agent is disabled. Set <code>CONFIG.ASK_DMW_ENABLED</code> to <code>true</code>.</p></div>';
+        return;
+    }
+
+    /* "This content is blocked. Contact the site owner to fix the issue."
+       -----------------------------------------------------------------
+       That message is the BROWSER refusing to render the frame, because the
+       agent's host answered with X-Frame-Options or a Content-Security-Policy
+       frame-ancestors directive that does not list this page's origin. Those
+       are response headers on Microsoft's server. Nothing this page can set --
+       no attribute, sandbox value or referrer policy -- overrides them. A page
+       that could opt out of another site's framing rules would defeat the
+       point of having them.
+
+       NOR CAN THE BLOCK BE DETECTED RELIABLY. An earlier attempt here treated
+       "no load event within N seconds" as proof of a block. That is wrong:
+       Chromium fires load for the error document it substitutes, so a blocked
+       frame looks identical to a working one from the outside, and reading
+       into the frame to check is exactly what cross-origin rules forbid.
+
+       So the fallback is ALWAYS VISIBLE rather than conditional. The user who
+       sees an empty rectangle has the escape hatch in front of them, and the
+       user whose frame works simply ignores one line of text.
+
+       THE ACTUAL FIX is to publish the agent for embedding and use the URL
+       that publication gives you:
+
+         Copilot Studio -> your agent -> Channels -> Custom website
+           - add this page's origin to the allowed list
+           - copy the embed URL it generates
+
+       The URL currently configured ends in source=embedded-builder, which is
+       the AUTHORING PREVIEW inside Copilot Studio rather than a published
+       embed endpoint. Preview URLs are normally framable only by the studio
+       itself, which is consistent with the block being reported. */
+
+    const url = CONFIG.ASK_DMW_URL;
+    host.innerHTML =
+        '<div class="card ask-wrap">' +
+        '<div class="sla-head"><h2>Ask DMW Agent</h2>' +
+        '<span class="sla-stamp">Prototype &mdash; embedded Copilot Studio agent</span></div>' +
+
+        '<div class="ask-note" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+          '<span><strong>Panel blank or showing "This content is blocked"?</strong> ' +
+          'The agent’s host decides whether it may be framed, and this page cannot override that.</span>' +
+          '<button class="btn btn-primary" id="askOpenTab" style="margin-left:auto;">Open in a new tab</button>' +
+          '<button class="btn" id="askWhy">Why?</button>' +
+        '</div>' +
+
+        '<div id="askWhyBox" class="notes-warn" style="display:none;">' +
+          'The browser refuses the frame when the host answers with ' +
+          '<code>X-Frame-Options</code> or <code>Content-Security-Policy: frame-ancestors</code> ' +
+          'that does not list this page’s origin. Those headers are set on Microsoft’s ' +
+          'server, so no change to this file can affect them.' +
+          '<div style="margin-top:8px;"><strong>To fix it properly:</strong> publish the agent for ' +
+          'embedding and use that URL &mdash; <em>Copilot Studio &rarr; your agent &rarr; Channels ' +
+          '&rarr; Custom website</em>, add this page’s origin, then copy the embed URL into ' +
+          '<code>CONFIG.ASK_DMW_URL</code>.</div>' +
+          '<div style="margin-top:8px;">The configured URL ends in <code>source=embedded-builder</code>, ' +
+          'which is the authoring preview inside Copilot Studio rather than a published embed ' +
+          'endpoint. Preview URLs are normally framable only by the studio itself, which matches ' +
+          'the block being reported.</div>' +
+          '<div style="margin-top:8px;font-size:10px;color:#777;">Note: a page cannot detect this ' +
+          'reliably. The browser fires a load event for the error document it substitutes, and ' +
+          'reading into a cross-origin frame to check is forbidden &mdash; which is why this notice ' +
+          'is always shown rather than appearing only on failure.</div>' +
+          '<div style="margin-top:8px;">Current URL: <code>' + esc(url) + '</code></div>' +
+        '</div>' +
+
+        '<div class="ask-frame"><iframe id="askFrame" src="' + esc(url) + '" ' +
+        'title="Ask DMW Agent" referrerpolicy="origin-when-cross-origin" ' +
+        'allow="microphone; clipboard-write"></iframe></div>' +
+        '</div>';
+
+    $('askOpenTab').addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+    $('askWhy').addEventListener('click', () => {
+        const box = $('askWhyBox');
+        box.style.display = (box.style.display === 'none') ? '' : 'none';
+    });
+}
+
+
+
+window.addEventListener('DOMContentLoaded', async function () {
+    /* Identity */
+    document.title = CONFIG.APP_NAME + ' v' + CONFIG.APP_VERSION;
+    $('appTitle').textContent = CONFIG.APP_NAME;
+    $('appSubtitle').textContent = CONFIG.APP_SUBTITLE + '   •   ' +
+        CONFIG.SERVER_HOST + ' / ' + CONFIG.INITIAL_CATALOG +
+        '   •   version ' + CONFIG.APP_VERSION;
+    $('buildStamp').textContent = BUILD_ID;
+
+    $('aboutServer').textContent = CONFIG.SERVER_HOST;
+    $('aboutDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('aboutAuth').textContent   = CONFIG.AUTH_MODE;
+    $('aboutUser').textContent   = CONFIG.AUTH_USER;
+    $('aboutProg').textContent   = CONFIG.SAS_PROGRAM;
+
+    /* v2: column metadata, the JobName editor, and the Home tab */
+    Editor.init();
+    Meta.load();                 /* started here, awaited before the auto-run */
+    Home.show();                 /* Home is the landing tab */
+
+    /* SQL + saved queries */
+    populateSavedQueries();
+    $('sqlEditor').value = CONFIG.INITIAL_SQL;
+
+    /* Grid placeholder until the first run */
+    $('dmwGrid').className = CONFIG.GRID_THEME;
+    $('dmwGrid').innerHTML =
+        '<div class="empty-note" style="margin-top:12px;"><h2>No data loaded yet</h2>' +
+        '<p>Press <strong>Logon</strong> in the top right to authenticate to SAS; the query then runs automatically.</p>' +
+        '<p style="margin-top:6px;">You can also press <strong>Run Query</strong> at any time.</p></div>';
+
+    renderConnectionPanel();
+    updatePills();
+
+    /* Wiring — top nav */
+    $('nav-logon').addEventListener('click', handleLogon);
+    $('nav-about').addEventListener('click', e => { e.preventDefault(); openModal('aboutModal'); });
+    $('nav-help').addEventListener('click',  e => { e.preventDefault(); openModal('helpModal'); });
+    $('footer-signout').addEventListener('click', handleSignOut);
+
+    /* Wiring — hamburger */
+    $('hamburgerBtn').addEventListener('click', toggleMenu);
+    $('menuDashboard').addEventListener('click', e => { e.preventDefault(); generateDashboard(); closeMenu(); });
+    $('menuVisualize').addEventListener('click', e => { e.preventDefault(); visualizeData();    closeMenu(); });
+    $('menuExport').addEventListener('click',    e => { e.preventDefault(); exportCSV();        closeMenu(); });
+
+    /* Wiring — toolbar */
+    $('runBtn').addEventListener('click', executeQuery);
+    $('exportBtn').addEventListener('click', exportCSV);
+    $('cacheBtn').addEventListener('click', clearCacheAndReload);
+    $('savedQuery').addEventListener('change', e => loadSavedQuery(e.target.value));
+    $('quickSearch').addEventListener('input', e => {
+        if (gridApi) { gridApi.setGridOption('quickFilterText', e.target.value); updateFilteredCount(); }
+    });
+    $('clearFiltersBtn').addEventListener('click', () => {
+        $('quickSearch').value = '';
+        if (gridApi) {
+            gridApi.setFilterModel(null);
+            gridApi.setGridOption('quickFilterText', '');
+            updateFilteredCount();
+        }
+    });
+    $('autoSizeBtn').addEventListener('click', () => {
+        if (gridApi) gridApi.autoSizeAllColumns();
+    });
+
+    /* Wiring — tabs, modals, keys */
+    document.querySelectorAll('.tab-btn').forEach(b =>
+        b.addEventListener('click', () => switchPanel(b.dataset.panel)));
+    document.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => closeModal(b.dataset.close)));
+    document.querySelectorAll('.modal-overlay').forEach(o =>
+        o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
+
+    document.addEventListener('click', e => {
+        const menu = $('dropdownMenu'), btn = $('hamburgerBtn');
+        if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeMenu();
+            document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); executeQuery(); }
+    });
+
+    $('sqlEditor').addEventListener('keydown', e => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const t = e.target, s = t.selectionStart, en = t.selectionEnd;
+            t.value = t.value.slice(0, s) + '    ' + t.value.slice(en);
+            t.selectionStart = t.selectionEnd = s + 4;
+        }
+    });
+
+    /* Session banner */
+    if (window.session.authenticated) sasRenderLoggedIn(); else sasRenderLoggedOut();
+
+    logConsole(
+        '<span class="c-ok">OUTPUT:</span> ' + esc(CONFIG.APP_NAME) + ' initialized.\n' +
+        'Build   : ' + BUILD_ID + '\n' +
+        'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+        'Auth    : ' + esc(CONFIG.AUTH_MODE) + ' as ' + esc(CONFIG.AUTH_USER) + '\n' +
+        'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+        'Session : ' + (window.session.authenticated ? esc(window.session.userid) : 'not signed in') + '\n' +
+        'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+        (window.session.authenticated
+            ? 'SAS session detected.' + (CONFIG.AUTO_RUN_ON_LOGON ? ' Running the initial query…' : ' Press "Run Query" to execute.')
+            : 'Press "Logon" in the top right to authenticate to SAS, then the query will run.') +
+        '\nTip: Ctrl+Enter runs the current statement.'
+    );
+
+    /* Logon is what makes execution possible, so run as soon as a session
+       exists -- but let the metadata land first so the headers are built with
+       it. refreshGridHeaders() covers the case where this await is bypassed. */
+    if (window.session.authenticated && CONFIG.AUTO_RUN_ON_LOGON) {
+        try { await Meta.ready(); } catch (_) {}
+        executeQuery();
+    }
+});
+</script>
+</body>
+</html>

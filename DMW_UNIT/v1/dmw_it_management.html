@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Stop a stale copy being served after you edit the CONFIG block below. -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+
+    <title>DMW (Data Mart Workbench) -- IT Management Solution</title>
+
+<!-- =============================================================================
+     CONFIGURATION BLOCK
+     =============================================================================
+     Deliberately placed in the document head, above all CSS and markup, so it is
+     the first thing you see when you open this file. Nothing below this block
+     needs to be edited to point the application at a different server, database
+     or query.
+     ========================================================================== -->
+<script>
+/* =============================================================================
+ * DMW (Data Mart Workbench) -- IT Management Solution
+ * CONFIGURATION
+ * =============================================================================
+ *
+ * HOW THIS APPLICATION REACHES THE DATABASE
+ * -----------------------------------------
+ * A browser cannot connect to Microsoft SQL Server. SQL Server speaks the TDS
+ * protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw
+ * TCP socket API -- only HTTP(S), WebSocket and WebRTC. Windows Authentication
+ * additionally needs OS-level credential delegation that a sandboxed page is
+ * never granted.
+ *
+ * This page therefore calls the SAS Stored Process Web Application, which you
+ * already run. The stored process dmw_run.sas holds the OLE DB connection and
+ * returns the result set as a JSON array:
+ *
+ *     This page  --HTTPS + &dmq_query=<SQL>-->  dmw_run (SAS)  --OLEDB-->  SQL Server
+ *
+ * Nothing is installed on the workstation. Registering dmw_run in SAS Management
+ * Console is a configuration task; see DMW_UNIT/v1/README.md.
+ *
+ * TWO BROWSER REQUIREMENTS
+ * ------------------------
+ *   1. You need an active SAS session in this browser. Press "Logon" in the top
+ *      right; the page then sends your SAS session cookie automatically. No
+ *      password is ever collected or stored by this page.
+ *   2. The page must be served over http(s), ideally from the same web server as
+ *      SAS. Opening it from file:// will always be blocked by browser origin
+ *      rules for the live call.
+ *
+ * EDITING
+ * -------
+ *   1. Change the values in CONFIG below.
+ *   2. Save the file.
+ *   3. Refresh the browser (Ctrl+F5, or use Clear Cache & Reload in the header).
+ * ============================================================================= */
+const CONFIG = {
+
+    /* -------------------------------------------------------------------------
+     * APPLICATION IDENTITY
+     * ---------------------------------------------------------------------- */
+    APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
+    APP_VERSION: "v1.0",
+    APP_SUBTITLE:"Scheduler job monitoring via SAS Stored Process to SQL Server",
+
+    /* =========================================================================
+     * 1. SQL SERVER TARGET
+     * =========================================================================
+     * These values are displayed in the interface and written into the SAS
+     * OLEDB snippet shown on the Connection tab. The connection itself is made
+     * by the stored process, so THESE MUST MATCH the DMW_* macro variables at
+     * the top of dmw_run.sas. Changing them here alone does not re-point the
+     * database connection.
+     * ====================================================================== */
+
+    /* Server Name: host or fully qualified domain name of the SQL Server. */
+    SERVER_HOST: "A70TUCGSDATA012.A70ADMED.COM",
+
+    /* Listening port. SQL Server defaults to 1433. */
+    PORT: 1433,
+
+    /* Database Name (Initial Catalog). */
+    INITIAL_CATALOG: "OHM_CGSScheduler",
+
+    /* Authentication mode shown in the interface.
+       Windows Authentication means the stored process connects with
+       Integrated Security = SSPI, as the SAS server process account. */
+    AUTH_MODE: "Windows Authentication (SSPI)",
+
+    /* User Name the DATABASE connection is made as. Display only -- this page
+       never sends or stores credentials.
+
+       NOTE: this is NOT the person signed in to the web application. With
+       Integrated Security the stored process connects as the SAS Stored
+       Process Server service account, confirmed from the SAS log as
+       A70ADMED\SVC_CGSUSASSRV in UNIT. That account must hold a SQL Server
+       login and SELECT on the target view, or every request fails with
+       "Login failed for user 'A70ADMED\SVC_CGSUSASSRV'". See README.md. */
+    AUTH_USER: "A70ADMED\\SVC_CGSUSASSRV",
+
+    /* =========================================================================
+     * 2. SAS STORED PROCESS BRIDGE
+     * =========================================================================
+     * SAS_BASE_URL   Stored Process Web Application entry point. Must end in
+     *                "_program=". This is the same base URL the existing DMQ
+     *                query builder uses.
+     *
+     * SAS_PROGRAM    SMC metadata path of the stored process. Register
+     *                dmw_run.sas here. Copy the path from SMC exactly,
+     *                including capitalisation and spaces.
+     *
+     * SAS_QUERY_PARAM  Name of the query-string parameter carrying the SQL.
+     *                dmw_run.sas reads "dmq_query"; keep this value unless you
+     *                rename the parameter in the stored process as well.
+     *
+     * SAS_LOGON_PROGRAM  Stored process that performs the SAS logon redirect
+     *                and returns here with ?userid=...&sasAuth=1. Leave as-is
+     *                if you already use sas_auth_redirect.
+     *
+     * SAS_LOGOUT_URL SAS Logon logout endpoint, used by Sign out.
+     *
+     * SAS_DEBUG      0 or 1. When 1 the stored process writes the statement,
+     *                row count and elapsed time to the SAS log.
+     * ====================================================================== */
+    SAS_BASE_URL:       "https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=",
+    SAS_PROGRAM:        "/User Folders/731o/My Folder/dmw_run",
+    SAS_QUERY_PARAM:    "dmq_query",
+    SAS_LOGON_PROGRAM:  "/User Folders/731o/My Folder/sas_auth_redirect",
+    SAS_LOGOUT_URL:     "https://cgssaswebu.a70admed.com/SASLogon/logout",
+    SAS_DEBUG:          0,
+
+    /* Milliseconds to wait for the stored process before aborting. Raise this
+       for queries over large views. */
+    REQUEST_TIMEOUT_MS: 60000,
+
+    /* When true, every request carries a cache-busting parameter and a
+       no-store directive so a response is never reused. */
+    DISABLE_CACHE: true,
+
+    /* Run the initial query automatically as soon as a SAS session is detected.
+       Set false to require an explicit "Run Query" press. */
+    AUTO_RUN_ON_LOGON: true,
+
+    /* =========================================================================
+     * 3. INITIAL SQL STATEMENT
+     * =========================================================================
+     * This statement is sent to dmw_run on start-up (and whenever Run Query is
+     * pressed). It is fully editable in the SQL pane at run time; this value is
+     * simply the default that loads.
+     *
+     * Keep it to a SELECT -- the stored process rejects anything else and
+     * returns an empty array.
+     * ====================================================================== */
+    INITIAL_SQL: `SELECT TOP (1000) [RequestID]
+      ,[JobID]
+      ,[JobName]
+      ,[Frequency]
+      ,[Status]
+      ,[RequestedBy]
+      ,[RequestedDatetime]
+      ,[LastUpdateDatetime]
+      ,[CompletedDatetime]
+      ,[ResponseMessage]
+      ,[JobLogFile]
+      ,[ProgramLogFile]
+      ,[LoggingInstanceID]
+      ,[Timeout]
+      ,[AdHocID]
+      ,[AlertID]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]`,
+
+    /* =========================================================================
+     * 4. SAVED QUERIES
+     * =========================================================================
+     * Appear in the "Saved Queries" dropdown on the toolbar. Index 0 is the
+     * entry that corresponds to INITIAL_SQL. Add objects with a name and a sql
+     * property to extend the list.
+     * ====================================================================== */
+    SAVED_QUERIES: [
+        {
+            name: "1. Scheduler Dashboard - All Jobs (Top 1000)",
+            sql: null   /* null means: use INITIAL_SQL above */
+        },
+        {
+            name: "2. Failed Jobs Only",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [CompletedDatetime], [ResponseMessage]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [Status] LIKE '%Fail%' OR [Status] LIKE '%Error%'
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "3. Currently Running / In Progress",
+            sql: `SELECT TOP (1000) [RequestID], [JobID], [JobName], [Status]
+      ,[RequestedBy], [RequestedDatetime], [LastUpdateDatetime], [Timeout]
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ WHERE [CompletedDatetime] IS NULL
+ ORDER BY [RequestedDatetime] DESC`
+        },
+        {
+            name: "4. Job Volume by Status",
+            sql: `SELECT [Status], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Status]
+ ORDER BY JobCount DESC`
+        },
+        {
+            name: "5. Job Volume by Frequency",
+            sql: `SELECT [Frequency], COUNT(*) AS JobCount
+  FROM [OHM_CGSScheduler].[dbo].[View_Scheduler_PBI_Dashboard]
+ GROUP BY [Frequency]
+ ORDER BY JobCount DESC`
+        }
+    ],
+
+    /* =========================================================================
+     * 5. GRID BEHAVIOUR  (AG Grid)
+     * =========================================================================
+     * GRID_PAGE_SIZE       Rows per page in the results grid.
+     * GRID_PAGE_SIZES      Options offered in the page-size selector.
+     * GRID_THEME           AG Grid CSS theme class. ag-theme-alpine ships in
+     *                      the styles/ folder beside this file.
+     * DASHBOARD_GROUP_BY   Column the "Generate Dashboard" view summarises by.
+     * VISUALIZE_GROUP_BY   Column the "Visualize Data" bar chart counts by.
+     * ====================================================================== */
+    GRID_PAGE_SIZE: 50,
+    GRID_PAGE_SIZES: [25, 50, 100, 500, 1000],
+    GRID_THEME: "ag-theme-alpine",
+    DASHBOARD_GROUP_BY: "Status",
+    VISUALIZE_GROUP_BY: "Status"
+};
+</script>
+
+    <link rel="stylesheet" href="styles/ag-grid.css">
+    <link rel="stylesheet" href="styles/ag-theme-alpine.css">
+
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            font-size: 11px;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ---- Header (reused from the DMW Query Builder) ---- */
+        .header {
+            background: #4a7ba7;
+            color: #fff;
+            padding: 15px 20px;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 16px; font-weight: 600; }
+        .header p  { font-size: 11px; opacity: .95; margin-top: 3px; }
+
+        .top-nav {
+            position: absolute; top: 15px; right: 70px;
+            display: flex; gap: 15px; align-items: center;
+        }
+        .top-nav a {
+            color: #fff; text-decoration: none; font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 3px; transition: background .2s;
+        }
+        .top-nav a:hover { background: rgba(255,255,255,.15); }
+
+        #nav-welcome {
+            color: #d4f5d4; font-size: 11px; font-weight: 700;
+            padding: 5px 10px; display: none;
+        }
+
+        /* ---- Hamburger + dropdown (reused) ---- */
+        .hamburger-container { position: absolute; top: 15px; right: 20px; }
+        .hamburger {
+            width: 30px; height: 30px; background: transparent; border: none;
+            cursor: pointer; padding: 5px; display: flex; flex-direction: column;
+            justify-content: center; gap: 4px; border-radius: 3px; transition: background .2s;
+        }
+        .hamburger:hover { background: rgba(255,255,255,.15); }
+        .hamburger span { display: block; width: 20px; height: 2px; background: #fff; transition: all .3s; }
+        .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+
+        .dropdown-menu {
+            position: absolute; top: 50px; right: 20px; background: #fff;
+            border: 1px solid #c0c0c0; border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15);
+            min-width: 210px; display: none; z-index: 1000;
+        }
+        .dropdown-menu.active { display: block; }
+        .dropdown-menu a {
+            display: block; padding: 12px 20px; color: #333; text-decoration: none;
+            font-size: 11px; font-weight: 600; border-bottom: 1px solid #f0f0f0;
+            transition: background .2s;
+        }
+        .dropdown-menu a:last-child { border-bottom: none; }
+        .dropdown-menu a:hover { background: #f8f8f8; }
+        .dropdown-menu a.dashboard-item { color: #4a7ba7; }
+        .dropdown-menu a.visualize-item { color: #7b4aa7; }
+        .dropdown-menu a.export-item    { color: #2e7d32; }
+
+        /* ---- Toolbar ---- */
+        .toolbar {
+            background: #fff; border-bottom: 1px solid #d0d7de;
+            padding: 8px 16px; display: flex; gap: 8px; align-items: center;
+            flex-wrap: wrap; flex-shrink: 0;
+        }
+        .btn {
+            padding: 6px 12px; font-size: 11px; border: 1px solid transparent;
+            border-radius: 4px; cursor: pointer; font-weight: 600;
+            font-family: inherit;
+        }
+        .btn-primary   { background: #4a7ba7; color: #fff; }
+        .btn-primary:hover { background: #3a6b97; }
+        .btn-run       { background: #16a34a; color: #fff; }
+        .btn-run:hover { background: #22c55e; }
+        .btn-secondary { background: #e6e9ed; color: #222; border-color: #c0c7cf; }
+        .btn-secondary:hover { background: #d6dae0; }
+        .btn-warn      { background: #92400e; color: #fff; border-color: #b45309; }
+        .btn-warn:hover{ background: #b45309; }
+        .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .toolbar input[type="search"] {
+            padding: 6px 10px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 12px; min-width: 240px;
+        }
+        .toolbar select {
+            padding: 5px 8px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 11px; background: #fff; max-width: 300px;
+        }
+        .toolbar label { font-size: 11px; color: #555; font-weight: 600; }
+
+        /* ---- Info pills ---- */
+        .info-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; padding: 7px 16px;
+            background: #fafbfc; border-bottom: 1px solid #e1e4e8; font-size: 11px;
+            flex-shrink: 0; align-items: center;
+        }
+        .pill { background: #fff; border: 1px solid #d0d7de; border-radius: 14px; padding: 3px 10px; }
+        .pill strong { color: #4a7ba7; }
+        .pill.ok strong   { color: #2e7d32; }
+        .pill.warn strong { color: #b45309; }
+        .pill.err strong  { color: #c0392b; }
+
+        /* ---- Tabs ---- */
+        .tab-bar {
+            display: flex; gap: 2px; padding: 0 16px; background: #eef2f6;
+            border-bottom: 1px solid #d0d7de; flex-shrink: 0;
+        }
+        .tab-btn {
+            padding: 7px 14px; font-size: 11px; font-weight: 600; border: none;
+            background: transparent; color: #556; cursor: pointer;
+            border-bottom: 2px solid transparent; font-family: inherit;
+        }
+        .tab-btn:hover  { color: #222; }
+        .tab-btn.active { color: #4a7ba7; background: #fff; border-bottom-color: #4a7ba7; }
+
+        /* ---- Panels ---- */
+        .panel-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .panel { display: none; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px; }
+        .panel.active { display: flex; flex-direction: column; }
+
+        #gridPanel.active { padding: 0 16px 12px; }
+        #dmwGrid { flex: 1 1 auto; min-height: 300px; width: 100%; }
+
+        /* ---- SQL editor ---- */
+        .sql-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+        #sqlEditor {
+            flex: 1 1 auto; min-height: 180px; width: 100%;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+            line-height: 1.5; padding: 10px; border: 1px solid #c0c7cf;
+            border-radius: 4px; resize: none; outline: none; tab-size: 4;
+            background: #1e1e1e; color: #d4d4d4; caret-color: #fff;
+        }
+        #sqlEditor:focus { border-color: #4a7ba7; }
+        .sql-hint { font-size: 11px; color: #666; }
+
+        /* ---- Console ---- */
+        #consoleOut {
+            flex: 1 1 auto; font-family: 'Consolas','Courier New',monospace;
+            font-size: 11px; white-space: pre-wrap; line-height: 1.6;
+            background: #1e1e1e; color: #ccc; padding: 12px; border-radius: 4px;
+            overflow: auto; min-height: 200px;
+        }
+        .c-ok  { color: #22c55e; font-weight: 700; }
+        .c-err { color: #ef4444; font-weight: 700; }
+        .c-warn{ color: #f59e0b; font-weight: 700; }
+        .c-dim { color: #888; }
+
+        /* ---- Connection detail cards ---- */
+        .conn-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 820px) { .conn-grid { grid-template-columns: 1fr 1fr; } }
+        .card {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px;
+        }
+        .card h3 {
+            font-size: 12px; color: #4a7ba7; margin-bottom: 8px;
+            padding-bottom: 6px; border-bottom: 1px solid #eef0f2;
+        }
+        .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; }
+        .kv span:first-child { color: #777; }
+        .kv span:last-child  { font-family: 'Consolas',monospace; color: #222; text-align: right; word-break: break-all; }
+        .code-pre {
+            background: #1e1e1e; color: #22c55e; padding: 10px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; overflow-x: auto;
+            white-space: pre; margin-top: 8px;
+        }
+
+        /* ---- Dashboard / Visualize ---- */
+        .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+        .kpi {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+            padding: 12px 16px; min-width: 130px;
+        }
+        .kpi .v { font-size: 22px; font-weight: 700; color: #4a7ba7; line-height: 1; }
+        .kpi .l { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+        .kpi .v.ok  { color: #2e7d32; }
+        .kpi .v.err { color: #c0392b; }
+        .kpi .v.warn{ color: #b45309; }
+
+        table.sum { width: 100%; border-collapse: collapse; font-size: 11px; background: #fff; }
+        table.sum th {
+            background: #eef2f6; border-bottom: 2px solid #4a7ba7; padding: 7px 10px;
+            text-align: left; white-space: nowrap;
+        }
+        table.sum td { padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
+        table.sum tr:nth-child(even) td { background: #fafbfc; }
+
+        .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+        .bar-label { width: 190px; text-align: right; color: #444; flex-shrink: 0; word-break: break-word; }
+        .bar-track { flex: 1 1 auto; background: #eef2f6; border-radius: 3px; height: 20px; position: relative; }
+        .bar-fill  { background: #4a7ba7; height: 100%; border-radius: 3px; min-width: 2px; }
+        .bar-val   { width: 70px; color: #222; font-weight: 600; flex-shrink: 0; }
+
+        /* ---- Modals (reused) ---- */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+            z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: #fff; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.3);
+            max-width: 620px; width: 90%; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header {
+            background: #4a7ba7; color: #fff; padding: 13px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: 600; font-size: 13px;
+        }
+        .modal-close {
+            background: none; border: none; color: #fff; font-size: 22px;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-body {
+            padding: 18px; overflow-y: auto; font-size: 12px; line-height: 1.6; color: #333;
+        }
+        .modal-body p  { margin-bottom: 11px; }
+        .modal-body h4 { font-size: 12px; color: #222; margin: 14px 0 6px; }
+        .modal-body ol, .modal-body ul { padding-left: 22px; margin-bottom: 11px; }
+        .modal-body li { margin-bottom: 5px; }
+        .modal-body code {
+            background: #f4f4f4; padding: 2px 5px; border-radius: 3px;
+            font-family: 'Consolas',monospace; color: #a3324a;
+        }
+        .modal-body .cfgbox {
+            background: #1e1e1e; color: #ccc; padding: 11px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; white-space: pre; overflow-x: auto;
+        }
+        .modal-footer {
+            padding: 11px 18px; background: #f5f7f9; border-top: 1px solid #e1e4e8;
+            display: flex; justify-content: flex-end;
+        }
+
+        /* ---- Footer / session bar ---- */
+        .session-bar {
+            padding: 6px 16px; border-top: 1px solid #ddd; background: #f8f8f8;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 11px; color: #666; flex-shrink: 0;
+        }
+        .session-ind { display: flex; align-items: center; gap: 7px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex-shrink: 0; }
+        .dot.active { background: #22c55e; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+        #footer-signout { color: #c0392b; text-decoration: none; display: none; }
+        #footer-signout:hover { text-decoration: underline; }
+
+        .loading-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+            z-index: 9999; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            border: 5px solid #f3f3f3; border-top: 5px solid #4a7ba7; border-radius: 50%;
+            width: 54px; height: 54px; animation: spin 1s linear infinite; margin-bottom: 16px;
+        }
+        @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+        .loading-overlay .txt { color: #fff; font-size: 14px; font-weight: 500; }
+
+        .empty-note {
+            padding: 36px; text-align: center; color: #666; font-size: 13px;
+            background: #fff; border: 1px dashed #d0d7de; border-radius: 4px;
+        }
+        .empty-note h2 { color: #4a7ba7; margin-bottom: 9px; font-size: 15px; }
+    </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="txt" id="loadingText">Executing query against SQL Server…</div>
+</div>
+
+<!-- ===================== HEADER ===================== -->
+<div class="header">
+    <h1 id="appTitle">DMW (Data Mart Workbench) -- IT Management Solution</h1>
+    <p id="appSubtitle">—</p>
+
+    <!-- Top nav: Logon (executes the query), About, Help -->
+    <div class="top-nav">
+        <a id="nav-logon" href="#" title="Sign in to SAS, then run the query">Logon</a>
+        <span id="nav-welcome"></span>
+        <a id="nav-about" href="#">About</a>
+        <a id="nav-help" href="#">Help</a>
+    </div>
+
+    <!-- Hamburger: Generate Dashboard, Visualize Data, Export to CSV -->
+    <div class="hamburger-container">
+        <button class="hamburger" id="hamburgerBtn" title="Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="dropdown-menu" id="dropdownMenu">
+            <a href="#" class="dashboard-item" id="menuDashboard">Generate Dashboard</a>
+            <a href="#" class="visualize-item" id="menuVisualize">Visualize Data</a>
+            <a href="#" class="export-item"    id="menuExport">Export to CSV</a>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== TOOLBAR ===================== -->
+<div class="toolbar">
+    <button class="btn btn-run" id="runBtn" title="Execute the SQL below against SQL Server (Ctrl+Enter)">Run Query</button>
+
+    <label for="savedQuery">Saved Queries:</label>
+    <select id="savedQuery"></select>
+
+    <input type="search" id="quickSearch" placeholder="Quick search across all columns…">
+    <button class="btn btn-secondary" id="clearFiltersBtn">Clear Filters</button>
+    <button class="btn btn-secondary" id="autoSizeBtn">Auto-Size</button>
+    <button class="btn btn-primary"   id="exportBtn">Export CSV</button>
+    <button class="btn btn-warn"      id="cacheBtn" style="margin-left:auto;" title="Clear browser-held state and hard reload">Clear Cache &amp; Reload</button>
+</div>
+
+<!-- ===================== INFO PILLS ===================== -->
+<div class="info-bar">
+    <span class="pill">Server: <strong id="infoServer">—</strong></span>
+    <span class="pill">Database: <strong id="infoDb">—</strong></span>
+    <span class="pill">Auth: <strong id="infoAuth">—</strong></span>
+    <span class="pill">Rows: <strong id="infoRows">0</strong></span>
+    <span class="pill">Columns: <strong id="infoCols">0</strong></span>
+    <span class="pill">Filtered: <strong id="infoFiltered">0</strong></span>
+    <span class="pill" id="pillElapsed">Elapsed: <strong id="infoElapsed">—</strong></span>
+</div>
+
+<!-- ===================== TABS ===================== -->
+<div class="tab-bar">
+    <button class="tab-btn active" data-panel="gridPanel">Data Grid</button>
+    <button class="tab-btn" data-panel="sqlPanel">SQL</button>
+    <button class="tab-btn" data-panel="dashPanel">Dashboard</button>
+    <button class="tab-btn" data-panel="vizPanel">Visualize</button>
+    <button class="tab-btn" data-panel="connPanel">Connection</button>
+    <button class="tab-btn" data-panel="consolePanel">Console</button>
+</div>
+
+<div class="panel-host">
+
+    <!-- Data Grid (AG Grid) -->
+    <div class="panel active" id="gridPanel">
+        <div id="dmwGrid"></div>
+    </div>
+
+    <!-- SQL editor -->
+    <div class="panel" id="sqlPanel">
+        <div class="sql-wrap">
+            <div class="sql-hint">
+                Edit the statement and press <strong>Run Query</strong> (or <strong>Ctrl+Enter</strong>).
+                The default statement is <code>CONFIG.INITIAL_SQL</code> at the top of this file.
+                The stored process accepts <strong>SELECT statements only</strong>.
+            </div>
+            <textarea id="sqlEditor" spellcheck="false"></textarea>
+        </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div class="panel" id="dashPanel"></div>
+
+    <!-- Visualize -->
+    <div class="panel" id="vizPanel"></div>
+
+    <!-- Connection -->
+    <div class="panel" id="connPanel"></div>
+
+    <!-- Console -->
+    <div class="panel" id="consolePanel">
+        <div id="consoleOut">Initializing…</div>
+    </div>
+
+</div>
+
+<!-- ===================== SESSION BAR ===================== -->
+<div class="session-bar">
+    <div class="session-ind">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusLabel">No active SAS session</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+        <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
+        <a href="#" id="footer-signout">Sign out</a>
+    </div>
+</div>
+
+<!-- ===================== ABOUT MODAL ===================== -->
+<div class="modal-overlay" id="aboutModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>About DMW -- IT Management Solution</span>
+            <button class="modal-close" data-close="aboutModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <p><strong>DMW (Data Mart Workbench) -- IT Management Solution</strong> monitors SAS Scheduler job activity held in SQL Server. It executes a SQL statement through a SAS Stored Process and renders the returned JSON in an AG Grid, with dashboard, visualisation and CSV export views.</p>
+
+            <h4>How it reaches the database</h4>
+            <p>A browser cannot connect to SQL Server directly: SQL Server speaks the TDS protocol over a raw TCP socket on port 1433, and browser JavaScript has no raw TCP socket API. Windows Authentication additionally requires OS-level credential delegation that a sandboxed page is never granted.</p>
+            <p>This page therefore calls the SAS Stored Process <code>dmw_run</code>, which holds the OLE DB connection and returns the result set as a JSON array. Nothing is installed on the workstation.</p>
+            <div class="cfgbox">Browser  --HTTPS &amp;dmq_query=&lt;SQL&gt;--&gt;  dmw_run (SAS)  --OLEDB--&gt;  SQL Server</div>
+
+            <h4>Current target</h4>
+            <ul>
+                <li>Server: <code id="aboutServer">—</code></li>
+                <li>Database: <code id="aboutDb">—</code></li>
+                <li>Authentication: <code id="aboutAuth">—</code></li>
+                <li>Runs as: <code id="aboutUser">—</code></li>
+                <li>Stored process: <code id="aboutProg">—</code></li>
+            </ul>
+
+            <h4>Configuration</h4>
+            <p>Every adjustable value lives in the <code>CONFIG</code> object in a <code>&lt;script&gt;</code> block at the very top of this HTML file, above the stylesheet and markup. The database connection itself is made by the stored process, so the <code>DMW_*</code> macro variables at the top of <code>dmw_run.sas</code> must describe the same target.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="aboutModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== HELP MODAL ===================== -->
+<div class="modal-overlay" id="helpModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>Help &amp; Support</span>
+            <button class="modal-close" data-close="helpModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <h4>Getting started</h4>
+            <ol>
+                <li>Press <strong>Logon</strong> in the top right. You are redirected to SAS, authenticated, and returned here. The query then runs automatically.</li>
+                <li>Results appear in the <strong>Data Grid</strong> tab. Sort, filter, reorder and resize columns directly in the grid.</li>
+                <li>Use the <strong>SQL</strong> tab to edit the statement, then press <strong>Run Query</strong> or <strong>Ctrl+Enter</strong>.</li>
+            </ol>
+
+            <h4>Hamburger menu (top right)</h4>
+            <ul>
+                <li><strong>Generate Dashboard</strong> — KPI tiles and a summary table grouped by <code>CONFIG.DASHBOARD_GROUP_BY</code>.</li>
+                <li><strong>Visualize Data</strong> — horizontal bar chart of row counts by <code>CONFIG.VISUALIZE_GROUP_BY</code>.</li>
+                <li><strong>Export to CSV</strong> — downloads the rows currently visible after filtering.</li>
+            </ul>
+
+            <h4>Changing the configuration</h4>
+            <p>Open this file in any text editor. The <code>CONFIG</code> object is at the very top.</p>
+            <div class="cfgbox">SERVER_HOST:     "A70TUCGSDATA012.A70ADMED.COM",
+INITIAL_CATALOG: "OHM_CGSScheduler",
+PORT:            1433,
+SAS_PROGRAM:     "/User Folders/731o/My Folder/dmw_run",
+INITIAL_SQL:     `SELECT TOP (1000) ...`</div>
+            <p>After saving, press <strong>Clear Cache &amp; Reload</strong> so the browser does not serve a cached copy.</p>
+
+            <h4>Troubleshooting</h4>
+            <table class="sum">
+                <thead><tr><th>Symptom</th><th>Resolution</th></tr></thead>
+                <tbody>
+                    <tr><td>Returned a logon page instead of data</td><td>No active SAS session. Press <strong>Logon</strong>.</td></tr>
+                    <tr><td>Response was not valid JSON (HTML shown)</td><td>Stored process <em>Result type</em> is not <code>Streaming</code>. Correct it in SMC.</td></tr>
+                    <tr><td>Could not reach the stored process</td><td>Page opened from <code>file://</code>, or CORS. Serve it over http(s) from the SAS web server.</td></tr>
+                    <tr><td>HTTP 404</td><td><code>SAS_PROGRAM</code> does not match the SMC metadata path.</td></tr>
+                    <tr><td>HTTP 500</td><td>Stored process raised an error. Check the SAS log; often a missing OLE DB provider or no SELECT permission.</td></tr>
+                    <tr><td>Empty array returned</td><td>Statement contained no <code>SELECT</code>. The stored process rejects non-SELECT statements.</td></tr>
+                    <tr><td>Edits appear to have no effect</td><td>A cached copy is loaded. Press <strong>Clear Cache &amp; Reload</strong> and check the build stamp changed.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Contact</h4>
+            <p>For issues, questions or enhancement requests, please reach out. Typical response is within one business day.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="helpModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="scripts/ag-grid-community.min.js"></script>
+<script>
+/* =============================================================================
+ * APPLICATION RUNTIME
+ * -----------------------------------------------------------------------------
+ * No configuration below this line. Everything adjustable is in the CONFIG
+ * object at the top of this file.
+ * ========================================================================== */
+
+const BUILD_ID = (CONFIG.APP_VERSION || 'v1.0') + '-' + Date.now().toString(36);
+
+let gridApi = null;
+let currentRows = [];
+let currentCols = [];
+let lastElapsedMs = 0;
+
+window.session = { authenticated: false, userid: null, loginTime: null };
+
+/* ------------------------------ helpers ---------------------------------- */
+const $ = id => document.getElementById(id);
+
+function esc(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, ch =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+}
+
+function logConsole(html, append) {
+    const el = $('consoleOut');
+    if (append) el.innerHTML = html + '\n\n' + el.innerHTML;
+    else el.innerHTML = html;
+}
+
+function showLoading(on, text) {
+    $('loadingText').textContent = text || 'Executing query against SQL Server…';
+    $('loadingOverlay').classList.toggle('active', !!on);
+}
+
+function bust(url) {
+    if (!CONFIG.DISABLE_CACHE) return url;
+    return url + (url.includes('?') ? '&' : '?') +
+           '_cb=' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
+
+/* ------------------------- SAS session / auth ----------------------------
+   Reused from the DMW Query Builder (query_builder_with_metadata_csv_v1_21.html).
+   The logon stored process authenticates the user and redirects back here with
+   ?userid=<id>&sasAuth=1, which this page consumes and then removes from the
+   address bar.
+-------------------------------------------------------------------------- */
+function sasGetParam(name) {
+    return new URLSearchParams(window.location.search).get(name);
+}
+
+function sasCleanUrl() {
+    history.replaceState({}, document.title, window.location.pathname);
+}
+
+function sasRenderLoggedIn() {
+    $('nav-logon').style.display = 'none';
+    const w = $('nav-welcome');
+    w.style.display = 'inline';
+    w.textContent = 'Welcome, ' + window.session.userid + '!';
+    $('statusDot').classList.add('active');
+    $('statusLabel').textContent = 'SAS session active — ' + window.session.userid;
+    $('footer-signout').style.display = 'inline';
+}
+
+function sasRenderLoggedOut() {
+    $('nav-logon').style.display = 'inline';
+    $('nav-welcome').style.display = 'none';
+    $('statusDot').classList.remove('active');
+    $('statusLabel').textContent = 'No active SAS session';
+    $('footer-signout').style.display = 'none';
+}
+
+/* "Logon" authenticates to SAS, which is what makes executing the query
+   possible. On return, the query runs automatically when AUTO_RUN_ON_LOGON. */
+function handleLogon(e) {
+    if (e) e.preventDefault();
+    const returnUrl = encodeURIComponent(window.location.origin + window.location.pathname);
+    const target = CONFIG.SAS_BASE_URL
+                 + encodeURIComponent(CONFIG.SAS_LOGON_PROGRAM)
+                 + '&returnUrl=' + returnUrl;
+    window.location.href = target;
+}
+
+function handleSignOut(e) {
+    if (e) e.preventDefault();
+    window.session = { authenticated: false, userid: null, loginTime: null };
+    try { localStorage.removeItem('dmw_sas_session'); } catch (_) {}
+    sasRenderLoggedOut();
+    window.location.href = CONFIG.SAS_LOGOUT_URL +
+        '?returnUrl=' + encodeURIComponent(window.location.origin + window.location.pathname);
+}
+
+(function sasInit() {
+    const userid = sasGetParam('userid');
+    const sasAuth = sasGetParam('sasAuth');
+    if (userid && sasAuth === '1') {
+        window.session = {
+            authenticated: true,
+            userid: decodeURIComponent(userid),
+            loginTime: new Date().toLocaleTimeString()
+        };
+        try { localStorage.setItem('dmw_sas_session', JSON.stringify(window.session)); } catch (_) {}
+        sasCleanUrl();
+    } else {
+        try {
+            const raw = localStorage.getItem('dmw_sas_session');
+            const stored = raw ? JSON.parse(raw) : null;
+            if (stored && stored.authenticated && stored.userid) window.session = stored;
+        } catch (_) {}
+    }
+})();
+
+/* --------------------------- stored process ------------------------------ */
+function buildStoredProcessUrl(sqlText) {
+    if (!CONFIG.SAS_BASE_URL) throw new Error('CONFIG.SAS_BASE_URL is empty.');
+    if (!CONFIG.SAS_PROGRAM)  throw new Error('CONFIG.SAS_PROGRAM is empty.');
+    let url = CONFIG.SAS_BASE_URL
+            + encodeURIComponent(CONFIG.SAS_PROGRAM)
+            + '&' + encodeURIComponent(CONFIG.SAS_QUERY_PARAM || 'dmq_query')
+            + '=' + encodeURIComponent(sqlText);
+    if (CONFIG.SAS_DEBUG) url += '&debug_mode=1';
+    return url;
+}
+
+/* Accepts the bare JSON array dmw_run returns, and the common wrapper shapes,
+   so an alternative stored process can be substituted without code changes. */
+function normalizePayload(text) {
+    const trimmed = String(text || '').trim();
+    if (!trimmed) throw new Error('The stored process returned an empty response body.');
+
+    if (/^<(!doctype|html)/i.test(trimmed) && /logon|login|password/i.test(trimmed.slice(0, 4000))) {
+        throw new Error('SAS returned a logon page instead of data: this browser has no active SAS session. ' +
+                        'Press "Logon" in the top right, then run the query again.');
+    }
+    if (/^<(!doctype|html)/i.test(trimmed)) {
+        throw new Error('SAS returned HTML instead of JSON. The stored process Result type is probably not set to ' +
+                        '"Streaming", so SAS wrapped the output in ODS HTML. Response began: ' + trimmed.slice(0, 160));
+    }
+
+    let payload;
+    try { payload = JSON.parse(trimmed); }
+    catch (_) { throw new Error('Response was not valid JSON. It began: ' + trimmed.slice(0, 240)); }
+
+    if (payload && payload.error) throw new Error(String(payload.error));
+
+    if (Array.isArray(payload)) return payload;
+    for (const k of ['rows', 'data', 'records', 'results']) {
+        if (Array.isArray(payload && payload[k])) return payload[k];
+    }
+    if (payload && typeof payload === 'object') {
+        for (const k of Object.keys(payload)) {
+            if (k.startsWith('SASJSON')) continue;
+            if (Array.isArray(payload[k])) return payload[k];
+        }
+    }
+    throw new Error('Could not find a row array in the response. Keys seen: ' +
+                    Object.keys(payload || {}).join(', '));
+}
+
+async function executeQuery() {
+    const sqlText = $('sqlEditor').value.trim();
+
+    if (!sqlText) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The SQL buffer is empty. Enter a SELECT statement on the SQL tab.');
+        return;
+    }
+    if (!/\bselect\b/i.test(sqlText)) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The statement contains no SELECT. The stored process accepts SELECT statements only and would return an empty array.');
+        return;
+    }
+    if (!window.session.authenticated) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">NOT SIGNED IN:</span> Press "Logon" in the top right to authenticate to SAS.\n' +
+                   'The query cannot execute without an active SAS session.');
+    }
+
+    const url = buildStoredProcessUrl(sqlText);
+    if (url.length > 7500) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-err">ERROR:</span> The generated URL is ' + url.length +
+                   ' characters, beyond what most servers accept on a GET request (~8000).\n' +
+                   'Shorten the statement, or change the stored process to read the SQL from the request body.');
+        return;
+    }
+
+    $('runBtn').disabled = true;
+    showLoading(true);
+    const started = performance.now();
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT_MS);
+
+    try {
+        const res = await fetch(bust(url), {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'include',      /* carry the SAS session cookie */
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json, text/plain, */*',
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
+
+        const text = await res.text();
+        if (!res.ok) {
+            throw new Error('Stored process returned HTTP ' + res.status + ' ' + res.statusText + '. ' +
+                describeHttp(res.status) + (text ? ' Response began: ' + text.slice(0, 200) : ''));
+        }
+
+        const rows = normalizePayload(text);
+        lastElapsedMs = Math.round(performance.now() - started);
+
+        currentRows = rows;
+        currentCols = rows.length ? Object.keys(rows[0]) : [];
+
+        renderGrid(currentCols, currentRows);
+        renderConnectionPanel();
+        updatePills();
+
+        logConsole(
+            '<span class="c-ok">OUTPUT:</span> Query executed successfully.\n' +
+            'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+            'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+            'Rows    : ' + rows.length + '\n' +
+            'Columns : ' + esc(currentCols.join(', ')) + '\n' +
+            'Elapsed : ' + lastElapsedMs + ' ms\n' +
+            'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+            '<span class="c-dim">First row:</span>\n' +
+            esc(JSON.stringify(rows[0] || {}, null, 2))
+        );
+
+        switchPanel('gridPanel');
+    } catch (err) {
+        lastElapsedMs = Math.round(performance.now() - started);
+        const msg = (err && err.name === 'AbortError')
+            ? 'The stored process did not respond within ' + CONFIG.REQUEST_TIMEOUT_MS + ' ms.'
+            : (err && err.message ? err.message : String(err));
+
+        switchPanel('consolePanel');
+        logConsole(
+            '<span class="c-err">ERROR:</span> ' + esc(msg) + '\n\n' +
+            '<span class="c-dim">Checklist:</span>\n' +
+            '  1. Is there an active SAS session in this browser? Press "Logon".\n' +
+            '  2. Is this page served over http(s)? A file:// page cannot make this call.\n' +
+            '  3. Does CONFIG.SAS_PROGRAM match the SMC metadata path exactly?\n' +
+            '  4. Is the stored process Result type set to "Streaming"?\n' +
+            '  5. Does the SAS identity hold SELECT on the target view?\n\n' +
+            '<span class="c-dim">URL attempted:</span>\n' + esc(url.slice(0, 500))
+        );
+        updatePills(true);
+    } finally {
+        clearTimeout(timer);
+        showLoading(false);
+        $('runBtn').disabled = false;
+    }
+}
+
+function describeHttp(status) {
+    if (status === 401 || status === 403) return 'Authentication or authorization failed — sign in to SAS and confirm you may execute this stored process.';
+    if (status === 404) return 'The stored process path was not found — check CONFIG.SAS_PROGRAM against the SMC path.';
+    if (status === 500) return 'The stored process raised an error — check the SAS log.';
+    return '';
+}
+
+/* ------------------------------ AG Grid ---------------------------------- */
+function renderGrid(cols, rows) {
+    const host = $('dmwGrid');
+    host.className = CONFIG.GRID_THEME;
+
+    const columnDefs = cols.map(c => ({
+        field: c,
+        headerName: c,
+        sortable: true,
+        filter: true,
+        resizable: true,
+        floatingFilter: true,
+        minWidth: 120,
+        tooltipValueGetter: p => (p.value === null || p.value === undefined) ? '' : String(p.value)
+    }));
+
+    const options = {
+        theme: 'legacy',               /* required for the CSS-file themes on AG Grid v33+ */
+        columnDefs: columnDefs,
+        rowData: rows,
+        defaultColDef: { flex: 1, minWidth: 110, sortable: true, filter: true, resizable: true },
+        pagination: true,
+        paginationPageSize: CONFIG.GRID_PAGE_SIZE,
+        paginationPageSizeSelector: CONFIG.GRID_PAGE_SIZES,
+        animateRows: false,
+        rowSelection: 'multiple',
+        suppressDragLeaveHidesColumns: true,
+        onFilterChanged: updateFilteredCount,
+        onGridReady: p => { gridApi = p.api; updateFilteredCount(); }
+    };
+
+    host.innerHTML = '';
+    if (gridApi && gridApi.destroy) { try { gridApi.destroy(); } catch (_) {} gridApi = null; }
+    agGrid.createGrid(host, options);
+}
+
+function updateFilteredCount() {
+    if (!gridApi) return;
+    let n = 0;
+    gridApi.forEachNodeAfterFilter(() => n++);
+    $('infoFiltered').textContent = n.toLocaleString('en-US');
+}
+
+function visibleRows() {
+    if (!gridApi) return currentRows.slice();
+    const out = [];
+    gridApi.forEachNodeAfterFilterAndSort(node => out.push(node.data));
+    return out;
+}
+
+/* --------------------------- info pills ---------------------------------- */
+function updatePills(failed) {
+    $('infoServer').textContent = CONFIG.SERVER_HOST;
+    $('infoDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('infoAuth').textContent   = CONFIG.AUTH_MODE;
+    $('infoRows').textContent   = currentRows.length.toLocaleString('en-US');
+    $('infoCols').textContent   = currentCols.length;
+    $('infoElapsed').textContent = failed ? 'failed' : (lastElapsedMs ? lastElapsedMs + ' ms' : '—');
+    $('pillElapsed').className  = 'pill ' + (failed ? 'err' : (lastElapsedMs ? 'ok' : ''));
+    if (!gridApi) $('infoFiltered').textContent = currentRows.length.toLocaleString('en-US');
+}
+
+/* --------------------- Generate Dashboard (hamburger) -------------------- */
+function generateDashboard() {
+    switchPanel('dashPanel');
+    const el = $('dashPanel');
+
+    if (!currentRows.length) { el.innerHTML = emptyNote('No data to summarise', 'Run the query first.'); return; }
+
+    const key = CONFIG.DASHBOARD_GROUP_BY;
+    const hasKey = currentCols.includes(key);
+
+    const counts = {};
+    if (hasKey) currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    const lower = s => String(s || '').toLowerCase();
+    const okCount   = Object.keys(counts).filter(k => /complete|success|finish/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const errCount  = Object.keys(counts).filter(k => /fail|error|abort/.test(lower(k)))
+                            .reduce((s, k) => s + counts[k], 0);
+    const openCount = currentCols.includes('CompletedDatetime')
+        ? currentRows.filter(r => r.CompletedDatetime === null || r.CompletedDatetime === undefined || r.CompletedDatetime === '').length
+        : 0;
+    const distinctJobs = currentCols.includes('JobName')
+        ? new Set(currentRows.map(r => r.JobName)).size : 0;
+
+    let html = '<div class="kpi-row">' +
+        kpi(currentRows.length.toLocaleString('en-US'), 'Rows Returned', '') +
+        kpi(String(distinctJobs), 'Distinct Jobs', '') +
+        kpi(okCount.toLocaleString('en-US'), 'Completed / Success', 'ok') +
+        kpi(errCount.toLocaleString('en-US'), 'Failed / Error', 'err') +
+        kpi(openCount.toLocaleString('en-US'), 'Not Yet Completed', 'warn') +
+        '</div>';
+
+    if (hasKey) {
+        const rowsSorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        const total = currentRows.length;
+        html += '<div class="card"><h3>Row count by ' + esc(key) + '</h3>' +
+                '<table class="sum"><thead><tr><th>' + esc(key) + '</th><th>Rows</th><th>Share</th></tr></thead><tbody>' +
+                rowsSorted.map(([k, v]) =>
+                    '<tr><td>' + esc(k) + '</td><td>' + v.toLocaleString('en-US') + '</td><td>' +
+                    (total ? (v / total * 100).toFixed(1) : '0.0') + '%</td></tr>').join('') +
+                '</tbody></table></div>';
+    } else {
+        html += emptyNote('Group-by column not present',
+            'CONFIG.DASHBOARD_GROUP_BY is "' + esc(key) + '", which is not in the result set. ' +
+            'Change it at the top of this file to one of: ' + esc(currentCols.join(', ')));
+    }
+
+    el.innerHTML = html;
+}
+
+function kpi(value, label, cls) {
+    return '<div class="kpi"><div class="v ' + (cls || '') + '">' + esc(value) + '</div>' +
+           '<div class="l">' + esc(label) + '</div></div>';
+}
+
+/* ---------------------- Visualize Data (hamburger) ----------------------- */
+function visualizeData() {
+    switchPanel('vizPanel');
+    const el = $('vizPanel');
+
+    if (!currentRows.length) { el.innerHTML = emptyNote('Nothing to visualise', 'Run the query first.'); return; }
+
+    const key = CONFIG.VISUALIZE_GROUP_BY;
+    if (!currentCols.includes(key)) {
+        el.innerHTML = emptyNote('Group-by column not present',
+            'CONFIG.VISUALIZE_GROUP_BY is "' + esc(key) + '", which is not in the result set. ' +
+            'Change it at the top of this file to one of: ' + esc(currentCols.join(', ')));
+        return;
+    }
+
+    const counts = {};
+    currentRows.forEach(r => {
+        const k = (r[key] === null || r[key] === undefined || r[key] === '') ? '(blank)' : String(r[key]);
+        counts[k] = (counts[k] || 0) + 1;
+    });
+
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const max = entries.length ? entries[0][1] : 1;
+
+    el.innerHTML =
+        '<div class="card"><h3>Row count by ' + esc(key) + ' (' + entries.length + ' distinct values)</h3>' +
+        entries.map(([k, v]) =>
+            '<div class="bar-row">' +
+                '<div class="bar-label">' + esc(k) + '</div>' +
+                '<div class="bar-track"><div class="bar-fill" style="width:' + (v / max * 100).toFixed(2) + '%"></div></div>' +
+                '<div class="bar-val">' + v.toLocaleString('en-US') + '</div>' +
+            '</div>').join('') +
+        '</div>';
+}
+
+/* ------------------------ Export to CSV (hamburger) ---------------------- */
+function exportCSV() {
+    const rows = visibleRows();
+    if (!rows.length) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">OUTPUT:</span> No rows to export. Run the query first, or relax the grid filters.');
+        return;
+    }
+    const cols = currentCols.length ? currentCols : Object.keys(rows[0]);
+    const cell = v => {
+        if (v === null || v === undefined) return '';
+        const s = String(v);
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const csv = [cols.join(',')].concat(rows.map(r => cols.map(c => cell(r[c])).join(','))).join('\n');
+
+    const d = new Date(), p = n => String(n).padStart(2, '0');
+    const stamp = p(d.getMonth() + 1) + p(d.getDate()) + d.getFullYear() + '_' +
+                  p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'DMW_' + CONFIG.INITIAL_CATALOG + '_' + stamp + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+
+    logConsole('<span class="c-ok">OUTPUT:</span> Exported ' + rows.length +
+               ' row(s) to ' + esc(a.download) + '.', true);
+}
+
+/* --------------------------- Connection panel ---------------------------- */
+function renderConnectionPanel() {
+    const integrated = /integrated|sspi|windows/i.test(CONFIG.AUTH_MODE);
+    const connStr = 'Provider=MSOLEDBSQL19;' +
+        (integrated ? 'Integrated Security=SSPI;' : 'User ID=' + CONFIG.AUTH_USER + ';Password=***;') +
+        'Persist Security Info=True;Initial Catalog=' + CONFIG.INITIAL_CATALOG +
+        ';Data Source=' + CONFIG.SERVER_HOST + ',' + CONFIG.PORT + ';';
+
+    const sasSnippet =
+        '/* Equivalent SAS OLEDB pass-through used by dmw_run.sas */\n' +
+        'proc sql noprint;\n' +
+        '    connect to oledb as myconn (init_string=\n' +
+        '        "' + connStr + '");\n' +
+        '    create table work.dmw_result as\n' +
+        '    select * from connection to myconn ( <your SELECT> );\n' +
+        '    disconnect from myconn;\n' +
+        'quit;';
+
+    $('connPanel').innerHTML =
+        '<div class="conn-grid">' +
+            '<div class="card"><h3>SQL Server Target</h3>' +
+                kv('Server Name', CONFIG.SERVER_HOST) +
+                kv('Port', CONFIG.PORT) +
+                kv('Database Name', CONFIG.INITIAL_CATALOG) +
+                kv('Authentication', CONFIG.AUTH_MODE) +
+                kv('Runs As', CONFIG.AUTH_USER) +
+            '</div>' +
+            '<div class="card"><h3>SAS Stored Process Bridge</h3>' +
+                kv('Base URL', CONFIG.SAS_BASE_URL) +
+                kv('Program', CONFIG.SAS_PROGRAM) +
+                kv('SQL Parameter', CONFIG.SAS_QUERY_PARAM) +
+                kv('Debug Mode', CONFIG.SAS_DEBUG ? '1 (SAS log)' : '0') +
+                kv('Timeout', CONFIG.REQUEST_TIMEOUT_MS + ' ms') +
+            '</div>' +
+            '<div class="card"><h3>Last Execution</h3>' +
+                kv('Rows Returned', currentRows.length.toLocaleString('en-US')) +
+                kv('Columns', currentCols.length) +
+                kv('Elapsed', lastElapsedMs ? lastElapsedMs + ' ms' : '—') +
+                kv('SAS Session', window.session.authenticated ? window.session.userid : 'not signed in') +
+                kv('Cache Policy', CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') +
+            '</div>' +
+            '<div class="card"><h3>Build</h3>' +
+                kv('Application', CONFIG.APP_NAME) +
+                kv('Version', CONFIG.APP_VERSION) +
+                kv('Build Stamp', BUILD_ID) +
+                kv('Grid Theme', CONFIG.GRID_THEME) +
+            '</div>' +
+        '</div>' +
+        '<div class="card" style="margin-top:12px;"><h3>Connection String (used by the stored process)</h3>' +
+            '<div class="code-pre">' + esc(sasSnippet) + '</div>' +
+            '<p style="font-size:11px;color:#777;margin-top:8px;">The connection is made by ' +
+            '<code>dmw_run.sas</code>, not by this page. Its <code>DMW_*</code> macro variables must describe ' +
+            'the same target as the CONFIG block above.</p>' +
+        '</div>';
+}
+
+function kv(k, v) {
+    return '<div class="kv"><span>' + esc(k) + '</span><span>' + esc(v) + '</span></div>';
+}
+
+function emptyNote(title, body) {
+    return '<div class="empty-note"><h2>' + esc(title) + '</h2><p>' + esc(body) + '</p></div>';
+}
+
+/* ------------------------------- panels ---------------------------------- */
+function switchPanel(id) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === id));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === id));
+}
+
+/* ------------------------------- modals ---------------------------------- */
+function openModal(id)  { $(id).classList.add('active'); }
+function closeModal(id) { $(id).classList.remove('active'); }
+function toggleMenu()   { $('dropdownMenu').classList.toggle('active'); $('hamburgerBtn').classList.toggle('active'); }
+function closeMenu()    { $('dropdownMenu').classList.remove('active'); $('hamburgerBtn').classList.remove('active'); }
+
+/* ---------------------------- cache control ------------------------------ */
+async function clearCacheAndReload() {
+    if (!confirm('Clear sessionStorage, localStorage and the Cache Storage API, then hard-reload this page?')) return;
+    try { sessionStorage.clear(); } catch (_) {}
+    try { localStorage.clear(); } catch (_) {}
+    try {
+        if (window.caches && caches.keys) {
+            const keys = await caches.keys();
+            await Promise.all(keys.map(k => caches.delete(k)));
+        }
+    } catch (_) {}
+    const base = window.location.href.split('?')[0].split('#')[0];
+    window.location.replace(base + '?_cb=' + Date.now());
+}
+
+/* -------------------------------- boot ----------------------------------- */
+function populateSavedQueries() {
+    const sel = $('savedQuery');
+    sel.innerHTML = '';
+    (CONFIG.SAVED_QUERIES || []).forEach((q, i) => {
+        const o = document.createElement('option');
+        o.value = i; o.textContent = q.name;
+        sel.appendChild(o);
+    });
+}
+
+function loadSavedQuery(index) {
+    const q = (CONFIG.SAVED_QUERIES || [])[index];
+    if (!q) return;
+    $('sqlEditor').value = (q.sql === null || q.sql === undefined) ? CONFIG.INITIAL_SQL : q.sql;
+}
+
+window.addEventListener('DOMContentLoaded', function () {
+    /* Identity */
+    document.title = CONFIG.APP_NAME;
+    $('appTitle').textContent = CONFIG.APP_NAME;
+    $('appSubtitle').textContent = CONFIG.APP_SUBTITLE + '   •   ' +
+        CONFIG.SERVER_HOST + ' / ' + CONFIG.INITIAL_CATALOG;
+    $('buildStamp').textContent = BUILD_ID;
+
+    $('aboutServer').textContent = CONFIG.SERVER_HOST;
+    $('aboutDb').textContent     = CONFIG.INITIAL_CATALOG;
+    $('aboutAuth').textContent   = CONFIG.AUTH_MODE;
+    $('aboutUser').textContent   = CONFIG.AUTH_USER;
+    $('aboutProg').textContent   = CONFIG.SAS_PROGRAM;
+
+    /* SQL + saved queries */
+    populateSavedQueries();
+    $('sqlEditor').value = CONFIG.INITIAL_SQL;
+
+    /* Grid placeholder until the first run */
+    $('dmwGrid').className = CONFIG.GRID_THEME;
+    $('dmwGrid').innerHTML =
+        '<div class="empty-note" style="margin-top:12px;"><h2>No data loaded yet</h2>' +
+        '<p>Press <strong>Logon</strong> in the top right to authenticate to SAS; the query then runs automatically.</p>' +
+        '<p style="margin-top:6px;">You can also press <strong>Run Query</strong> at any time.</p></div>';
+
+    renderConnectionPanel();
+    updatePills();
+
+    /* Wiring — top nav */
+    $('nav-logon').addEventListener('click', handleLogon);
+    $('nav-about').addEventListener('click', e => { e.preventDefault(); openModal('aboutModal'); });
+    $('nav-help').addEventListener('click',  e => { e.preventDefault(); openModal('helpModal'); });
+    $('footer-signout').addEventListener('click', handleSignOut);
+
+    /* Wiring — hamburger */
+    $('hamburgerBtn').addEventListener('click', toggleMenu);
+    $('menuDashboard').addEventListener('click', e => { e.preventDefault(); generateDashboard(); closeMenu(); });
+    $('menuVisualize').addEventListener('click', e => { e.preventDefault(); visualizeData();    closeMenu(); });
+    $('menuExport').addEventListener('click',    e => { e.preventDefault(); exportCSV();        closeMenu(); });
+
+    /* Wiring — toolbar */
+    $('runBtn').addEventListener('click', executeQuery);
+    $('exportBtn').addEventListener('click', exportCSV);
+    $('cacheBtn').addEventListener('click', clearCacheAndReload);
+    $('savedQuery').addEventListener('change', e => loadSavedQuery(e.target.value));
+    $('quickSearch').addEventListener('input', e => {
+        if (gridApi) { gridApi.setGridOption('quickFilterText', e.target.value); updateFilteredCount(); }
+    });
+    $('clearFiltersBtn').addEventListener('click', () => {
+        $('quickSearch').value = '';
+        if (gridApi) {
+            gridApi.setFilterModel(null);
+            gridApi.setGridOption('quickFilterText', '');
+            updateFilteredCount();
+        }
+    });
+    $('autoSizeBtn').addEventListener('click', () => {
+        if (gridApi) gridApi.autoSizeAllColumns();
+    });
+
+    /* Wiring — tabs, modals, keys */
+    document.querySelectorAll('.tab-btn').forEach(b =>
+        b.addEventListener('click', () => switchPanel(b.dataset.panel)));
+    document.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => closeModal(b.dataset.close)));
+    document.querySelectorAll('.modal-overlay').forEach(o =>
+        o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
+
+    document.addEventListener('click', e => {
+        const menu = $('dropdownMenu'), btn = $('hamburgerBtn');
+        if (!menu.contains(e.target) && !btn.contains(e.target)) closeMenu();
+    });
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            closeMenu();
+            document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); executeQuery(); }
+    });
+
+    $('sqlEditor').addEventListener('keydown', e => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const t = e.target, s = t.selectionStart, en = t.selectionEnd;
+            t.value = t.value.slice(0, s) + '    ' + t.value.slice(en);
+            t.selectionStart = t.selectionEnd = s + 4;
+        }
+    });
+
+    /* Session banner */
+    if (window.session.authenticated) sasRenderLoggedIn(); else sasRenderLoggedOut();
+
+    logConsole(
+        '<span class="c-ok">OUTPUT:</span> ' + esc(CONFIG.APP_NAME) + ' initialized.\n' +
+        'Build   : ' + BUILD_ID + '\n' +
+        'Target  : [' + esc(CONFIG.SERVER_HOST) + '].[' + esc(CONFIG.INITIAL_CATALOG) + ']:' + CONFIG.PORT + '\n' +
+        'Auth    : ' + esc(CONFIG.AUTH_MODE) + ' as ' + esc(CONFIG.AUTH_USER) + '\n' +
+        'Program : ' + esc(CONFIG.SAS_PROGRAM) + '\n' +
+        'Session : ' + (window.session.authenticated ? esc(window.session.userid) : 'not signed in') + '\n' +
+        'Cache   : ' + (CONFIG.DISABLE_CACHE ? 'no-store (disabled)' : 'browser default') + '\n\n' +
+        (window.session.authenticated
+            ? 'SAS session detected.' + (CONFIG.AUTO_RUN_ON_LOGON ? ' Running the initial query…' : ' Press "Run Query" to execute.')
+            : 'Press "Logon" in the top right to authenticate to SAS, then the query will run.') +
+        '\nTip: Ctrl+Enter runs the current statement.'
+    );
+
+    /* Logon is what makes execution possible, so run as soon as a session exists. */
+    if (window.session.authenticated && CONFIG.AUTO_RUN_ON_LOGON) {
+        executeQuery();
+    }
+});
+</script>
+</body>
+</html>
