@@ -48,14 +48,17 @@ v2. See [`IT/v1/README.md`](IT/v1/README.md) and
 
 ```
 claims/
-├── dmw_claims_management_v1_0Beta.html   the application
+├── dmw_claims_management_v1_1Beta.html   the application (current)
+├── dmw_claims_management_v1_0Beta.html   the previous build, kept beside it
 ├── column_metadata.csv                   13 column definitions
 ├── data/                                 the two comment files it reads
 ├── snowflake/__init__.py                 the cgs_ai package that ran in ONEPI
-└── README.md / README.docx
+└── README.docx
 ```
 
-**Start with [`claims/README.md`](claims/README.md)** (or `README.docx`).
+**Start with `claims/README.docx`.** There is deliberately no `README.md` in
+`claims/`: v1.1Beta ships documentation as Word only. The cost is that GitHub
+cannot render a landing page for that folder — download the `.docx` instead.
 
 A Pipeline Runner Workflow: eight stage cards in two rows that light up left to
 right as the pipeline runs, each opening its own output when clicked.
