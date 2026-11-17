@@ -1,0 +1,157 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root{
+    --navy:#1F3864; --blue:#4A7BA7; --green:#2E7D32; --grey:#595959;
+    --line:#c3d0de;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:#fff;font-family:Calibri,"Segoe UI",sans-serif;}
+  .sheet{width:760px;padding:16px 16px 18px;}
+
+  .row{display:grid;grid-template-columns:104px 1fr;align-items:stretch;}
+
+  /* left gutter: the tier name */
+  .tier{
+    display:flex;flex-direction:column;justify-content:center;
+    padding-right:14px;text-align:right;
+  }
+  .tier .t-name{font-size:15px;font-weight:700;color:var(--navy);letter-spacing:.3px;}
+  .tier .t-sub{font-size:11px;color:var(--grey);margin-top:2px;line-height:1.25;}
+
+  /* the nesting frames */
+  .lvl{border:2px solid var(--blue);border-radius:6px;background:#fff;}
+  .lvl > .cap{
+    font-size:13px;font-weight:700;color:#fff;background:var(--blue);
+    padding:6px 12px;border-radius:3px 3px 0 0;
+  }
+  .lvl > .body{padding:12px;}
+
+  .lvl.l1{border-color:var(--navy);}
+  .lvl.l1 > .cap{background:var(--navy);font-size:14px;}
+  .lvl.l2{border-color:var(--blue);}
+
+  .pipes{display:grid;grid-template-columns:104px 1fr;gap:10px;}
+  /* The pipeline tier gets its own label, in line with the two pipes, so all
+     four levels are named down the same left edge. */
+  .pipes .tier{padding-right:12px;}
+  .pipe{border:2px solid #7fa8cb;border-radius:5px;background:#f7fafd;}
+  .pipe > .cap{font-size:12.5px;font-weight:700;color:#1F3864;background:#e4eef7;padding:5px 11px;border-radius:2px 2px 0 0;}
+  .pipe > .body{padding:10px;display:flex;flex-direction:column;gap:7px;}
+
+  .fn{
+    display:flex;align-items:center;gap:8px;
+    border:1px solid #cdd8e2;border-left:4px solid var(--green);
+    border-radius:3px;background:#fff;padding:6px 9px;
+  }
+  .fn.plain{border-left-color:#aab4bd;}
+  .fn .nm{font-family:Consolas,monospace;font-size:12px;color:#A31515;font-weight:600;}
+  .fn.plain .nm{font-family:Calibri,sans-serif;color:#3d4a55;font-style:italic;}
+  .fn .src{margin-left:auto;font-size:10px;color:#6b7680;}
+  .fn .n{
+    width:16px;height:16px;flex:0 0 16px;border-radius:50%;
+    background:#eef3f8;color:#4A7BA7;font-size:10px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;
+  }
+
+  .handoff{
+    grid-column:1 / -1;text-align:center;font-size:11px;color:var(--grey);
+    font-weight:600;letter-spacing:.3px;
+  }
+
+  /* the connector between tiers */
+  .conn{display:grid;grid-template-columns:104px 1fr;}
+  .conn .c-right{display:flex;align-items:center;gap:9px;padding:5px 0 5px 2px;}
+  .conn .arr{color:var(--blue);font-size:17px;line-height:1;}
+  .conn .lbl{font-size:11.5px;color:var(--grey);font-style:italic;}
+
+  .legend{
+    margin-top:14px;display:flex;gap:20px;align-items:center;
+    font-size:11px;color:var(--grey);padding-left:104px;
+  }
+  .legend .sw{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:5px;vertical-align:-1px;}
+</style></head>
+<body><div class="sheet">
+
+  <!-- TIER 1 -->
+  <div class="row">
+    <div class="tier"><div class="t-name">SOLUTION</div>
+      <div class="t-sub">what it is for</div></div>
+    <div class="lvl l1">
+      <div class="cap">DMW Claims Management Solution</div>
+      <div class="body" style="padding:10px 12px;">
+        <div style="font-size:12px;color:#3d4a55;">One deployable folder. Turns a CMS public-comment docket into
+          something a regulatory team can act on. Contains one workflow.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn"><div></div><div class="c-right"><span class="arr">&#8595;</span>
+    <span class="lbl">a solution contains one or more workflows</span></div></div>
+
+  <!-- TIER 2 -->
+  <div class="row">
+    <div class="tier"><div class="t-name">WORKFLOW</div>
+      <div class="t-sub">the order of the work</div></div>
+    <div class="lvl l2">
+      <div class="cap">Pipeline Runner Workflow &nbsp;&middot;&nbsp; the Home tab</div>
+      <div class="body">
+        <div style="font-size:12px;color:#3d4a55;margin-bottom:11px;">Runs the pipelines in sequence, carries state
+          between them and emits the artefacts. Contains two pipelines.</div>
+        <div class="pipes">
+
+          <div class="tier" style="grid-row:1 / span 3;"><div class="t-name" style="font-size:13.5px;">PIPELINE</div>
+            <div class="t-sub">a reusable run of steps</div></div>
+
+          <!-- TIER 3a -->
+          <div class="pipe" style="grid-column:2;">
+            <div class="cap">Analysis pipeline</div>
+            <div class="body">
+              <div class="fn plain"><span class="n">1</span><span class="nm">Load Comments</span><span class="src">JSON / CSV source</span></div>
+              <div class="fn"><span class="n">2</span><span class="nm">doSentimentAnalysis</span><span class="src">cgs_ai</span></div>
+              <div class="fn"><span class="n">3</span><span class="nm">visualizeNLP</span><span class="src">cgs_ai</span></div>
+              <div class="fn"><span class="n">4</span><span class="nm">summarizeText</span><span class="src">cgs_ai</span></div>
+            </div>
+          </div>
+
+          <div class="handoff" style="grid-column:2;">&#8595; &nbsp; the analysis pipeline feeds the output pipeline</div>
+
+          <!-- TIER 3b -->
+          <div class="pipe" style="grid-column:2;">
+            <div class="cap">Output pipeline</div>
+            <div class="body">
+              <div class="fn"><span class="n">5</span><span class="nm">categorizeText</span><span class="src">cgs_ai</span></div>
+              <div class="fn"><span class="n">6</span><span class="nm">formatCSV</span><span class="src">cgs_ai</span></div>
+              <div class="fn"><span class="n">7</span><span class="nm">createExecutiveBriefing</span><span class="src">cgs_ai</span></div>
+              <div class="fn plain"><span class="n">8</span><span class="nm">Output</span><span class="src">files</span></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn"><div></div><div class="c-right"><span class="arr">&#8595;</span>
+    <span class="lbl">each pipeline step is one call into the cgs_ai package</span></div></div>
+
+  <!-- TIER 4 -->
+  <div class="row">
+    <div class="tier"><div class="t-name">FUNCTION</div>
+      <div class="t-sub">where the work happens</div></div>
+    <div class="lvl" style="border-color:#2E7D32;">
+      <div class="cap" style="background:#2E7D32;">cgs_ai &nbsp;&middot;&nbsp; snowflake/__init__.py</div>
+      <div class="body" style="padding:10px 12px;">
+        <div style="font-size:12px;color:#3d4a55;">Six functions, each independently callable, each taking a
+          dataframe and returning it enriched. The package is the unit that is versioned, reviewed and reused:
+          another solution reaches for the same six functions in a different order.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#2E7D32;"></span>a cgs_ai function</span>
+    <span><span class="sw" style="background:#aab4bd;"></span>a step the page does itself (file I/O, not analysis)</span>
+  </div>
+
+</div></body></html>

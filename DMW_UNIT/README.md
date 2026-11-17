@@ -54,6 +54,7 @@ claims/
 ├── column_metadata.csv                   13 column definitions
 ├── data/                                 the two comment files it reads
 ├── snowflake/__init__.py                 the cgs_ai package that ran in ONEPI
+├── docs/                                 the diagram embedded in the README
 └── README.docx
 ```
 
