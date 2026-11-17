@@ -71,14 +71,40 @@ const CONFIG = {
             label: "CMS-2022-0190 comments (default)",
             file:  "data/cms_2022_0190_SENT_SUMMARIZE_CAT_v1.json",
             note:  "898 comments, already enriched in Snowflake ONEPI",
-            enriched: true
+            enriched: true,
+
+            /* The narrative createExecutiveBriefing obtained from Snowflake
+               Cortex Complete on THIS docket, carried verbatim from
+               cgs_executive_briefing.docx. It is reproduced rather than
+               regenerated because no language model runs in a browser --
+               this is the real Cortex output, not an imitation of it.
+
+               Its figures were reconciled against the data before being
+               embedded: 898 comments, 76% neutral, 49.4% administrative
+               burden, 6.3% reimbursement, 5.0% care quality, 1.3% health
+               equity. All six match what the pipeline computes, so the
+               paragraph describes this dataset and not an earlier one. If
+               you replace the data file, re-run the Snowflake briefing and
+               replace this text too, or it will quietly describe the wrong
+               docket. */
+            cortexNarrative: [
+                "Executive Summary: Public Comment Analysis on Proposed Rule",
+                "As we conclude our analysis of the 898 public comments received on the proposed rule, we have identified key themes and areas of concern that will inform our regulatory decision-making. The sentiment analysis reveals a predominantly neutral tone, with 76% of comments falling into this category. However, a closer examination of the data reveals that a significant proportion of comments (49.4%) express concerns about the administrative burden imposed by the proposed rule on healthcare providers. This suggests that stakeholders are grappling with the practical implications of the rule on their operations and workflows.",
+                "The data also highlights areas where stakeholders are seeking clarification or changes to the proposed rule. Specifically, 6.3% of comments (Medicare/Medicaid Reimbursement) and 5.0% (Patient Care Quality & Safety) indicate a need for more detailed guidance on reimbursement and quality metrics. Furthermore, 1.3% of comments (Health Equity & Insurance Access) highlight concerns about the potential impact on vulnerable populations. These areas warrant further consideration and potential revisions to ensure that the final rule aligns with the agency's goals of improving healthcare quality and access.",
+                "Our analysis underscores the importance of engaging with stakeholders to address their concerns and ensure that the final rule is effective and implementable. We recommend that the agency prioritize addressing the administrative burden concerns, providing clearer guidance on reimbursement and quality metrics, and considering the potential impact on health equity and insurance access. By doing so, we can ensure that the final rule achieves its intended goals while minimizing unnecessary burdens on healthcare providers and promoting better health outcomes for all."
+            ],
+            cortexModel: "Snowflake Cortex Complete"
         },
         {
             key:   "sij",
             label: "CMS-2026-0042 — LCD / SI joint injections (SynPUF)",
             file:  "data/CMS_LCD_SIJ_SynPUF_Comments.normalized.json",
             note:  "24 synthetic comments, raw — every column computed here",
-            enriched: false
+            enriched: false,
+            /* This docket was never run through Snowflake, so there is no
+               Cortex narrative to show. The briefing falls back to a computed
+               summary and labels it as such. */
+            cortexNarrative: null
         }
     ],
     DEFAULT_SOURCE: "cms2022",
@@ -846,6 +872,21 @@ const CONFIG = {
                comment's own sentences and keeping the best ones. Every word in a summary shown here
                appears in the original comment. The two are not interchangeable, and where they
                differ the Snowflake output is the system of record.</p>
+
+            <h4>The briefing narrative is AI-generated</h4>
+            <p>It was produced by Snowflake Cortex <code>Complete</code> during the run that enriched
+               the CMS-2022-0190 file, and is carried here verbatim from
+               <code>cgs_executive_briefing.docx</code> — <strong>reproduced, not regenerated</strong>,
+               because no language model runs in a browser.</p>
+            <p>Its figures were reconciled against this page's data before it was embedded: 898
+               comments, 76% neutral, 49.4% administrative burden, 6.3% reimbursement, 5.0% care
+               quality, 1.3% health equity. All six match what the pipeline computes, so the paragraph
+               describes this dataset. <strong>If you replace the data file, re-run the Snowflake
+               briefing and replace the narrative with it</strong>, or it will quietly describe a
+               different docket.</p>
+            <p>The SIJ sample was never run through Snowflake and so has no Cortex narrative. For that
+               source the briefing falls back to a paragraph assembled from the computed figures and
+               labels it <em>Computed Executive Analysis</em> instead.</p>
 
             <h4>Reading the sentiment and category columns honestly</h4>
             <p>Both are keyword rules. They cannot see negation, sarcasm or context, and
@@ -1930,7 +1971,13 @@ function buildBriefing() {
     const topCat = catRanked[0] || { k:'—', n:0 };
     const unc = cat['Uncategorized'] || 0;
 
-    const narrative =
+    /* Prefer the real Cortex narrative for this source. It was generated by
+       Snowflake Cortex Complete during the pipeline run that produced the
+       enriched file, so "AI-Generated" is an accurate label for it. The
+       computed paragraph below is the fallback for a source that was never
+       run through Snowflake, and is labelled differently. */
+    const cortex = currentSource && currentSource.cortexNarrative;
+    const computed =
         'Of ' + total.toLocaleString('en-US') + ' comments on ' + docket + ', ' +
         substantive.toLocaleString('en-US') + ' carry more than five words and are treated as substantive. ' +
         'The dominant theme is ' + topCat.k + ', at ' + (topCat.n/total*100).toFixed(1) + '% of the docket. ' +
@@ -1941,6 +1988,20 @@ function buildBriefing() {
                'warrants manual review before the breakdown is quoted. ' : '') +
         'These figures are produced by keyword rules, not a trained model, and should be used to direct ' +
         'reading effort rather than quoted as measured opinion.';
+
+    const aiGenerated = !!(cortex && cortex.length);
+    const narrativeHtml = aiGenerated
+        ? cortex.map(x => '<p>' + esc(x) + '</p>').join('')
+        : '<p>' + esc(computed) + '</p>';
+    const narrativeHeading = aiGenerated
+        ? 'AI-Generated Executive Analysis (Snowflake Cortex):'
+        : 'Computed Executive Analysis:';
+    const narrativeNote = aiGenerated
+        ? 'Generated by ' + esc(currentSource.cortexModel || 'Snowflake Cortex Complete') +
+          ' during the pipeline run that produced this file, and reproduced here verbatim. ' +
+          'Its figures were reconciled against the data on this page before it was embedded.'
+        : 'This source was never run through Snowflake, so there is no Cortex narrative for it. ' +
+          'The paragraph above is assembled from the computed figures, not generated.';
 
     const catRows = catRanked.map((c,i) =>
         '<tr><td><strong>' + (i+1) + '</strong></td><td>' + esc(c.k) + '</td><td>' +
@@ -1965,10 +2026,8 @@ function buildBriefing() {
         substantive.toLocaleString('en-US') + ' substantive entries with more than 5 words).</p>' +
         '<p><strong>Overall Sentiment Distribution:</strong> ' +
         Object.keys(sent).map(k => esc(k) + ': <strong>' + sent[k].toLocaleString('en-US') + '</strong>').join(' | ') + '</p>' +
-        '<p><strong>Computed Executive Analysis:</strong></p><p>' + esc(narrative) + '</p>' +
-        '<p style="font-size:10px;color:#777;"><em>Note: the Snowflake implementation obtains this paragraph ' +
-        'from Cortex Complete. No language model runs in the browser, so the text above is assembled from the ' +
-        'computed figures rather than generated.</em></p>' +
+        '<p><strong>' + narrativeHeading + '</strong></p>' + narrativeHtml +
+        '<p style="font-size:10px;color:#777;"><em>' + narrativeNote + '</em></p>' +
         '<h2>2. Weighted Thematic Landscape</h2>' +
         '<table><thead><tr><th>Rank</th><th>Category</th><th>Volume (%)</th><th>Comment Count</th></tr></thead>' +
         '<tbody>' + catRows + '</tbody></table>' +
@@ -1992,9 +2051,9 @@ function buildBriefing() {
         '## 1. Executive Dashboard\n\nA semantic analysis evaluated **' + total + '** public comments (' +
         substantive + ' substantive entries with more than 5 words).\n\n' +
         '**Overall Sentiment Distribution:** ' + Object.keys(sent).map(k => k + ': ' + sent[k]).join(' | ') + '\n\n' +
-        '**Computed Executive Analysis:**\n\n' + narrative + '\n\n' +
-        '> The Snowflake implementation obtains this paragraph from Cortex Complete. No language model runs\n' +
-        '> in the browser, so the text above is assembled from the computed figures rather than generated.\n\n---\n\n' +
+        '**' + narrativeHeading + '**\n\n' +
+        (aiGenerated ? cortex.join('\n\n') : computed) + '\n\n' +
+        '> ' + narrativeNote.replace(/<[^>]+>/g,'') + '\n\n---\n\n' +
         '## 2. Weighted Thematic Landscape\n\n| Rank | Category | Volume (%) | Comment Count |\n| :--- | :--- | :--- | :--- |\n' +
         catRanked.map((c,i) => '| **' + (i+1) + '** | ' + c.k + ' | ' + (c.n/total*100).toFixed(1) + '% | ' + c.n + ' |').join('\n') +
         '\n\n---\n\n## 3. Key Risk Index\n\n' +

@@ -109,7 +109,7 @@ No credentials are stored in `dmw_run.sas` in either case.
 
 ### 3. Deploy the web page
 
-Copy the whole `DMW_UNIT/v1` folder to a web server directory, ideally the same server
+Copy the whole `DMW_UNIT/IT/v1` folder to a web server directory, ideally the same server
 that hosts SAS so the SAS session cookie is same-origin. Then edit the `CONFIG` block
 at the top of `dmw_it_management.html`:
 

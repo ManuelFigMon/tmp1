@@ -9,7 +9,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
 
-    <title>DMW -- IT Management Solution v1.5Beta</title>
+    <title>DMW -- IT Management Solution v1.7Beta</title>
 
 <!-- =============================================================================
      CONFIGURATION BLOCK
@@ -40,7 +40,7 @@
  *     This page  --HTTPS + &dmq_query=<SQL>-->  dmw_run (SAS)  --OLEDB-->  SQL Server
  *
  * Nothing is installed on the workstation. Registering dmw_run in SAS Management
- * Console is a configuration task; see DMW_UNIT/v2/README_V2.md.
+ * Console is a configuration task; see DMW_UNIT/IT/v2/README_V2.md.
  *
  * TWO BROWSER REQUIREMENTS
  * ------------------------
@@ -63,7 +63,7 @@ const CONFIG = {
      * APPLICATION IDENTITY
      * ---------------------------------------------------------------------- */
     APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
-    APP_VERSION: "1.5Beta",
+    APP_VERSION: "1.7Beta",
     APP_SUBTITLE:"Scheduler job monitoring, SLA overview and report performance",
 
     /* =========================================================================
@@ -631,8 +631,28 @@ const CONFIG = {
         .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
         .sla-stale { background:#fff3cd; border:1px solid #f0ad4e; color:#8a6d3b;
                      padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
-        .login-nudge { margin-left:auto; background:#eef4fa; border:1px solid #cfe0ef;
-                       padding:8px 12px; border-radius:4px; font-size:11px; max-width:340px; }
+        .head-side { margin-left:auto; display:flex; flex-direction:column; gap:7px;
+                     align-items:stretch; max-width:340px; }
+        .login-nudge { background:#eef4fa; border:1px solid #cfe0ef;
+                       padding:8px 12px; border-radius:4px; font-size:11px; }
+        .sla-link {
+            background:#eef4fa; border:1px solid #cfe0ef; border-radius:4px;
+            padding:9px 12px; font-size:11px; font-weight:600; color:#1f3864;
+            cursor:pointer; text-align:left; display:flex; align-items:center; gap:8px;
+            font-family:inherit; transition:background .15s, border-color .15s;
+        }
+        .sla-link:hover { background:#dce9f5; border-color:#a8c6e0; }
+        .sla-link-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:16px; height:16px; border-radius:50%; background:#4a7ba7; color:#fff;
+            font-size:10px; font-weight:700; flex-shrink:0;
+        }
+        .sla-body h4 { font-size:11px; color:#1f3864; margin:14px 0 6px; }
+        .sla-body p  { font-size:11px; line-height:1.65; margin-bottom:8px; }
+        .sla-body .sum { margin-bottom:4px; }
+        .sla-body .sum td { font-size:11px; line-height:1.55; }
+        .sla-caveat { border-top:1px solid #e2e8ee; padding-top:9px; margin-top:12px;
+                      color:#666; font-style:italic; }
         .login-nudge strong { color:#1f3864; }
         .login-nudge button { margin-left:8px; }
 
@@ -640,6 +660,13 @@ const CONFIG = {
                      padding-bottom:4px; border-bottom:2px solid #dce6f1; }
 
         .svc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+
+        /* One row of tiles per environment. */
+        .env-row { margin-bottom:10px; }
+        .env-row-label {
+            font-size:9px; font-weight:700; letter-spacing:.8px; color:#7a8794;
+            text-transform:uppercase; margin:0 0 5px 2px;
+        }
         .svc-card { border:1px solid #d8dfe6; border-radius:4px; padding:10px 12px; background:#fff;
                     border-left-width:5px; }
         .svc-card.up       { border-left-color:#2e7d32; }
@@ -922,6 +949,58 @@ const CONFIG = {
     <div style="display:flex; gap:14px; align-items:center;">
         <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
         <a href="#" id="footer-signout">Sign out</a>
+    </div>
+</div>
+
+<!-- ===================== SLA INFO MODAL ===================== -->
+<div class="modal-overlay" id="slaModal">
+    <div class="modal-content" style="max-width:620px;">
+        <div class="modal-header">
+            <span>What an SLA commits to</span>
+            <button class="modal-close" data-close="slaModal">&times;</button>
+        </div>
+        <div class="modal-body sla-body">
+            <p>A service level agreement states, in measurable terms, what the business can expect
+               of this environment: how often it is <strong>available</strong>, how quickly it
+               <strong>responds</strong>, and that access to it stays <strong>controlled and
+               auditable</strong>. Each has a threshold and a review cadence, so &ldquo;the system is
+               slow&rdquo; becomes a number with an owner.</p>
+
+            <h4>Where each half is measured here</h4>
+            <table class="sum">
+                <thead><tr><th>Commitment</th><th>Where it is measured</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Available</strong> &mdash; is it up?</td>
+                        <td>The server and service tiles on this tab, from the most recent sweep,
+                            with the uptime history beneath them.</td></tr>
+                    <tr><td><strong>Responsive</strong> &mdash; is it quick enough?</td>
+                        <td><strong>Server Performance</strong>: response time per endpoint, with
+                            daily medians and 95th percentiles over months.</td></tr>
+                    <tr><td><strong>On time</strong> &mdash; did the work finish?</td>
+                        <td><strong>Scheduler Overview</strong> and <strong>Data Pipeline
+                            Performance</strong>: job outcomes, failures and run cost.</td></tr>
+                    <tr><td><strong>Controlled</strong> &mdash; who can do what?</td>
+                        <td><strong>Security</strong>: the software delivery and hotfix path.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Why it is measured continuously</h4>
+            <p>A commitment nobody measures is an intention. Every endpoint check, service state and
+               job outcome here is timestamped and retained, so a breach of the agreement is
+               <em>evidence</em> rather than recollection &mdash; and so is the absence of one.</p>
+
+            <h4>Lean Six Sigma</h4>
+            <p>That same record supplies the <strong>Measure</strong> phase with a baseline nobody
+               has to reconstruct, and the <strong>Control</strong> phase with the ongoing
+               monitoring that stops an improved process drifting back.</p>
+
+            <p class="sla-caveat">This page reports what the environment <em>did</em>. The
+               thresholds it should be judged against &mdash; the actual agreed numbers &mdash; live
+               in your SLA document, not in this tool.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="slaModal">Close</button>
+        </div>
     </div>
 </div>
 
@@ -2811,14 +2890,14 @@ const Home = (function () {
         const stale = ageMin !== null && ageMin > CONFIG.STATUS_STALE_MINUTES;
 
         let h = '<div class="card">';
-        h += '<div class="sla-head"><h2>Home SLA Overview</h2>';
+        h += '<div class="sla-head"><h2>Home SLA Overview (Uptime)</h2>';
         h += '<span class="sla-stamp">' + (newest
                 ? 'Last sweep ' + esc(newest.toLocaleString('en-US')) + ' (' + ageMin + ' min ago)'
                 : 'No monitoring data found') + '</span>';
         if (stale) h += '<span class="sla-stale">STALE — the scanner may not be running</span>';
 
-        /* ---- login nudge, upper right ---- */
-        h += '<div class="login-nudge">';
+        /* ---- upper right: session box, then the SLA link beneath it ---- */
+        h += '<div class="head-side"><div class="login-nudge">';
         if (authed) {
             h += '<strong>Signed in as ' + esc(window.session.userid) + '.</strong> ' +
                  'Job-level detail is available in the Data Grid.';
@@ -2827,6 +2906,13 @@ const Home = (function () {
                  'SAS session. Logon to query job history, edit job names and use Ask DMW.' +
                  '<button class="btn btn-primary" style="margin-top:6px;" onclick="handleLogon(event)">Logon</button>';
         }
+        h += '</div>';
+        /* The SLA explanation used to sit inline beside the tiles, where it
+           was the largest thing on a screen whose job is to show status at a
+           glance. It is reference material -- read once, then rarely -- so it
+           moves behind a link and the tiles get the width back. */
+        h += '<button class="sla-link" id="slaInfoBtn" title="What an SLA commits to, and how this page measures it">' +
+             '<span class="sla-link-ico">i</span> Click here for SLA Info</button>';
         h += '</div></div>';
 
         if (errs && errs.length) {
@@ -2843,17 +2929,33 @@ const Home = (function () {
         if (!srvKeys.length) {
             h += '<div class="notes-empty">No server checks recorded. Run <code>Check-SASServers_v2.0.ps1</code>.</div>';
         } else {
-            h += '<div class="svc-grid">';
-            srvKeys.forEach(k => {
-                const r = latestSrv[k];
-                h += '<div class="svc-card ' + cls(r.Status) + '">' +
-                     '<div class="svc-name">' + esc(r.ServiceName) +
-                     '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
-                     '<div class="svc-state">' + esc(r.Status) + '</div>' +
-                     '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
-                     esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+            const card = r =>
+                '<div class="svc-card ' + cls(r.Status) + '">' +
+                '<div class="svc-name">' + esc(r.ServiceName) +
+                '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
+                '<div class="svc-state">' + esc(r.Status) + '</div>' +
+                '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
+                esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+
+            /* One row per environment, PROD first, rather than a single flowing
+               grid. Production is what the SLA is written against, so it should
+               not be mixed in among the lower environments by alphabet. Any
+               environment not named here follows in its own row. */
+            const envOrder = ['PROD', 'UNIT'];
+            const envs = [...new Set(srvKeys.map(k => latestSrv[k].Environment))]
+                .sort((a, b) => {
+                    const ia = envOrder.indexOf(a), ib = envOrder.indexOf(b);
+                    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+                });
+
+            envs.forEach(e => {
+                h += '<div class="env-row"><div class="env-row-label">' + esc(e) + '</div>' +
+                     '<div class="svc-grid">' +
+                     srvKeys.filter(k => latestSrv[k].Environment === e)
+                            .map(k => card(latestSrv[k])).join('') +
+                     '</div></div>';
             });
-            h += '</div>';
+
         }
 
         /* ================= SERVICES / OBJECT SPAWNER ================= */
@@ -2969,6 +3071,8 @@ const Home = (function () {
         /* The chart helpers now emit placeholders that mount() fills, so every
            innerHTML carrying a chart must be followed by this. */
         Chart.mount(host);
+        const slaBtn = $('slaInfoBtn');
+        if (slaBtn) slaBtn.addEventListener('click', () => openModal('slaModal'));
     }
 
     async function show() {

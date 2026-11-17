@@ -9,7 +9,7 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
 
-    <title>DMW -- IT Management Solution v1.3Beta</title>
+    <title>DMW -- IT Management Solution v1.8Beta</title>
 
 <!-- =============================================================================
      CONFIGURATION BLOCK
@@ -40,7 +40,7 @@
  *     This page  --HTTPS + &dmq_query=<SQL>-->  dmw_run (SAS)  --OLEDB-->  SQL Server
  *
  * Nothing is installed on the workstation. Registering dmw_run in SAS Management
- * Console is a configuration task; see DMW_UNIT/v2/README_V2.md.
+ * Console is a configuration task; see DMW_UNIT/IT/v2/README_V2.md.
  *
  * TWO BROWSER REQUIREMENTS
  * ------------------------
@@ -63,7 +63,7 @@ const CONFIG = {
      * APPLICATION IDENTITY
      * ---------------------------------------------------------------------- */
     APP_NAME:    "DMW (Data Mart Workbench) -- IT Management Solution",
-    APP_VERSION: "1.3Beta",
+    APP_VERSION: "1.8Beta",
     APP_SUBTITLE:"Scheduler job monitoring, SLA overview and report performance",
 
     /* =========================================================================
@@ -631,8 +631,28 @@ const CONFIG = {
         .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
         .sla-stale { background:#fff3cd; border:1px solid #f0ad4e; color:#8a6d3b;
                      padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
-        .login-nudge { margin-left:auto; background:#eef4fa; border:1px solid #cfe0ef;
-                       padding:8px 12px; border-radius:4px; font-size:11px; max-width:340px; }
+        .head-side { margin-left:auto; display:flex; flex-direction:column; gap:7px;
+                     align-items:stretch; max-width:340px; }
+        .login-nudge { background:#eef4fa; border:1px solid #cfe0ef;
+                       padding:8px 12px; border-radius:4px; font-size:11px; }
+        .sla-link {
+            background:#eef4fa; border:1px solid #cfe0ef; border-radius:4px;
+            padding:9px 12px; font-size:11px; font-weight:600; color:#1f3864;
+            cursor:pointer; text-align:left; display:flex; align-items:center; gap:8px;
+            font-family:inherit; transition:background .15s, border-color .15s;
+        }
+        .sla-link:hover { background:#dce9f5; border-color:#a8c6e0; }
+        .sla-link-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:16px; height:16px; border-radius:50%; background:#4a7ba7; color:#fff;
+            font-size:10px; font-weight:700; flex-shrink:0;
+        }
+        .sla-body h4 { font-size:11px; color:#1f3864; margin:14px 0 6px; }
+        .sla-body p  { font-size:11px; line-height:1.65; margin-bottom:8px; }
+        .sla-body .sum { margin-bottom:4px; }
+        .sla-body .sum td { font-size:11px; line-height:1.55; }
+        .sla-caveat { border-top:1px solid #e2e8ee; padding-top:9px; margin-top:12px;
+                      color:#666; font-style:italic; }
         .login-nudge strong { color:#1f3864; }
         .login-nudge button { margin-left:8px; }
 
@@ -640,6 +660,13 @@ const CONFIG = {
                      padding-bottom:4px; border-bottom:2px solid #dce6f1; }
 
         .svc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+
+        /* One row of tiles per environment. */
+        .env-row { margin-bottom:10px; }
+        .env-row-label {
+            font-size:9px; font-weight:700; letter-spacing:.8px; color:#7a8794;
+            text-transform:uppercase; margin:0 0 5px 2px;
+        }
         .svc-card { border:1px solid #d8dfe6; border-radius:4px; padding:10px 12px; background:#fff;
                     border-left-width:5px; }
         .svc-card.up       { border-left-color:#2e7d32; }
@@ -667,10 +694,75 @@ const CONFIG = {
 
         .chart-box { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:12px; margin-bottom:12px; }
         .chart-box h4 { font-size:11px; color:#1f3864; margin-bottom:8px; }
-        .chart-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:10px; color:#555; margin-top:6px; }
+        .chart-legend { display:flex; gap:10px; flex-wrap:wrap; font-size:10px; color:#555; margin-top:8px; align-items:center; }
         .chart-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+        .lg-item { cursor:pointer; padding:2px 7px; border-radius:10px; border:1px solid #dde3e9;
+                   background:#fff; user-select:none; transition:background .12s, opacity .12s; }
+        .lg-item:hover { background:#eef4fa; border-color:#b9cde0; }
+        .lg-item.off   { opacity:.4; text-decoration:line-through; background:#f4f6f8; }
+        .lg-static { padding:2px 7px; color:#777; }
+        .lg-reset  { font-size:10px; padding:2px 8px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#4a7ba7; }
+        .lg-reset:hover { background:#eef4fa; }
+
+        /* One shared tooltip that follows the cursor. Replaces per-point
+           <title>, which the browser delays by about a second. */
+        .chart-tip {
+            position:fixed; z-index:9999; display:none; pointer-events:none;
+            background:rgba(24,34,48,.95); color:#fff; font-size:11px; line-height:1.5;
+            padding:6px 9px; border-radius:4px; max-width:280px;
+            box-shadow:0 4px 14px rgba(0,0,0,.28); font-family:'Segoe UI',sans-serif;
+        }
+        .chart-tip strong { color:#9ec8f0; }
+
+        .filter-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                      background:#f7f9fb; border:1px solid #e2e8ee; border-radius:4px;
+                      padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .filter-bar label { color:#555; font-weight:600; }
+        .filter-bar input[type=date] { font-size:11px; padding:3px 6px; border:1px solid #ccd4db; border-radius:3px; }
+        .range-btn { font-size:10px; padding:3px 9px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#444; }
+        .range-btn:hover  { background:#eef4fa; }
+        .range-btn.active { background:#4a7ba7; color:#fff; border-color:#4a7ba7; }
+        .filter-note { color:#777; margin-left:auto; font-family:Consolas,monospace; font-size:10px; }
+
+        /* Active cross-filters. A filter you cannot see is a filter you will
+           misread the whole tab through, so every one is listed with the way
+           to remove it. */
+        .chipbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                   background:#fff8e1; border:1px solid #f0d9a0; border-radius:4px;
+                   padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .chipbar .lbl { font-weight:700; color:#8a6d3b; }
+        .chip { background:#fff; border:1px solid #e0cfa0; border-radius:12px;
+                padding:2px 6px 2px 9px; display:inline-flex; align-items:center; gap:6px; }
+        .chip b { font-weight:600; color:#333; }
+        .chip button { border:none; background:none; cursor:pointer; color:#a06a00;
+                       font-size:13px; line-height:1; padding:0 2px; }
+        .chip button:hover { color:#c00000; }
+        .chip-clear { font-size:10px; padding:3px 9px; border:1px solid #e0cfa0;
+                      background:#fff; border-radius:10px; cursor:pointer; color:#8a6d3b; }
+        .chip-clear:hover { background:#fff3d6; }
         .viz-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
         @media (max-width:1100px){ .viz-2col { grid-template-columns:1fr; } }
+
+        /* The donut and the time series do not deserve equal width. The donut
+           is a composition -- a dozen slices read at a glance, and past a
+           certain size it stops telling you more. The time series is a
+           hundred-plus days against a log axis, where every extra pixel of
+           width is another day you can actually resolve. So this row is
+           asymmetric, and only this row: the step-level pair below it stays
+           50/50 because both halves there are lists.
+
+           align-items:start lets each box take its own height, rather than
+           the shorter one being stretched to leave empty space under its
+           chart. */
+        .viz-row-split { display:grid; grid-template-columns:minmax(0,330px) minmax(0,1fr);
+                         gap:12px; align-items:start; }
+        @media (max-width:1100px){ .viz-row-split { grid-template-columns:1fr; } }
+        /* Narrow column: tighter legend chips so a dozen programs do not push
+           the box twice as tall as the chart beside it. */
+        .viz-row-split .chart-legend { gap:6px; }
+        .viz-row-split .lg-item { padding:1px 6px; font-size:9.5px; }
 
         /* ---- metadata "i" icon + pencil in grid headers ---- */
         .hdr-wrap { display:inline-flex; align-items:center; gap:5px; }
@@ -876,6 +968,58 @@ const CONFIG = {
     <div style="display:flex; gap:14px; align-items:center;">
         <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
         <a href="#" id="footer-signout">Sign out</a>
+    </div>
+</div>
+
+<!-- ===================== SLA INFO MODAL ===================== -->
+<div class="modal-overlay" id="slaModal">
+    <div class="modal-content" style="max-width:620px;">
+        <div class="modal-header">
+            <span>What an SLA commits to</span>
+            <button class="modal-close" data-close="slaModal">&times;</button>
+        </div>
+        <div class="modal-body sla-body">
+            <p>A service level agreement states, in measurable terms, what the business can expect
+               of this environment: how often it is <strong>available</strong>, how quickly it
+               <strong>responds</strong>, and that access to it stays <strong>controlled and
+               auditable</strong>. Each has a threshold and a review cadence, so &ldquo;the system is
+               slow&rdquo; becomes a number with an owner.</p>
+
+            <h4>Where each half is measured here</h4>
+            <table class="sum">
+                <thead><tr><th>Commitment</th><th>Where it is measured</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Available</strong> &mdash; is it up?</td>
+                        <td>The server and service tiles on this tab, from the most recent sweep,
+                            with the uptime history beneath them.</td></tr>
+                    <tr><td><strong>Responsive</strong> &mdash; is it quick enough?</td>
+                        <td><strong>Server Performance</strong>: response time per endpoint, with
+                            daily medians and 95th percentiles over months.</td></tr>
+                    <tr><td><strong>On time</strong> &mdash; did the work finish?</td>
+                        <td><strong>Scheduler Overview</strong> and <strong>Data Pipeline
+                            Performance</strong>: job outcomes, failures and run cost.</td></tr>
+                    <tr><td><strong>Controlled</strong> &mdash; who can do what?</td>
+                        <td><strong>Security</strong>: the software delivery and hotfix path.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Why it is measured continuously</h4>
+            <p>A commitment nobody measures is an intention. Every endpoint check, service state and
+               job outcome here is timestamped and retained, so a breach of the agreement is
+               <em>evidence</em> rather than recollection &mdash; and so is the absence of one.</p>
+
+            <h4>Lean Six Sigma</h4>
+            <p>That same record supplies the <strong>Measure</strong> phase with a baseline nobody
+               has to reconstruct, and the <strong>Control</strong> phase with the ongoing
+               monitoring that stops an improved process drifting back.</p>
+
+            <p class="sla-caveat">This page reports what the environment <em>did</em>. The
+               thresholds it should be judged against &mdash; the actual agreed numbers &mdash; live
+               in your SLA document, not in this tool.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="slaModal">Close</button>
+        </div>
     </div>
 </div>
 
@@ -1561,6 +1705,79 @@ function rowCountByGroupHtml() {
  * change in healthy latency. They are drawn in red on the scatter so the
  * outages stay visible, and excluded from the percentile lines.
  * ====================================================================== */
+/* =========================================================================
+ * DATE RANGE FILTER
+ * =========================================================================
+ * One implementation shared by Server Performance and Data Pipeline
+ * Performance. State is kept per panel key, so switching tabs does not reset
+ * the other one's range.
+ *
+ * The presets do the work day to day; the two date inputs are there for the
+ * case the presets do not cover, such as "the week of the outage". "All"
+ * reports the real span so the reader knows what they are looking at rather
+ * than assuming it is everything.
+ * ====================================================================== */
+const DateFilter = (function () {
+    const state = {};                       /* key -> {preset, from, to} */
+    const PRESETS = [['7d', 7], ['30d', 30], ['90d', 90], ['6m', 182], ['all', 0]];
+
+    const get = key => (state[key] = state[key] || { preset: 'all', from: '', to: '' });
+    const iso = d => d.toISOString().slice(0, 10);
+
+    /* Resolve the active range to concrete bounds, given the data's own span. */
+    function bounds(key, minD, maxD) {
+        const st = get(key);
+        if (st.from || st.to) {
+            return { lo: st.from ? new Date(st.from + 'T00:00:00') : minD,
+                     hi: st.to   ? new Date(st.to   + 'T23:59:59') : maxD };
+        }
+        const days = (PRESETS.find(p => p[0] === st.preset) || ['all', 0])[1];
+        if (!days) return { lo: minD, hi: maxD };
+        return { lo: new Date(+maxD - days * 86400000), hi: maxD };
+    }
+
+    function html(key, minD, maxD, shownCount, totalCount) {
+        const st = get(key);
+        const custom = !!(st.from || st.to);
+        /* Show the range actually in effect, not the span of the whole file.
+           Printing the full span next to a filtered row count reads as if the
+           filter had not applied. */
+        const act = bounds(key, minD, maxD);
+        return '<div class="filter-bar" data-dfkey="' + key + '">' +
+            '<label>Date range</label>' +
+            PRESETS.map(([k, d]) =>
+                '<button class="range-btn' + (!custom && st.preset === k ? ' active' : '') +
+                '" data-preset="' + k + '">' +
+                (k === 'all' ? 'All' : k === '6m' ? '6 months' : 'Last ' + d + ' days') + '</button>').join('') +
+            '<span style="color:#bbb;">|</span>' +
+            '<label>From</label><input type="date" data-df="from" value="' + esc(st.from) +
+                '" min="' + iso(minD) + '" max="' + iso(maxD) + '">' +
+            '<label>To</label><input type="date" data-df="to" value="' + esc(st.to) +
+                '" min="' + iso(minD) + '" max="' + iso(maxD) + '">' +
+            (custom ? '<button class="range-btn" data-preset="all">clear</button>' : '') +
+            '<span class="filter-note">' + shownCount.toLocaleString('en-US') + ' of ' +
+                totalCount.toLocaleString('en-US') + ' rows · showing ' +
+                esc(iso(act.lo)) + ' → ' + esc(iso(act.hi)) +
+                (shownCount < totalCount ? ' · data runs ' + esc(iso(minD)) + ' → ' + esc(iso(maxD)) : '') +
+                '</span>' +
+            '</div>';
+    }
+
+    function bind(root, key, onChange) {
+        const bar = root.querySelector('.filter-bar[data-dfkey="' + key + '"]');
+        if (!bar) return;
+        const st = get(key);
+        bar.querySelectorAll('.range-btn').forEach(b => b.addEventListener('click', () => {
+            st.preset = b.dataset.preset; st.from = ''; st.to = ''; onChange();
+        }));
+        bar.querySelectorAll('input[data-df]').forEach(i => i.addEventListener('change', () => {
+            st[i.dataset.df] = i.value; onChange();
+        }));
+    }
+
+    return { get, bounds, html, bind };
+})();
+
 const ServerLatency = (function () {
     let raw = null, daily = null, dailyTried = false;
 
@@ -1652,16 +1869,33 @@ const ServerLatency = (function () {
         if (!host) return;
         host.innerHTML = '<div class="card"><p>Loading server response times…</p></div>';
 
-        const d = await loadDaily();
+        const all = await loadDaily();
 
         /* ---------- preferred path: the daily roll-up ---------- */
-        if (d && d.length) {
+        if (all && all.length) {
+            const dates = all.map(r => new Date(r.Date + 'T00:00:00')).filter(x => !isNaN(x));
+            const minD = new Date(Math.min.apply(null, dates));
+            const maxD = new Date(Math.max.apply(null, dates));
+            const b = DateFilter.bounds('srv', minD, maxD);
+            const d = all.filter(r => {
+                const x = new Date(r.Date + 'T00:00:00');
+                return !isNaN(x) && x >= b.lo && x <= b.hi;
+            });
+
+            if (!d.length) {
+                host.innerHTML = '<div class="card">' +
+                    DateFilter.html('srv', minD, maxD, 0, all.length) +
+                    '<p class="notes-empty">No days in the selected range.</p></div>';
+                DateFilter.bind(host, 'srv', () => render(hostId));
+                return;
+            }
+
             const keys = [...new Set(d.map(r => r.Environment + ' ' + r.ServiceName))].sort();
             const mk = field => keys.map(k => ({
                 name: k,
                 points: d.filter(r => (r.Environment + ' ' + r.ServiceName) === k && num(r, field) !== null)
                          .map(r => ({ x: new Date(r.Date + 'T00:00:00'), y: num(r, field) }))
-                         .sort((a, b) => a.x - b.x)
+                         .sort((a, b2) => a.x - b2.x)
             })).filter(sr => sr.points.length);
 
             const days = new Set(d.map(r => r.Date)).size;
@@ -1674,19 +1908,21 @@ const ServerLatency = (function () {
               checks.toLocaleString('en-US') + ' checks over ' + days + ' days &middot; source ' +
               esc(CONFIG.SERVER_LATENCY_DAILY_CSV) + '</span></div>' +
 
+              DateFilter.html('srv', minD, maxD, d.length, all.length) +
+
               '<div class="chart-box"><h4>Daily median (p50) by endpoint &mdash; log scale. ' +
               'Is normal latency drifting?</h4>' +
-              Chart.line(mk('P50Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs,
-                  tipFormat: (sr, p) => sr.name + '\n' +
-                      new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }) +
-                      '\nMedian (p50): ' + fmtMs(p.y) }) + '</div>' +
+              Chart.line(mk('P50Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12,
+                  tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                      esc(new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })) +
+                      '<br>Median (p50): ' + esc(fmtMs(p.y)) }) + '</div>' +
 
               '<div class="chart-box"><h4>Daily 95th percentile by endpoint &mdash; what the slowest ' +
               'one check in twenty looks like</h4>' +
-              Chart.line(mk('P95Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs,
-                  tipFormat: (sr, p) => sr.name + '\n' +
-                      new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' }) +
-                      '\n95th percentile: ' + fmtMs(p.y) }) + '</div>' +
+              Chart.line(mk('P95Ms'), { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12,
+                  tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                      esc(new Date(p.x).toLocaleDateString('en-US', { year:'numeric', month:'short', day:'numeric' })) +
+                      '<br>95th percentile: ' + esc(fmtMs(p.y)) }) + '</div>' +
 
               summaryTableDaily(d) +
 
@@ -1699,17 +1935,27 @@ const ServerLatency = (function () {
               '<button class="btn btn-primary" id="loadScatterBtn">Load per-check detail</button>' +
               '</div></div>';
 
+            Chart.mount(host);
+            DateFilter.bind(host, 'srv', () => render(hostId));
+
             $('loadScatterBtn').addEventListener('click', async () => {
                 const box = $('scatterBox');
                 box.innerHTML = '<h4>Every individual check</h4><p>Loading…</p>';
                 try {
                     const r = await loadRaw();
-                    box.innerHTML = '<h4>Every check, by endpoint &mdash; log scale, timed-out checks in red</h4>' +
-                        Chart.scatter(scatterSeries(r), { height: 320, logY: true, yFloor: 10,
-                            yFormat: fmtMs, markLabel: 'timed out',
-                            tipFormat: (sr, p) => sr.name + '\n' +
-                                new Date(p.x).toLocaleString('en-US') +
-                                '\nResponse: ' + fmtMs(p.y) + (p.down ? '  (timed out)' : '') });
+                    const rr = r.filter(row => {
+                        const t = parseTs(row.Timestamp);
+                        return t && t >= b.lo && t <= b.hi;
+                    });
+                    box.innerHTML = '<h4>Every check, by endpoint &mdash; log scale, timed-out checks in red. ' +
+                        'Click a legend entry to hide an endpoint.</h4>' +
+                        Chart.scatter(scatterSeries(rr), { height: 340, logY: true, yFloor: 10,
+                            yFormat: fmtMs, markLabel: 'timed out', xTicks: 12, tipDateTime: true,
+                            tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                esc(new Date(p.x).toLocaleString('en-US')) +
+                                '<br>Response: ' + esc(fmtMs(p.y)) +
+                                (p.down ? '<br><span style="color:#ff9b9b">timed out</span>' : '') });
+                    Chart.mount(box);
                 } catch (e) {
                     box.innerHTML = '<h4>Every individual check</h4>' +
                         '<div class="notes-warn">Could not load ' + esc(CONFIG.SERVER_STATUS_CSV) +
@@ -1767,10 +2013,11 @@ const ServerLatency = (function () {
             'is being downloaded and aggregated in the browser. Run ' +
             '<code>ps1\\Export-ServerLatencyDaily.ps1</code> to do this once on the server instead.</div>' +
             '<div class="chart-box"><h4>Every check, by endpoint &mdash; log scale, timed-out checks in red</h4>' +
-            Chart.scatter(scatterSeries(r), { height: 320, logY: true, yFloor: 10,
+            Chart.scatter(scatterSeries(r), { height: 340, logY: true, yFloor: 10, xTicks: 12,
+                                              tipDateTime: true,
                                               yFormat: fmtMs, markLabel: 'timed out' }) + '</div>' +
             '<div class="chart-box"><h4>Daily median response time &mdash; timed-out checks excluded</h4>' +
-            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs }) + '</div>' +
+            Chart.line(medianSeries, { height: 250, logY: true, yFloor: 10, yFormat: fmtMs, xTicks: 12 }) + '</div>' +
             '<div class="chart-box"><h4>Latency summary &mdash; healthy checks only</h4>' +
             '<table class="sum"><thead><tr><th>Endpoint</th><th>Checks</th><th>Timed out</th>' +
             '<th>p50</th><th>p95</th><th>p99</th><th>Worst</th></tr></thead><tbody>' +
@@ -1782,6 +2029,8 @@ const ServerLatency = (function () {
               '<td style="font-family:Consolas,monospace;">' + Math.round(x.p99) + ' ms</td>' +
               '<td style="font-family:Consolas,monospace;">' + Math.round(x.max) + ' ms</td></tr>').join('') +
             '</tbody></table></div></div>';
+
+        Chart.mount(host);
     }
 
     function toPoints(rows) {
@@ -2286,229 +2535,336 @@ const Chart = (function () {
                      '#2c3e50','#d35400','#7f8c8d','#27ae60','#2980b9','#c0392b',
                      '#9b59b6','#f39c12','#1abc9c','#34495e'];
     const color = i => PALETTE[i % PALETTE.length];
-    const esc2 = t => esc(String(t));
 
-    /* Multi-series step/line chart over time. series = [{name, points:[{x:Date,y:Number}]}] */
-    function line(series, opts) {
+    /* =====================================================================
+     * WHY THIS IS NOT <title>
+     * =====================================================================
+     * v1.3Beta used a native SVG <title> on every point. That is free to
+     * write and awful to use: the browser waits about a second before
+     * showing it, it vanishes while you move, and a dense scatter needs one
+     * DOM node per point -- 968 of them on the sample data.
+     *
+     * So: no per-point nodes. Each chart keeps a plain array of its plotted
+     * points, one mousemove listener finds the nearest, and a single shared
+     * div follows the cursor. The tooltip appears on the same frame as the
+     * movement, and the SVG holds a few hundred fewer elements.
+     * ================================================================== */
+
+    let seq = 0;
+    const reg = {};                     /* id -> spec, including its point index */
+
+    function tipEl() {
+        let t = document.getElementById('chartTip');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'chartTip';
+            t.className = 'chart-tip';
+            document.body.appendChild(t);
+        }
+        return t;
+    }
+    function hideTip() { const t = document.getElementById('chartTip'); if (t) t.style.display = 'none'; }
+
+    function register(kind, series, opts) {
+        const id = 'chart' + (++seq);
+        reg[id] = { id: id, kind: kind, series: series, opts: opts || {},
+                    hidden: new Set(), pts: [], mounted: false };
+        return '<div class="chart-host" id="' + id + '"></div>';
+    }
+
+    /* Public entry points keep their old signatures, so every existing call
+       site works unchanged; they now return a placeholder that mount() fills. */
+    const line    = (series, opts) => register('line', series, opts);
+    const scatter = (series, opts) => register('scatter', series, opts);
+    const donut   = (items,  opts) => register('donut', items, opts);
+
+    function bars(items, opts) {
         opts = opts || {};
-        const W = opts.width || 980, H = opts.height || 190;
-        const m = { t: 10, r: 14, b: 26, l: 40 };
+        if (!items.length) return '<div class="notes-empty">No data.</div>';
+        const max = Math.max.apply(null, items.map(i => i.value)) || 1;
+        const fmt = v => opts.format ? opts.format(v) : v.toLocaleString('en-US');
+        return '<table class="sum" style="margin-top:4px;"><tbody>' + items.map((it, i) =>
+            '<tr title="' + esc(it.name) + ': ' + esc(fmt(it.value)) + '">' +
+            '<td style="width:210px;">' + esc(it.name) + '</td>' +
+            '<td><div style="background:' + color(i) + ';height:13px;border-radius:2px;width:' +
+            Math.max(1, (it.value / max) * 100).toFixed(1) + '%;"></div></td>' +
+            '<td style="width:90px;text-align:right;font-family:Consolas,monospace;">' +
+            esc(fmt(it.value)) + '</td></tr>').join('') + '</tbody></table>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Draw one registered chart into its placeholder.                   */
+    function draw(id) {
+        const spec = reg[id];
+        const host = document.getElementById(id);
+        if (!spec || !host) return;
+        spec.pts = [];
+        host.innerHTML = (spec.kind === 'donut') ? drawDonut(spec) : drawXY(spec);
+        wire(host, spec);
+        spec.mounted = true;
+    }
+
+    /* Call after any innerHTML that contains chart placeholders. */
+    function mount(root) {
+        const scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.chart-host').forEach(h => { if (h.id && reg[h.id]) draw(h.id); });
+    }
+
+    /* ---------------------------------------------------------------- */
+    function drawXY(spec) {
+        const o = spec.opts;
+        const isScatter = spec.kind === 'scatter';
+        const W = o.width || 980, H = o.height || (isScatter ? 300 : 250);
+        const m = { t: 12, r: 16, b: 34, l: 54 };
         const iw = W - m.l - m.r, ih = H - m.t - m.b;
 
+        const vis = spec.series.map((s, i) => ({ s: s, i: i }))
+                               .filter(x => !spec.hidden.has(x.i));
+
         let xs = [], ys = [];
-        series.forEach(s => s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
-        if (!xs.length) return '<div class="notes-empty">No data in the selected window.</div>';
+        vis.forEach(v => v.s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
+        if (!xs.length) {
+            return '<div class="notes-empty" style="height:' + (H - 40) + 'px;display:flex;' +
+                   'align-items:center;justify-content:center;">Every series is hidden. ' +
+                   'Click a legend entry to bring one back.</div>' + legendHtml(spec);
+        }
+
         const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-        const useLog = !!opts.logY;
-        const floor = Math.max(1, opts.yFloor || 1);
+        const useLog = !!o.logY;
+        const floor = Math.max(1, o.yFloor || 1);
         const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
         const tv = ys.map(tf);
-        const y0 = opts.yMin !== undefined ? tf(opts.yMin) : Math.min.apply(null, tv);
-        const y1 = opts.yMax !== undefined ? tf(opts.yMax) : Math.max.apply(null, tv);
-        const sx = v => m.l + (x1 === x0 ? 0 : ((+v - x0) / (x1 - x0)) * iw);
+        const y0 = o.yMin !== undefined ? tf(o.yMin) : Math.min.apply(null, tv);
+        const y1 = o.yMax !== undefined ? tf(o.yMax) : Math.max.apply(null, tv);
+        const sx = v => m.l + (x1 === x0 ? iw / 2 : ((+v - x0) / (x1 - x0)) * iw);
         const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
 
         let g = '';
-        /* gridlines + y labels */
-        const gridTicks = [];
-        if (useLog) {
-            for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) gridTicks.push(Math.pow(10, d));
-        } else {
-            for (let i = 0; i <= 4; i++) gridTicks.push(y0 + ((y1 - y0) * i / 4));
-        }
-        gridTicks.forEach(yv => {
+        const yTicks = [];
+        if (useLog) { for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) yTicks.push(Math.pow(10, d)); }
+        else { for (let i = 0; i <= 4; i++) yTicks.push(y0 + ((y1 - y0) * i / 4)); }
+        yTicks.forEach(yv => {
             const yy = sy(yv);
             if (yy < m.t - 1 || yy > m.t + ih + 1) return;
             g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + yy.toFixed(1) +
                  '" stroke="#eceff3" stroke-width="1"/>' +
                  '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" fill="#999" text-anchor="end">' +
-                 (opts.yFormat ? opts.yFormat(yv) : Math.round(yv)) + '</text>';
-        });
-        /* x labels: first, middle, last */
-        [x0, (x0 + x1) / 2, x1].forEach((xv, i) => {
-            g += '<text x="' + sx(xv) + '" y="' + (H - 8) + '" font-size="9" fill="#999" text-anchor="' +
-                 (i === 0 ? 'start' : i === 2 ? 'end' : 'middle') + '">' +
-                 esc2(new Date(xv).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })) + '</text>';
+                 esc(o.yFormat ? o.yFormat(yv) : Math.round(yv)) + '</text>';
         });
 
-        /* A 1.6px line is almost impossible to hover. Each vertex also gets a
-           transparent circle several pixels wide carrying the tooltip, so the
-           pointer finds a value without the line having to be thicker. */
-        const tipLine = opts.tipFormat || ((sr, p) =>
-            sr.name + '\n' + new Date(p.x).toLocaleDateString('en-US',
-                { year: 'numeric', month: 'short', day: 'numeric' }) + '\n' +
-            (opts.yFormat ? opts.yFormat(p.y) : p.y));
-
-        series.forEach((s, si) => {
-            if (!s.points.length) return;
-            const d = s.points.map((p, i) => (i ? 'L' : 'M') + sx(p.x).toFixed(1) + ' ' + sy(p.y).toFixed(1)).join(' ');
-            g += '<path d="' + d + '" fill="none" stroke="' + color(si) + '" stroke-width="1.6" ' +
-                 'stroke-linejoin="round" stroke-linecap="round"/>';
-            if (opts.tooltips !== false) {
-                s.points.forEach(p => {
-                    g += '<circle cx="' + sx(p.x).toFixed(1) + '" cy="' + sy(p.y).toFixed(1) +
-                         '" r="4.5" fill="' + color(si) + '" fill-opacity="0" ' +
-                         'style="cursor:crosshair;">' +
-                         '<title>' + esc(tipLine(s, p)) + '</title></circle>';
-                });
+        /* More x labels than before, and the density adapts to the span so
+           they stay readable instead of overlapping. */
+        const spanDays = (x1 - x0) / 86400000;
+        /* The cap is a per-label width budget in viewBox units, so labels can
+           never collide however many a caller asks for. 80 fits "Oct 13" with
+           the year beneath it and leaves margin. */
+        const nTicks = Math.max(2, Math.min(o.xTicks || 10, Math.round(iw / (o.xTickWidth || 80))));
+        const fmtX = v => {
+            const d = new Date(v);
+            if (spanDays <= 2)   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            if (spanDays <= 14)  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            if (spanDays <= 400) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        };
+        for (let i = 0; i <= nTicks; i++) {
+            const xv = x0 + (x1 - x0) * (i / nTicks);
+            const px = sx(xv);
+            g += '<line x1="' + px.toFixed(1) + '" y1="' + m.t + '" x2="' + px.toFixed(1) + '" y2="' + (m.t + ih) +
+                 '" stroke="#f4f6f8" stroke-width="1"/>' +
+                 '<text x="' + px.toFixed(1) + '" y="' + (H - 18) + '" font-size="9" fill="#999" text-anchor="' +
+                 (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' + esc(fmtX(xv)) + '</text>';
+            if (spanDays > 14 && spanDays <= 400) {
+                g += '<text x="' + px.toFixed(1) + '" y="' + (H - 7) + '" font-size="8" fill="#bbb" text-anchor="' +
+                     (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' +
+                     esc(new Date(xv).getFullYear()) + '</text>';
             }
-            /* mark the failures so an outage is visible rather than inferred */
-            if (opts.markBelow !== undefined) {
-                s.points.forEach(p => {
-                    if (p.y <= opts.markBelow) {
-                        g += '<circle cx="' + sx(p.x).toFixed(1) + '" cy="' + sy(p.y).toFixed(1) +
-                             '" r="2.6" fill="#c00000"/>';
-                    }
-                });
-            }
-        });
-
-        const legend = series.map((s, i) =>
-            '<span><i style="background:' + color(i) + '"></i>' + esc2(s.name) + '</span>').join('');
-
-        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
-               'style="width:100%;height:auto;">' + g + '</svg>' +
-               '<div class="chart-legend">' + legend + '</div>';
-    }
-
-    /* Donut. items = [{name, value}] */
-    function donut(items, opts) {
-        opts = opts || {};
-        const W = opts.width || 420, H = opts.height || 260;
-        const cx = 128, cy = H / 2, R = 92, r = 52;
-        const total = items.reduce((a, b) => a + b.value, 0);
-        if (!total) return '<div class="notes-empty">No data.</div>';
-
-        let a0 = -Math.PI / 2, g = '';
-        items.forEach((it, i) => {
-            const frac = it.value / total, a1 = a0 + frac * Math.PI * 2;
-            const large = frac > 0.5 ? 1 : 0;
-            const p = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
-            const [x1, y1] = p(a0, R), [x2, y2] = p(a1, R), [x3, y3] = p(a1, r), [x4, y4] = p(a0, r);
-            g += '<path d="M' + x1 + ' ' + y1 + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x2 + ' ' + y2 +
-                 ' L' + x3 + ' ' + y3 + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + x4 + ' ' + y4 + ' Z" ' +
-                 'fill="' + color(i) + '" stroke="#fff" stroke-width="1"><title>' + esc2(it.name) + ': ' +
-                 it.value.toLocaleString('en-US', { maximumFractionDigits: 0 }) + '</title></path>';
-            a0 = a1;
-        });
-        g += '<text x="' + cx + '" y="' + (cy - 4) + '" text-anchor="middle" font-size="18" font-weight="700" fill="#1f3864">' +
-             (opts.centerValue || '') + '</text>' +
-             '<text x="' + cx + '" y="' + (cy + 12) + '" text-anchor="middle" font-size="9" fill="#888">' +
-             esc2(opts.centerLabel || '') + '</text>';
-
-        /* legend to the right, inside the SVG so it scales with it */
-        items.forEach((it, i) => {
-            const yy = 24 + i * 15;
-            if (yy > H - 8) return;
-            const pct = ((it.value / total) * 100).toFixed(1);
-            g += '<rect x="248" y="' + (yy - 8) + '" width="9" height="9" rx="2" fill="' + color(i) + '"/>' +
-                 '<text x="262" y="' + yy + '" font-size="9.5" fill="#444">' +
-                 esc2(it.name.length > 26 ? it.name.slice(0, 25) + '…' : it.name) +
-                 ' <tspan fill="#999">' + pct + '%</tspan></text>';
-        });
-
-        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;">' + g + '</svg>';
-    }
-
-    /* Horizontal bars. items = [{name, value}] */
-    function bars(items, opts) {
-        opts = opts || {};
-        if (!items.length) return '<div class="notes-empty">No data.</div>';
-        const max = Math.max.apply(null, items.map(i => i.value)) || 1;
-        return '<table class="sum" style="margin-top:4px;"><tbody>' + items.map((it, i) =>
-            '<tr title="' + esc2(it.name) + ': ' +
-                esc2(opts.format ? opts.format(it.value) : it.value.toLocaleString('en-US')) + '">' +
-            '<td style="width:210px;">' + esc2(it.name) + '</td>' +
-            '<td><div style="background:' + color(i) + ';height:13px;border-radius:2px;width:' +
-            Math.max(1, (it.value / max) * 100).toFixed(1) + '%;"></div></td>' +
-            '<td style="width:90px;text-align:right;font-family:Consolas,monospace;">' +
-            (opts.format ? opts.format(it.value) : it.value.toLocaleString('en-US')) + '</td></tr>').join('') +
-            '</tbody></table>';
-    }
-
-
-    /* Scatter of many points over time, with an optional log Y axis.
-       series = [{name, points:[{x:Date, y:Number, down:Boolean}]}]
-
-       Latency is log-normal: a healthy check is a few hundred ms, a timeout is
-       30 000. On a linear axis the timeouts flatten everything else into the
-       floor. The axis is transformed rather than the data, so the tick labels
-       and tooltips still read in real milliseconds. */
-    function scatter(series, opts) {
-        opts = opts || {};
-        const W = opts.width || 980, H = opts.height || 300;
-        const m = { t: 10, r: 14, b: 28, l: 52 };
-        const iw = W - m.l - m.r, ih = H - m.t - m.b;
-        const useLog = opts.logY !== false;
-
-        let xs = [], ys = [];
-        series.forEach(sr => sr.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
-        if (!xs.length) return '<div class="notes-empty">No data in the selected window.</div>';
-
-        const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
-        const floor = Math.max(1, opts.yFloor || 1);
-        const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
-        const yvals = ys.map(tf);
-        const y0 = Math.min.apply(null, yvals), y1 = Math.max.apply(null, yvals);
-        const sx = v => m.l + (x1 === x0 ? iw / 2 : ((+v - x0) / (x1 - x0)) * iw);
-        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
-
-        let g = '';
-        /* Gridlines on decade boundaries when logged, five even steps otherwise. */
-        const ticks = [];
-        if (useLog) {
-            for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) ticks.push(Math.pow(10, d));
-        } else {
-            for (let i = 0; i <= 4; i++) ticks.push(y0 + (y1 - y0) * i / 4);
         }
-        ticks.forEach(tv => {
-            const yy = sy(tv);
-            if (yy < m.t - 1 || yy > m.t + ih + 1) return;
-            g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) +
-                 '" y2="' + yy.toFixed(1) + '" stroke="#eceff3" stroke-width="1"/>' +
-                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) +
-                 '" font-size="9" fill="#999" text-anchor="end">' +
-                 (opts.yFormat ? opts.yFormat(tv) : Math.round(tv)) + '</text>';
-        });
 
-        const span = (x1 - x0) / 86400000;
-        const fmtX = v => new Date(v).toLocaleDateString('en-US',
-            span > 70 ? { month: 'short', year: '2-digit' } : { month: 'short', day: 'numeric' });
-        [0, 0.25, 0.5, 0.75, 1].forEach((f, i) => {
-            const xv = x0 + (x1 - x0) * f;
-            g += '<text x="' + sx(xv).toFixed(1) + '" y="' + (H - 9) + '" font-size="9" fill="#999" text-anchor="' +
-                 (i === 0 ? 'start' : i === 4 ? 'end' : 'middle') + '">' + esc(fmtX(xv)) + '</text>';
-        });
-
-        /* Native <title> gives a hover tooltip with no JavaScript, no library
-           and no positioning code, and it works on every point without
-           hit-testing. Each one names the endpoint, the timestamp and the
-           value, which is what you want to read off a dense scatter. */
-        const tip = opts.tipFormat || ((sr, p) =>
-            sr.name + '\n' + new Date(p.x).toLocaleString('en-US') + '\n' +
-            (opts.yFormat ? opts.yFormat(p.y) : p.y) + (p.down ? '  (timed out)' : ''));
-
-        series.forEach((sr, si) => {
-            const c = color(si);
-            sr.points.forEach(p => {
-                const down = !!p.down;
-                g += '<circle cx="' + sx(p.x).toFixed(1) + '" cy="' + sy(p.y).toFixed(1) +
-                     '" r="' + (down ? 2.6 : 1.7) + '" fill="' + (down ? '#c00000' : c) +
-                     '" fill-opacity="' + (down ? 0.95 : 0.55) + '">' +
-                     '<title>' + esc(tip(sr, p)) + '</title></circle>';
+        vis.forEach(v => {
+            const c = color(v.i);
+            const pts = v.s.points.slice().sort((a, b) => a.x - b.x);
+            if (!isScatter) {
+                const d = pts.map((p, i) => (i ? 'L' : 'M') + sx(p.x).toFixed(1) + ' ' + sy(p.y).toFixed(1)).join(' ');
+                g += '<path d="' + d + '" fill="none" stroke="' + c + '" stroke-width="1.7" ' +
+                     'stroke-linejoin="round" stroke-linecap="round"/>';
+            }
+            pts.forEach(p => {
+                const px = sx(p.x), py = sy(p.y);
+                if (isScatter) {
+                    const down = !!p.down;
+                    g += '<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="' + (down ? 2.6 : 1.7) +
+                         '" fill="' + (down ? '#c00000' : c) + '" fill-opacity="' + (down ? 0.95 : 0.5) + '"/>';
+                }
+                /* The point index the tooltip reads. No DOM node per point. */
+                spec.pts.push({ px: px, py: py, x: p.x, y: p.y, down: !!p.down, name: v.s.name, ci: v.i });
             });
         });
 
-        const legend = series.map((sr, i) =>
-            '<span><i style="background:' + color(i) + '"></i>' + esc(sr.name) + '</span>').join('') +
-            (opts.markLabel ? '<span><i style="background:#c00000"></i>' + esc(opts.markLabel) + '</span>' : '');
+        g += '<circle id="' + spec.id + '-hl" r="4.5" fill="none" stroke="#1f3864" stroke-width="1.8" ' +
+             'style="display:none;pointer-events:none;"/>';
 
-        return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
-               'style="width:100%;height:auto;">' + g + '</svg>' +
-               '<div class="chart-legend">' + legend + '</div>';
+        return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;height:auto;display:block;cursor:crosshair;">' + g + '</svg>' + legendHtml(spec);
     }
 
-    return { line, scatter, donut, bars, color };
+    /* ---------------------------------------------------------------- */
+    function drawDonut(spec) {
+        const o = spec.opts;
+        const items = spec.series;
+        const W = o.width || 420, H = o.height || 190;
+        const R = o.radius || 64, r = o.inner || 36;
+        /* Centre follows the radius. A fixed centre clips the ring as soon as
+           the radius grows past it. */
+        const cx = o.cx || (R + 14), cy = H / 2;
+        const vis = items.map((it, i) => ({ it: it, i: i })).filter(x => !spec.hidden.has(x.i));
+        const total = vis.reduce((a, b) => a + b.it.value, 0);
+        if (!total) return '<div class="notes-empty">Nothing selected.</div>' + legendHtml(spec, true);
+
+        let a0 = -Math.PI / 2, g = '';
+        vis.forEach(v => {
+            const frac = v.it.value / total, a1 = a0 + frac * Math.PI * 2;
+            const large = frac > 0.5 ? 1 : 0;
+            const pt = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+            const [x1, y1] = pt(a0, R), [x2, y2] = pt(a1, R), [x3, y3] = pt(a1, r), [x4, y4] = pt(a0, r);
+            g += '<path class="donut-seg" data-idx="' + v.i + '" style="cursor:pointer;" ' +
+                 'd="M' + x1 + ' ' + y1 + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x2 + ' ' + y2 +
+                 ' L' + x3 + ' ' + y3 + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + x4 + ' ' + y4 + ' Z" ' +
+                 'fill="' + color(v.i) + '" stroke="#fff" stroke-width="1"/>';
+            a0 = a1;
+        });
+        const fsV = Math.max(13, Math.round(R * 0.26)), fsL = Math.max(8, Math.round(R * 0.13));
+        g += '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="' + fsV +
+             '" font-weight="700" fill="#1f3864">' + esc(o.centerValue || '') + '</text>' +
+             '<text x="' + cx + '" y="' + (cy + fsL + 6) + '" text-anchor="middle" font-size="' + fsL +
+             '" fill="#888">' + esc(o.centerLabel || '') + '</text>';
+
+        return '<svg class="chart-svg donut" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;max-width:' + W + 'px;height:auto;display:block;">' + g + '</svg>' +
+               legendHtml(spec, true);
+    }
+
+    /* ---------------------------------------------------------------- */
+    function legendHtml(spec, isDonut) {
+        const src = spec.series;
+        const items = src.map((s, i) => {
+            const off = spec.hidden.has(i);
+            const label = isDonut ? s.name : s.name;
+            return '<span class="lg-item' + (off ? ' off' : '') + '" data-idx="' + i + '" ' +
+                   'title="' + (off ? 'Hidden — click to show' : 'Click to hide') + '">' +
+                   '<i style="background:' + color(i) + '"></i>' + esc(label) + '</span>';
+        }).join('');
+        const anyHidden = spec.hidden.size > 0;
+        return '<div class="chart-legend" data-for="' + spec.id + '">' + items +
+               (spec.opts.markLabel ? '<span class="lg-static"><i style="background:#c00000"></i>' +
+                    esc(spec.opts.markLabel) + '</span>' : '') +
+               (anyHidden ? '<button class="lg-reset" data-for="' + spec.id + '">show all</button>' : '') +
+               '</div>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    function wire(host, spec) {
+        /* Legend: click to filter. Works for lines, scatters and the donut. */
+        host.querySelectorAll('.lg-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const i = Number(el.dataset.idx);
+                if (spec.kind === 'donut' && spec.opts.onSegmentClick) {
+                    spec.opts.onSegmentClick(spec.series[i], i); return;
+                }
+                if (spec.hidden.has(i)) spec.hidden.delete(i); else spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+        });
+        const reset = host.querySelector('.lg-reset');
+        if (reset) reset.addEventListener('click', () => {
+            spec.hidden.clear(); draw(spec.id);
+            if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+        });
+
+        /* Donut segments are clickable too, which is the natural gesture. */
+        host.querySelectorAll('.donut-seg').forEach(seg => {
+            seg.addEventListener('click', () => {
+                const i = Number(seg.dataset.idx);
+                /* When the host supplies onSegmentClick it owns the filter, so
+                   the selection can drive a whole panel rather than just this
+                   chart. Hiding the slice internally would scope the filter to
+                   the donut and leave the rest of the tab disagreeing with it. */
+                if (spec.opts.onSegmentClick) { spec.opts.onSegmentClick(spec.series[i], i); return; }
+                spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+            seg.addEventListener('mousemove', ev => {
+                const it = spec.series[Number(seg.dataset.idx)];
+                const total = spec.series.filter((s, i) => !spec.hidden.has(i))
+                                         .reduce((a, b) => a + b.value, 0) || 1;
+                showTip(ev, '<strong>' + esc(it.name) + '</strong><br>' +
+                    esc(spec.opts.valueFormat ? spec.opts.valueFormat(it.value) : it.value.toLocaleString('en-US')) +
+                    '<br><span style="color:#aab">' + ((it.value / total) * 100).toFixed(1) +
+                    '% · click to hide</span>');
+            });
+            seg.addEventListener('mouseleave', hideTip);
+        });
+
+        /* XY tooltip: one listener, nearest-point lookup, no per-point nodes. */
+        const svg = host.querySelector('svg.chart-svg:not(.donut)');
+        if (!svg || !spec.pts.length) return;
+        const hl = document.getElementById(spec.id + '-hl');
+        const vb = svg.getAttribute('viewBox').split(/\s+/).map(Number);
+
+        svg.addEventListener('mousemove', ev => {
+            const r = svg.getBoundingClientRect();
+            if (!r.width) return;
+            const mx = ((ev.clientX - r.left) / r.width) * vb[2];
+            const my = ((ev.clientY - r.top) / r.height) * vb[3];
+
+            let best = null, bestD = Infinity;
+            const pts = spec.pts;
+            for (let i = 0; i < pts.length; i++) {
+                const dx = pts[i].px - mx, dy = pts[i].py - my;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = pts[i]; }
+            }
+            if (!best || bestD > 900) { hideTip(); if (hl) hl.style.display = 'none'; return; }
+
+            if (hl) {
+                hl.setAttribute('cx', best.px); hl.setAttribute('cy', best.py);
+                hl.setAttribute('stroke', best.down ? '#c00000' : color(best.ci));
+                hl.style.display = '';
+            }
+            const f = spec.opts.tipFormat;
+            showTip(ev, f ? f(best) : defaultTip(best, spec.opts));
+        });
+        svg.addEventListener('mouseleave', () => { hideTip(); if (hl) hl.style.display = 'none'; });
+    }
+
+    function visibleNames(spec) {
+        return spec.series.filter((s, i) => !spec.hidden.has(i)).map(s => s.name);
+    }
+
+    function defaultTip(p, o) {
+        const d = new Date(p.x);
+        const when = (o.tipDateTime)
+            ? d.toLocaleString('en-US')
+            : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        return '<strong>' + esc(p.name) + '</strong><br>' + esc(when) + '<br>' +
+               esc(o.yFormat ? o.yFormat(p.y) : p.y) + (p.down ? ' <span style="color:#ff9b9b">(timed out)</span>' : '');
+    }
+
+    function showTip(ev, html) {
+        const t = tipEl();
+        t.innerHTML = html;
+        t.style.display = 'block';
+        const pad = 14;
+        let x = ev.clientX + pad, y = ev.clientY + pad;
+        const r = t.getBoundingClientRect();
+        if (x + r.width > window.innerWidth - 8)  x = ev.clientX - r.width - pad;
+        if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - pad;
+        t.style.left = x + 'px';
+        t.style.top  = y + 'px';
+    }
+
+    return { line, scatter, donut, bars, color, mount, hideTip };
 })();
 
 /* ===================================================================== HOME */
@@ -2556,14 +2912,14 @@ const Home = (function () {
         const stale = ageMin !== null && ageMin > CONFIG.STATUS_STALE_MINUTES;
 
         let h = '<div class="card">';
-        h += '<div class="sla-head"><h2>Home SLA Overview</h2>';
+        h += '<div class="sla-head"><h2>Home SLA Overview (Uptime)</h2>';
         h += '<span class="sla-stamp">' + (newest
                 ? 'Last sweep ' + esc(newest.toLocaleString('en-US')) + ' (' + ageMin + ' min ago)'
                 : 'No monitoring data found') + '</span>';
         if (stale) h += '<span class="sla-stale">STALE — the scanner may not be running</span>';
 
-        /* ---- login nudge, upper right ---- */
-        h += '<div class="login-nudge">';
+        /* ---- upper right: session box, then the SLA link beneath it ---- */
+        h += '<div class="head-side"><div class="login-nudge">';
         if (authed) {
             h += '<strong>Signed in as ' + esc(window.session.userid) + '.</strong> ' +
                  'Job-level detail is available in the Data Grid.';
@@ -2572,6 +2928,13 @@ const Home = (function () {
                  'SAS session. Logon to query job history, edit job names and use Ask DMW.' +
                  '<button class="btn btn-primary" style="margin-top:6px;" onclick="handleLogon(event)">Logon</button>';
         }
+        h += '</div>';
+        /* The SLA explanation used to sit inline beside the tiles, where it
+           was the largest thing on a screen whose job is to show status at a
+           glance. It is reference material -- read once, then rarely -- so it
+           moves behind a link and the tiles get the width back. */
+        h += '<button class="sla-link" id="slaInfoBtn" title="What an SLA commits to, and how this page measures it">' +
+             '<span class="sla-link-ico">i</span> Click here for SLA Info</button>';
         h += '</div></div>';
 
         if (errs && errs.length) {
@@ -2588,17 +2951,33 @@ const Home = (function () {
         if (!srvKeys.length) {
             h += '<div class="notes-empty">No server checks recorded. Run <code>Check-SASServers_v2.0.ps1</code>.</div>';
         } else {
-            h += '<div class="svc-grid">';
-            srvKeys.forEach(k => {
-                const r = latestSrv[k];
-                h += '<div class="svc-card ' + cls(r.Status) + '">' +
-                     '<div class="svc-name">' + esc(r.ServiceName) +
-                     '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
-                     '<div class="svc-state">' + esc(r.Status) + '</div>' +
-                     '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
-                     esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+            const card = r =>
+                '<div class="svc-card ' + cls(r.Status) + '">' +
+                '<div class="svc-name">' + esc(r.ServiceName) +
+                '<span class="svc-env ' + esc(r.Environment) + '">' + esc(r.Environment) + '</span></div>' +
+                '<div class="svc-state">' + esc(r.Status) + '</div>' +
+                '<div class="svc-meta">HTTP ' + esc(r.HttpCode) + ' &middot; ' +
+                esc(r.ResponseTimeMs) + ' ms<br>' + esc(r.Url) + '</div></div>';
+
+            /* One row per environment, PROD first, rather than a single flowing
+               grid. Production is what the SLA is written against, so it should
+               not be mixed in among the lower environments by alphabet. Any
+               environment not named here follows in its own row. */
+            const envOrder = ['PROD', 'UNIT'];
+            const envs = [...new Set(srvKeys.map(k => latestSrv[k].Environment))]
+                .sort((a, b) => {
+                    const ia = envOrder.indexOf(a), ib = envOrder.indexOf(b);
+                    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+                });
+
+            envs.forEach(e => {
+                h += '<div class="env-row"><div class="env-row-label">' + esc(e) + '</div>' +
+                     '<div class="svc-grid">' +
+                     srvKeys.filter(k => latestSrv[k].Environment === e)
+                            .map(k => card(latestSrv[k])).join('') +
+                     '</div></div>';
             });
-            h += '</div>';
+
         }
 
         /* ================= SERVICES / OBJECT SPAWNER ================= */
@@ -2655,8 +3034,11 @@ const Home = (function () {
             }));
             h += '<div class="chart-box"><h4>Availability over time &mdash; 1 = up, 0.5 = degraded, 0 = down. ' +
                  'Red dots mark failed checks.</h4>' +
-                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, markBelow: 0,
-                                      yFormat: v => (v >= 0.95 ? 'up' : v <= 0.05 ? 'down' : '') }) +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, xTicks: 10, tipDateTime: true,
+                                      yFormat: v => (v >= 0.95 ? 'up' : v <= 0.05 ? 'down' : ''),
+                                      tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                          esc(new Date(p.x).toLocaleString('en-US')) + '<br>' +
+                                          (p.y >= 0.95 ? 'UP' : p.y <= 0.05 ? 'DOWN' : 'DEGRADED') }) +
                  '</div>';
 
             /* availability % per endpoint */
@@ -2691,8 +3073,11 @@ const Home = (function () {
                                 .filter(p => p.x).sort((a, b) => a.x - b.x)
             }));
             h += '<div class="chart-box"><h4>Service state over time &mdash; 1 = running, 0 = stopped or unreachable</h4>' +
-                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, markBelow: 0,
-                                      yFormat: v => (v >= 0.95 ? 'run' : v <= 0.05 ? 'stop' : '') }) +
+                 Chart.line(series, { height: 200, yMin: -0.05, yMax: 1.1, xTicks: 10, tipDateTime: true,
+                                      yFormat: v => (v >= 0.95 ? 'run' : v <= 0.05 ? 'stop' : ''),
+                                      tipFormat: p => '<strong>' + esc(p.name) + '</strong><br>' +
+                                          esc(new Date(p.x).toLocaleString('en-US')) + '<br>' +
+                                          (p.y >= 0.95 ? 'Running' : 'Stopped or unreachable') }) +
                  '</div>';
 
             const rel = Object.keys(byKey).sort().map(k => {
@@ -2705,6 +3090,11 @@ const Home = (function () {
 
         h += '</div>';
         host.innerHTML = h;
+        /* The chart helpers now emit placeholders that mount() fills, so every
+           innerHTML carrying a chart must be followed by this. */
+        Chart.mount(host);
+        const slaBtn = $('slaInfoBtn');
+        if (slaBtn) slaBtn.addEventListener('click', () => openModal('slaModal'));
     }
 
     async function show() {
@@ -2724,12 +3114,26 @@ const Home = (function () {
 
 /* ========================================================== VISUALIZATIONS */
 const Viz = (function () {
-    let rows = [], steps = [], loaded = false, stepsError = '';
+    let allRows = [], steps = [], loaded = false, stepsError = '';
+
+    /* =====================================================================
+     * CROSS-FILTER STATE
+     * =====================================================================
+     * Selecting a program on the donut used to hide one slice and leave the
+     * KPIs, the time series, the detail table and the step-level section
+     * reporting on everything -- so the tab quietly disagreed with itself.
+     *
+     * The selection now lives here, beside the date range, and every section
+     * is built from the same filtered set. Both filters are listed in a bar
+     * at the top with the means to undo them, because a filter you cannot
+     * see is a filter you will misread the whole tab through.
+     * ================================================================== */
+    const hiddenPrograms = new Set();
 
     async function load() {
         /* The rollup is required; the step source is optional, so a missing
            step file degrades to half a tab rather than an empty one. */
-        rows = await fetchCSV(CONFIG.SAS_LOG_ROLLUP_CSV);
+        allRows = await fetchCSV(CONFIG.SAS_LOG_ROLLUP_CSV);
         try {
             steps = await fetchCSV(CONFIG.SAS_LOG_STEPS_CSV);
             stepsError = '';
@@ -2751,8 +3155,38 @@ const Viz = (function () {
             return;
         }
 
-        const ok = rows.filter(r => r.ParseStatus === 'OK');
+        let rows = allRows;
         const num = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
+        const rowDate = r => { const d = new Date(String(r.LastModified).replace(' ', 'T')); return isNaN(d) ? null : d; };
+
+        /* Date range, shared implementation with Server Performance. */
+        const allDates = rows.map(rowDate).filter(Boolean);
+        const minD = allDates.length ? new Date(Math.min.apply(null, allDates)) : new Date();
+        const maxD = allDates.length ? new Date(Math.max.apply(null, allDates)) : new Date();
+        const b = DateFilter.bounds('viz', minD, maxD);
+        const inRange = rows.filter(r => { const d = rowDate(r); return d && d >= b.lo && d <= b.hi; });
+
+        if (!inRange.length) {
+            host.innerHTML = '<div class="card">' +
+                DateFilter.html('viz', minD, maxD, 0, allRows.length) +
+                '<p class="notes-empty">No runs in the selected range.</p></div>';
+            DateFilter.bind(host, 'viz', () => show());
+            return;
+        }
+        /* One filtered set feeds every section below. */
+        rows = inRange.filter(r => !hiddenPrograms.has(r.ProgramName));
+        const visibleSteps = steps.filter(r => !hiddenPrograms.has(r.ProgramName));
+        const ok = rows.filter(r => r.ParseStatus === 'OK');
+
+        if (!rows.length) {
+            host.innerHTML = '<div class="card">' +
+                DateFilter.html('viz', minD, maxD, 0, allRows.length) +
+                chipBarHtml() +
+                '<p class="notes-empty">Every program is filtered out. Clear a filter above.</p></div>';
+            DateFilter.bind(host, 'viz', () => show());
+            bindChips(host);
+            return;
+        }
 
         /* KPI tiles */
         const programs = {};
@@ -2767,10 +3201,13 @@ const Viz = (function () {
         const fmtH = s => (s / 3600).toFixed(1) + ' h';
 
         let h = '<div class="card">';
-        h += '<div class="sla-head"><h2>Report Performance</h2>' +
+        h += '<div class="sla-head"><h2>Data Pipeline Performance</h2>' +
              '<span class="sla-stamp">Per file: ' + esc(CONFIG.SAS_LOG_ROLLUP_CSV) +
              (steps.length ? ' &middot; Per step: ' + esc(CONFIG.SAS_LOG_STEPS_CSV) : '') +
              '</span></div>';
+
+        h += DateFilter.html('viz', minD, maxD, rows.length, allRows.length);
+        h += chipBarHtml();
 
         h += '<div class="kpi-row">' +
              '<div class="kpi"><div class="v">' + progCount + '</div><div class="l">Program Count</div></div>' +
@@ -2801,12 +3238,33 @@ const Viz = (function () {
         });
         const pts = Object.keys(byDay).sort().map(k => ({ x: new Date(k + 'T00:00:00'), y: byDay[k] }));
 
-        h += '<div class="viz-2col">';
-        h += '<div class="chart-box"><h4>Average CPU Time by SAS Program</h4>' +
-             Chart.donut(donutItems, { centerValue: fmtH(totCpu), centerLabel: 'total CPU' }) + '</div>';
+        h += '<div class="viz-row-split">';
+        h += '<div class="chart-box"><h4>Average CPU Time by SAS Program ' +
+             '<span style="font-weight:400;color:#777;">&mdash; click a segment or a legend entry to ' +
+             'filter the whole tab by that program</span></h4>' +
+             Chart.donut(donutItems, { centerValue: fmtH(totCpu), centerLabel: 'total CPU',
+                                       width: 300, height: 250, radius: 84, inner: 48,
+                                       valueFormat: v => v.toFixed(1) + ' s avg CPU',
+                                       onSegmentClick: it => {
+                                           /* The aggregate slice stands for several
+                                              programs, so there is nothing single to
+                                              filter on. */
+                                           if (/^Other \(/.test(it.name)) {
+                                               logConsole('<span class="c-dim">FILTER:</span> "' + esc(it.name) +
+                                                   '" is an aggregate of the programs outside the top ' +
+                                                   CONFIG.VIZ_TOP_N + '. Filter them from the detail table instead.');
+                                               return;
+                                           }
+                                           hiddenPrograms.add(it.name);
+                                           show();
+                                       } }) + '</div>';
         h += '<div class="chart-box"><h4>CPU Utilization by Time</h4>' +
              Chart.line([{ name: 'CPU seconds per day', points: pts }],
-                        { height: 230, yFormat: v => fmtK(v) }) + '</div>';
+                        { height: 300, xTicks: 16, yFormat: v => fmtK(v),
+                          tipFormat: p => '<strong>CPU seconds</strong><br>' +
+                              esc(new Date(p.x).toLocaleDateString('en-US',
+                                  { year:'numeric', month:'short', day:'numeric' })) +
+                              '<br>' + esc(p.y.toFixed(1)) + ' s across all programs' }) + '</div>';
         h += '</div>';
 
         /* Detail table */
@@ -2821,7 +3279,9 @@ const Viz = (function () {
             const avgR = runs.reduce((a, r) => a + num(r, 'RealTimeSec'), 0) / runs.length;
             const steps= Math.round(runs.reduce((a, r) => a + num(r, 'TotalStepCount'), 0) / runs.length);
             const errs = runs.reduce((a, r) => a + (Number(r.ErrorCount) || 0), 0);
-            h += '<tr><td>' + esc(env) + '</td><td>' + esc(p.name) + '</td><td>' + runs.length + '</td>' +
+            h += '<tr class="prog-row" data-prog="' + esc(p.name) + '" style="cursor:pointer;" ' +
+                 'title="Click to filter this program out of the whole tab">' +
+                 '<td>' + esc(env) + '</td><td>' + esc(p.name) + '</td><td>' + runs.length + '</td>' +
                  '<td style="font-family:Consolas,monospace;">' + p.value.toFixed(1) + '</td>' +
                  '<td style="font-family:Consolas,monospace;">' + avgR.toFixed(1) + '</td>' +
                  '<td style="font-family:Consolas,monospace;">' + maxC.toFixed(1) + '</td>' +
@@ -2839,7 +3299,7 @@ const Viz = (function () {
         h += '<div class="sec-title">Step-level detail &mdash; cgs_ai scanFileSystem.ps1' +
              ' <span style="font-weight:400;color:#777;">(one row per SAS step)</span></div>';
 
-        if (!steps.length) {
+        if (!visibleSteps.length) {
             h += '<div class="notes-warn"><strong>No step-level data.</strong> ' +
                  (stepsError ? esc(stepsError) + '<br>' : '') +
                  'This half of the tab is fed by <code>ps1\\Export-SasLogSteps.ps1</code>, which runs ' +
@@ -2848,12 +3308,12 @@ const Viz = (function () {
                  'The per-file view above is unaffected.</div>';
         } else {
             const sNum = (r, f) => { const v = parseFloat(r[f]); return isNaN(v) ? 0 : v; };
-            const stepCpu = steps.reduce((a, r) => a + sNum(r, 'CpuTimeSec'), 0);
-            const progs   = new Set(steps.map(r => r.ProgramName)).size;
-            const labels  = new Set(steps.map(r => r.StepLabel)).size;
+            const stepCpu = visibleSteps.reduce((a, r) => a + sNum(r, 'CpuTimeSec'), 0);
+            const progs   = new Set(visibleSteps.map(r => r.ProgramName)).size;
+            const labels  = new Set(visibleSteps.map(r => r.StepLabel)).size;
 
             h += '<div class="kpi-row">' +
-                 '<div class="kpi"><div class="v">' + steps.length.toLocaleString('en-US') +
+                 '<div class="kpi"><div class="v">' + visibleSteps.length.toLocaleString('en-US') +
                  '</div><div class="l">Step Rows</div></div>' +
                  '<div class="kpi"><div class="v">' + progs + '</div><div class="l">Programs</div></div>' +
                  '<div class="kpi"><div class="v">' + labels + '</div><div class="l">Distinct Step Types</div></div>' +
@@ -2863,7 +3323,7 @@ const Viz = (function () {
 
             /* CPU by step type -- one pass, not a filter per group. */
             const byLabel = {};
-            steps.forEach(r => {
+            visibleSteps.forEach(r => {
                 const k = r.StepLabel || '(unlabelled)';
                 byLabel[k] = (byLabel[k] || 0) + sNum(r, 'CpuTimeSec');
             });
@@ -2876,7 +3336,7 @@ const Viz = (function () {
             h += '<div class="chart-box"><h4>CPU by step type</h4>' +
                  Chart.bars(labelItems, { format: v => v.toFixed(1) + ' s' }) + '</div>';
 
-            const slowest = steps.slice()
+            const slowest = visibleSteps.slice()
                 .sort((a, b) => sNum(b, 'CpuTimeSec') - sNum(a, 'CpuTimeSec'))
                 .slice(0, CONFIG.VIZ_TOP_STEPS);
             h += '<div class="chart-box"><h4>Slowest individual steps</h4>' +
@@ -2894,7 +3354,36 @@ const Viz = (function () {
 
         h += '</div>';
         host.innerHTML = h;
+        Chart.mount(host);
+        DateFilter.bind(host, 'viz', () => show());
+        bindChips(host);
+        host.querySelectorAll('.prog-row').forEach(tr => tr.addEventListener('click', () => {
+            hiddenPrograms.add(tr.dataset.prog);
+            show();
+        }));
     }
+
+    /* Every active filter, with the way to remove it. */
+    function chipBarHtml() {
+        if (!hiddenPrograms.size) return '';
+        return '<div class="chipbar"><span class="lbl">Filtered out:</span>' +
+            [...hiddenPrograms].sort().map(nm =>
+                '<span class="chip"><b>' + esc(nm) + '</b>' +
+                '<button data-unchip="' + esc(nm) + '" title="Put this program back">&times;</button></span>').join('') +
+            '<button class="chip-clear" data-clearchips="1">clear all</button>' +
+            '<span class="filter-note">' + hiddenPrograms.size +
+            ' program' + (hiddenPrograms.size === 1 ? '' : 's') + ' hidden from every section of this tab</span>' +
+            '</div>';
+    }
+
+    function bindChips(root) {
+        root.querySelectorAll('[data-unchip]').forEach(b => b.addEventListener('click', () => {
+            hiddenPrograms.delete(b.dataset.unchip); show();
+        }));
+        const clr = root.querySelector('[data-clearchips]');
+        if (clr) clr.addEventListener('click', () => { hiddenPrograms.clear(); show(); });
+    }
+
     return { show };
 })();
 

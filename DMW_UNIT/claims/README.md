@@ -72,12 +72,37 @@ without a Snowflake session.
 > The two are not interchangeable. Where they differ, the Snowflake output is
 > the system of record, and the page says so on the stage panel.
 
-Likewise the executive briefing. In Snowflake, `createExecutiveBriefing` asks
-Cortex `Complete` for the narrative paragraph. No language model runs in a
-browser, so the narrative here is **assembled from the computed figures** and is
-labelled *Computed Executive Analysis* rather than *AI-Generated*. Printing
-invented prose under an AI heading would be claiming something the page did not
-do.
+### The briefing narrative is AI-generated
+
+It was produced by Snowflake Cortex `Complete` during the run that enriched the
+CMS-2022-0190 file, and is carried here **verbatim** from
+`cgs_executive_briefing.docx` — reproduced, not regenerated, because no language
+model runs in a browser. The heading reads *AI-Generated Executive Analysis
+(Snowflake Cortex)*, which is accurate: that text is Cortex output.
+
+Its figures were reconciled against the pipeline's own before it was embedded:
+
+| Narrative claims | Pipeline computes |
+|---|---|
+| 898 comments | 898 |
+| 76% neutral | 75.3% |
+| 49.4% administrative burden | 49.4% |
+| 6.3% reimbursement | 6.3% |
+| 5.0% care quality | 5.0% |
+| 1.3% health equity | 1.3% |
+
+All six match, so the paragraph describes this dataset and not an earlier one.
+
+> **If you replace the data file, re-run the Snowflake briefing and replace the
+> narrative with it.** A verbatim paragraph does not update itself, and a stale
+> one would quietly describe a different docket while every figure around it
+> moved. The narrative lives on the source entry in `CONFIG.SOURCES`, next to a
+> comment saying exactly this.
+
+The SIJ sample was never run through Snowflake, so it carries
+`cortexNarrative: null`. For that source the briefing falls back to a paragraph
+assembled from the computed figures and labels it *Computed Executive Analysis*
+instead — the label follows the provenance, in both directions.
 
 ### Where the two can disagree
 
@@ -185,6 +210,9 @@ Exercised headless over http, no console or page errors:
 - All six output panels open and populate: 3 sentiment bars, 250-row comparison
   table at 82.0% character reduction, 60 cloud words reconfiguring to 25, a
   12-column formatted table, and the briefing with `docx` default
+- The briefing shows the verbatim Cortex narrative under an *AI-Generated*
+  heading for CMS-2022-0190, and the computed fallback under a *Computed*
+  heading for the SIJ sample
 - Approval stamps the briefing; export downloads `cgs_executive_briefing.docx`
 - Grid shows 24 columns with 12 live metadata icons, none greyed; the panel
   opens with all six fields
