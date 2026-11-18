@@ -48,9 +48,10 @@ v2. See [`IT/v1/README.md`](IT/v1/README.md) and
 
 ```
 claims/
-├── dmw_claims_management_v1_5Beta.html   the application (current)
-├── dmw_claims_management_v1_4Beta.html   the previous build, kept beside it
-├── dmw_claims_management_v1_3Beta.html   and the ones before it
+├── dmw_claims_management_v1_6Beta.html   the application (current)
+├── dmw_claims_management_v1_5Beta.html   the previous build, kept beside it
+├── dmw_claims_management_v1_4Beta.html   and the ones before it
+├── dmw_claims_management_v1_3Beta.html
 ├── dmw_claims_management_v1_2Beta.html
 ├── dmw_claims_management_v1_1Beta.html
 ├── dmw_claims_management_v1_0Beta.html
