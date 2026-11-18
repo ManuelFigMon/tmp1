@@ -86,8 +86,9 @@ Cortex. The README is explicit about where the two differ.
 
 ```
 provider/
-├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   the mockup (current)
-├── PROVIDER_AGENT_DEMO_V2_5.html        the previous build, kept beside it
+├── PROVIDER_RISK_AGENT_DEMO_V2_7.html   the mockup (current)
+├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   the previous build, kept beside it
+├── PROVIDER_AGENT_DEMO_V2_5.html        and the one before it
 └── FFS_PROVIDER_CHAT_HJS_V2_5.py        the Streamlit app it mocks up
 ```
 
@@ -100,12 +101,17 @@ produces, the four chart renderers are lifted verbatim from the `CHART_JS`
 string in the `.py`, and the questions, interpretations, generated SQL and
 result rows are the ones from the recorded Cortex Analyst session.
 
-What is not: the connection splash, the spinner timing and the typing are
-staged, and the closing narrative on the Illinois question was written from the
-figures in the result table — the transcript has no such paragraph, and the
-page labels it as synthesized.
+What is not: the connection splash and the spinner timing are staged, and the
+closing narrative on the Illinois question was written from the figures in the
+result table — the transcript has no such paragraph.
 
-**v2.6 is the one to present.** It is the app and nothing else: the presenter
+**Both of those are disclosed on the start-up splash**, which from v2.7 is the
+only place they are disclosed. v2.6 and earlier also printed a note under the
+Illinois paragraph itself. The splash holds for six seconds, and a click
+dismisses it early, so the disclosure is long enough to read rather than a
+caption that flashes past.
+
+**v2.7 is the one to present.** It is the app and nothing else: the presenter
 clicks About and Help and types each question, and Send or Enter both work.
 Five questions are recorded — the top 20 providers, the top 5 in Ohio, the
 heatmap by state and risk tier, the same result as a bar chart, and the
