@@ -86,8 +86,9 @@ Cortex. The README is explicit about where the two differ.
 
 ```
 provider/
-├── PROVIDER_AGENT_DEMO_V2_5.html     the mockup
-└── FFS_PROVIDER_CHAT_HJS_V2_5.py     the Streamlit app it mocks up
+├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   the mockup (current)
+├── PROVIDER_AGENT_DEMO_V2_5.html        the previous build, kept beside it
+└── FFS_PROVIDER_CHAT_HJS_V2_5.py        the Streamlit app it mocks up
 ```
 
 A browser stand-in for the Streamlit-in-Snowflake Cortex Analyst app, built
@@ -104,9 +105,18 @@ staged, and the closing narrative on the Illinois question was written from the
 figures in the result table — the transcript has no such paragraph, and the
 page labels it as synthesized.
 
-A docked strip across the top carries the demo script, one step per slide of
-`Cortex_Provider_Analyst_Executive_VIDEO2.pptx`, with a ring drawn round the
-control each step is about. Run it a step at a time or press play.
+**v2.6 is the one to present.** It is the app and nothing else: the presenter
+clicks About and Help and types each question, and Send or Enter both work.
+Five questions are recorded — the top 20 providers, the top 5 in Ohio, the
+heatmap by state and risk tier, the same result as a bar chart, and the
+Illinois follow-up. Wording is matched loosely, so a trailing full stop or a
+lower-case start still lands. Anything else answers that it is not part of the
+recording rather than inventing a result.
+
+v2.5 keeps a demo-script strip across the top that steps through the same
+sequence and rings the control each step concerns. It is useful for rehearsing
+and wrong for presenting, since an audience expecting a live tool would read
+the strip as part of the product.
 
 ---
 
