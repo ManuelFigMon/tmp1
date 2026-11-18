@@ -48,14 +48,15 @@ v2. See [`IT/v1/README.md`](IT/v1/README.md) and
 
 ```
 claims/
-├── dmw_claims_management_v1_3Beta.html   the application (current)
-├── dmw_claims_management_v1_2Beta.html   the previous build, kept beside it
-├── dmw_claims_management_v1_1Beta.html   and the ones before that
+├── dmw_claims_management_v1_4Beta.html   the application (current)
+├── dmw_claims_management_v1_3Beta.html   the previous build, kept beside it
+├── dmw_claims_management_v1_2Beta.html   and the ones before it
+├── dmw_claims_management_v1_1Beta.html
 ├── dmw_claims_management_v1_0Beta.html
 ├── column_metadata.csv                   13 column definitions
 ├── data/                                 the two comment files it reads
 ├── snowflake/__init__.py                 the cgs_ai package that ran in ONEPI
-├── docs/                                 the diagram embedded in the README
+├── docs/                                 the README diagram and the demo script
 └── README.docx
 ```
 
