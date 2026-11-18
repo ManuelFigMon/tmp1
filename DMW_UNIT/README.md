@@ -6,10 +6,11 @@ The DMW (Data Mart Workbench) solutions, grouped by what they manage.
 |---|---|---|
 | [`IT/`](IT) | **IT Management** — SAS scheduler monitoring, server SLA and pipeline performance, over SQL Server via a SAS Stored Process. | **Active** |
 | [`claims/`](claims) | **Claims Management** — a CMS public-comment pipeline: sentiment, NLP, summarisation, categorisation and an executive briefing. Reads static files, no database. | **Active** |
+| [`provider/`](provider) | **Provider Risk Agent** — a browser mockup of the Streamlit-in-Snowflake Cortex Analyst app, for demoing where Snowflake is unreachable. | **Demo only** |
 | [`docs/`](docs) | Planning and communication documents. Not tied to a solution. | Current |
 
-The two solutions are independent. They share no files and neither imports from
-the other; each folder is self-contained and separately deployable.
+The solutions are independent. They share no files and none imports from
+another; each folder is self-contained and separately deployable.
 
 ---
 
@@ -78,6 +79,34 @@ Snowflake behind it.
 and it **runs in Snowflake ONEPI only**. The browser reimplements the
 deterministic stages so the workflow is demonstrable; it does not reimplement
 Cortex. The README is explicit about where the two differ.
+
+---
+
+## Provider Risk Agent — `provider/`
+
+```
+provider/
+├── PROVIDER_AGENT_DEMO_V2_5.html     the mockup
+└── FFS_PROVIDER_CHAT_HJS_V2_5.py     the Streamlit app it mocks up
+```
+
+A browser stand-in for the Streamlit-in-Snowflake Cortex Analyst app, built
+because the demo site cannot reach Snowflake. **It makes no connection and runs
+no query** — it replays a recorded session.
+
+What is real: the chrome and CSS are the same markup `build_chat_html()`
+produces, the four chart renderers are lifted verbatim from the `CHART_JS`
+string in the `.py`, and the questions, interpretations, generated SQL and
+result rows are the ones from the recorded Cortex Analyst session.
+
+What is not: the connection splash, the spinner timing and the typing are
+staged, and the closing narrative on the Illinois question was written from the
+figures in the result table — the transcript has no such paragraph, and the
+page labels it as synthesized.
+
+A docked strip across the top carries the demo script, one step per slide of
+`Cortex_Provider_Analyst_Executive_VIDEO2.pptx`, with a ring drawn round the
+control each step is about. Run it a step at a time or press play.
 
 ---
 
