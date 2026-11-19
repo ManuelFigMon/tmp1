@@ -96,11 +96,11 @@ const children = [
     children: [new TextRun({ text: 'OnePI Showcase — Review and Delivery Notes',
       font: 'Arial', size: 36, bold: true, color: NAVY })] }),
   new Paragraph({ spacing: { after: 40 },
-    children: [new TextRun({ text: 'DMW_DEMO_OnePI_Showcase_11-19-2026_EDITABLE_MF · v4_0 reviewed, v4_1 issued',
+    children: [new TextRun({ text: 'DMW_DEMO_OnePI_Showcase_11-19-2026_EDITABLE_MF · v4_0 reviewed, v4_2 issued',
       font: 'Arial', size: 24, color: BLUE })] }),
   P('Prepared for a 15-minute VP-level presentation with two live demos.', { color: GREY, size: 19 }),
 
-  CALLOUT('Bottom line.', [['The deck is in good shape and the story holds. Eight claims in the demo scripts were checked against the two applications by running them; all the headline numbers are correct. '], ['Five errors in the demo scripts and three layout defects on slide 2 are fixed in v4_1', { b: true }], [' — one of them would have had you looking for a control that does not exist, in front of the room. Three further items need a decision only you can make, and are listed in section 3.']], GREEN),
+  CALLOUT('Bottom line.', [['The deck is in good shape and the story holds. Eight claims in the demo scripts were checked against the two applications by running them; all the headline numbers are correct. '], ['Five errors in the demo scripts and three layout defects on slide 2 are fixed in v4_1, and the Approve/DRAFT beat is rewritten in v4_2', { b: true }], [' — one of them would have had you looking for a control that does not exist, in front of the room. Three further items need a decision only you can make, and are listed in section 3.']], GREEN),
 
   RULE(),
   H1('1. What was verified, and checks out'),
@@ -147,7 +147,7 @@ const children = [
   P('The shape also carried a duplicate name ("Big A", shared with the letter A), which made the selection pane confusing. Renamed to "Cortex Label".'),
 
   RULE(),
-  H1('3. Three things only you can decide'),
+  H1('3. Three judgement calls \u2014 two still yours'),
 
   H2('3.1  “We’ve already built it at CMS in OnePI”'),
   RP([['Slide 6’s notes say this. An earlier version said simply “in OnePI”. '], ['Built at CMS', { b: true }], [' is a stronger claim about who owns the work, and I cannot verify it from here. If CGS built it in a CMS-hosted environment, say that precisely — a VP will hear the difference, and so will anyone from CMS in the room. '], ['Left unchanged in v4_1 pending your call.', { b: true }]]),
@@ -155,8 +155,10 @@ const children = [
   H2('3.2  “That’s days of reading, done while we talk”'),
   RP([['v4_0 said '], ['weeks', { i: true }], ['. 898 comments is about 1.58 million characters — roughly a thousand pages, or two to three working days of careful reading, not weeks. I changed it to '], ['days', { b: true }], [' because the overstatement is the kind a VP checks afterwards, and losing that one number costs you the rest. If you have a real measured baseline from a reviewer, use it and say where it came from — that is stronger than either word.']]),
 
-  H2('3.3  The exported briefing says DRAFT — NOT APPROVED'),
-  RP([['The memo carries a status line, and it reads DRAFT — NOT APPROVED unless you tick '], ['Approve', { b: true }], [' in the briefing panel first. The script says “a briefing on your desk … ready to open in Word”, and a VP reading the screen will see DRAFT. Two honest options: tick Approve before exporting, or leave it and say “it comes out as a draft until a person signs it” — which is actually a governance point in your favour. v4_1 adds the reminder; the choice is yours.']]),
+  H2('3.3  The exported briefing says DRAFT — NOT APPROVED  (resolved in v4_2)'),
+  RP([['The memo carries a status line that reads DRAFT — NOT APPROVED unless you tick '], ['Approve', { b: true }], [' in the briefing panel first. v4_1 handled this with a stage direction telling you to tick it. That was the wrong way round: it told you to '], ['hide', { i: true }], [' the status line.']]),
+  RP([['v4_2 does the opposite and says it out loud. The briefing is left unapproved and the script now reads: '], ['“… Nobody typed this. The pipeline wrote it. And look at the top of it — it says DRAFT, NOT APPROVED. It stays a draft until a person ticks approve. The AI writes it; a human signs it.”', { i: true }]]),
+  RP([['That turns a cosmetic blemish into the governance argument the rest of the deck only asserts — demonstrated on screen instead of claimed. The alternative is still in the notes directly beneath, in case you would rather show it approved.']]),
 
   RULE(),
   H1('4. Risks during the live demo, and how to recover'),
