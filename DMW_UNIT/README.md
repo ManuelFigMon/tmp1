@@ -49,9 +49,10 @@ v2. See [`IT/v1/README.md`](IT/v1/README.md) and
 
 ```
 claims/
-├── dmw_claims_management_v1_6Beta.html   the application (current)
-├── dmw_claims_management_v1_5Beta.html   the previous build, kept beside it
-├── dmw_claims_management_v1_4Beta.html   and the ones before it
+├── dmw_claims_management_v1_7Beta.html   the application (current)
+├── dmw_claims_management_v1_6Beta.html   the previous build, kept beside it
+├── dmw_claims_management_v1_5Beta.html   and the ones before it
+├── dmw_claims_management_v1_4Beta.html
 ├── dmw_claims_management_v1_3Beta.html
 ├── dmw_claims_management_v1_2Beta.html
 ├── dmw_claims_management_v1_1Beta.html
@@ -86,9 +87,10 @@ Cortex. The README is explicit about where the two differ.
 
 ```
 provider/
-├── PROVIDER_RISK_AGENT_DEMO_V2_8.html   the mockup (current)
-├── PROVIDER_RISK_AGENT_DEMO_V2_7.html   the previous build, kept beside it
-├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   and the ones before it
+├── PROVIDER_RISK_AGENT_DEMO_V2_9.html   the mockup (current)
+├── PROVIDER_RISK_AGENT_DEMO_V2_8.html   the previous build, kept beside it
+├── PROVIDER_RISK_AGENT_DEMO_V2_7.html   and the ones before it
+├── PROVIDER_RISK_AGENT_DEMO_V2_6.html
 ├── PROVIDER_AGENT_DEMO_V2_5.html
 └── FFS_PROVIDER_CHAT_HJS_V2_5.py        the Streamlit app it mocks up
 ```
@@ -112,7 +114,7 @@ Illinois paragraph itself. The splash holds for six seconds, and a click
 dismisses it early, so the disclosure is long enough to read rather than a
 caption that flashes past.
 
-**v2.8 is the one to present.** It is the app and nothing else: the presenter
+**v2.9 is the one to present.** It is the app and nothing else: the presenter
 clicks About and Help and types each question, and Send or Enter both work.
 Five questions are recorded — the top 20 providers, the top 5 in Ohio, the
 heatmap by state and risk tier, the same result as a bar chart, and the
