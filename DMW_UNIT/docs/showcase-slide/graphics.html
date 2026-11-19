@@ -1,0 +1,153 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  :root{
+    --ink:#1E293B; --body:#64748B; --line:#D9E2EC;
+    --teal:#45A5C4; --steel:#2E6F9E;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#fff;font-family:"Segoe UI",Tahoma,Geneva,Verdana,sans-serif;}
+
+  /* Each band is sized to the slot it fills on the slide: 5.30in x 0.88in
+     for the left card and 5.10in x 0.88in for the right, at 100px per inch. */
+  .band{display:flex;align-items:center;gap:0;background:#fff;height:96px;padding:0 2px;}
+  #left{width:530px;}
+  #right{width:510px;}
+
+  .node{
+    flex:0 0 auto;border:1px solid var(--line);border-radius:6px;background:#fff;
+    height:84px;display:flex;flex-direction:column;justify-content:center;
+    padding:6px 9px;gap:2px;
+  }
+  .node .k{font-size:12px;font-weight:700;color:var(--ink);letter-spacing:.1px;line-height:1.15;}
+  .node .s{font-size:10px;color:var(--body);line-height:1.25;}
+
+  .node.fill{border:none;color:#fff;align-items:center;text-align:center;}
+  #left  .node.fill{background:var(--teal);}
+  #right .node.fill{background:var(--steel);}
+  .node.fill .k{color:#fff;font-size:12.5px;}
+  .node.fill .s{color:rgba(255,255,255,.88);font-size:9.5px;}
+
+  .arrow{flex:0 0 auto;width:26px;display:flex;align-items:center;justify-content:center;}
+  .arrow svg{display:block;}
+
+  /* left: the source document */
+  .doc{display:flex;align-items:center;gap:8px;}
+  .doc .pg{flex:0 0 auto;}
+  .chips{display:flex;flex-direction:column;gap:4px;}
+  .chip{
+    font-size:10.5px;font-weight:600;color:var(--ink);background:#F4F8FA;
+    border:1px solid var(--line);border-radius:11px;padding:4px 10px;white-space:nowrap;
+  }
+  #left .chip{border-color:#BFE0EB;}
+  #right .chip{border-color:#C3D7E6;}
+
+  /* right: the question and the answer */
+  .q{display:flex;align-items:center;gap:8px;}
+  .bars{display:flex;align-items:flex-end;gap:3px;height:30px;}
+  .bars i{display:block;width:7px;border-radius:1px;}
+</style></head>
+<body>
+
+<!-- ============================ LEFT ============================ -->
+<div class="band" id="left">
+  <div class="node" style="width:156px;">
+    <div class="doc">
+      <svg class="pg" width="26" height="32" viewBox="0 0 26 32">
+        <path d="M2.5 1.5h13l8 8v21a1.5 1.5 0 0 1-1.5 1.5H2.5A1.5 1.5 0 0 1 1 30.5v-27A1.5 1.5 0 0 1 2.5 1.5z"
+              fill="#fff" stroke="#45A5C4" stroke-width="1.6"/>
+        <path d="M15.5 1.5v8h8" fill="none" stroke="#45A5C4" stroke-width="1.6"/>
+        <g stroke="#CBD5E1" stroke-width="1.5" stroke-linecap="round">
+          <path d="M5.5 14h14"/><path d="M5.5 18h14"/><path d="M5.5 22h14"/><path d="M5.5 26h9"/>
+        </g>
+      </svg>
+      <div>
+        <div class="k">Unstructured text</div>
+        <div class="s">notes &middot; letters<br>comments</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">
+    <svg width="24" height="12" viewBox="0 0 24 12">
+      <path d="M0 6h17" stroke="#45A5C4" stroke-width="2"/>
+      <path d="M16 1.5 22.5 6 16 10.5z" fill="#45A5C4"/>
+    </svg>
+  </div>
+
+  <div class="node fill" style="width:118px;">
+    <div class="k">Cortex</div>
+    <div class="s">NLP on text, in place</div>
+  </div>
+
+  <div class="arrow">
+    <svg width="24" height="12" viewBox="0 0 24 12">
+      <path d="M0 6h17" stroke="#45A5C4" stroke-width="2"/>
+      <path d="M16 1.5 22.5 6 16 10.5z" fill="#45A5C4"/>
+    </svg>
+  </div>
+
+  <div class="node" style="width:156px;">
+    <div class="chips">
+      <span class="chip">Summary</span>
+      <span class="chip">Entities &amp; themes</span>
+      <span class="chip">Classified &amp; countable</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ RIGHT ============================ -->
+<div class="band" id="right">
+  <div class="node" style="width:178px;">
+    <div class="q">
+      <svg width="28" height="26" viewBox="0 0 28 26">
+        <path d="M3.5 1.5h21A2 2 0 0 1 26.5 3.5v13a2 2 0 0 1-2 2H11l-6 5.5V18.5H3.5a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2z"
+              fill="#fff" stroke="#2E6F9E" stroke-width="1.6"/>
+        <g stroke="#CBD5E1" stroke-width="1.5" stroke-linecap="round">
+          <path d="M6 7h16"/><path d="M6 11h12"/>
+        </g>
+      </svg>
+      <div>
+        <div class="k">A question, in English</div>
+        <div class="s">&ldquo;Which states carry<br>the most risk?&rdquo;</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow">
+    <svg width="24" height="12" viewBox="0 0 24 12">
+      <path d="M0 6h17" stroke="#2E6F9E" stroke-width="2"/>
+      <path d="M16 1.5 22.5 6 16 10.5z" fill="#2E6F9E"/>
+    </svg>
+  </div>
+
+  <div class="node fill" style="width:124px;">
+    <div class="k">Cortex Analyst</div>
+    <div class="s">governed SQL over IDRC</div>
+  </div>
+
+  <div class="arrow">
+    <svg width="24" height="12" viewBox="0 0 24 12">
+      <path d="M0 6h17" stroke="#2E6F9E" stroke-width="2"/>
+      <path d="M16 1.5 22.5 6 16 10.5z" fill="#2E6F9E"/>
+    </svg>
+  </div>
+
+  <div class="node" style="width:146px;">
+    <div style="display:flex;align-items:center;gap:9px;">
+      <div class="bars">
+        <i style="height:12px;background:#C3D7E6;"></i>
+        <i style="height:19px;background:#9DBFD8;"></i>
+        <i style="height:30px;background:#2E6F9E;"></i>
+        <i style="height:16px;background:#9DBFD8;"></i>
+        <i style="height:9px;background:#C3D7E6;"></i>
+      </div>
+      <div>
+        <div class="k">An answer</div>
+        <div class="s">result, trend<br>and the SQL</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body></html>
