@@ -86,9 +86,10 @@ Cortex. The README is explicit about where the two differ.
 
 ```
 provider/
-├── PROVIDER_RISK_AGENT_DEMO_V2_7.html   the mockup (current)
-├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   the previous build, kept beside it
-├── PROVIDER_AGENT_DEMO_V2_5.html        and the one before it
+├── PROVIDER_RISK_AGENT_DEMO_V2_8.html   the mockup (current)
+├── PROVIDER_RISK_AGENT_DEMO_V2_7.html   the previous build, kept beside it
+├── PROVIDER_RISK_AGENT_DEMO_V2_6.html   and the ones before it
+├── PROVIDER_AGENT_DEMO_V2_5.html
 └── FFS_PROVIDER_CHAT_HJS_V2_5.py        the Streamlit app it mocks up
 ```
 
@@ -111,13 +112,18 @@ Illinois paragraph itself. The splash holds for six seconds, and a click
 dismisses it early, so the disclosure is long enough to read rather than a
 caption that flashes past.
 
-**v2.7 is the one to present.** It is the app and nothing else: the presenter
+**v2.8 is the one to present.** It is the app and nothing else: the presenter
 clicks About and Help and types each question, and Send or Enter both work.
 Five questions are recorded — the top 20 providers, the top 5 in Ohio, the
 heatmap by state and risk tier, the same result as a bar chart, and the
 Illinois follow-up. Wording is matched loosely, so a trailing full stop or a
-lower-case start still lands. Anything else answers that it is not part of the
-recording rather than inventing a result.
+lower-case start still lands. Anything else answers
+**"The system is currently unavailable. Please try again later."** followed by
+the five questions it does know. From v2.8 that is the reply on both paths —
+typed and clicked — so an unscripted question in front of an audience reads as
+an outage rather than as a seam in the prop. The start-up splash still states
+plainly that the page is a mockup, so nothing is concealed; the wording only
+moves the disclosure out of the middle of the demo.
 
 v2.5 keeps a demo-script strip across the top that steps through the same
 sequence and rings the control each step concerns. It is useful for rehearsing
