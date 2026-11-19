@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DMW -- Cortex Provider Analyst (Demo Mockup)</title>
+<!--
+  PROVIDER_AGENT_DEMO_V2_5.html
+  ----------------------------------------------------------------------------
+  A browser mockup of FFS_PROVIDER_CHAT_HJS_V2_5.py, the Streamlit-in-Snowflake
+  app. It exists because the demo site cannot reach Snowflake: there is no
+  Cortex Analyst call and no warehouse behind this page. Everything it shows
+  is a recorded transcript.
+
+  What is faithful to the real app:
+    - the header, sidebar, chat bubbles, SQL block, result table and footer
+      are the same markup and CSS as build_chat_html() produces;
+    - the four chart renderers are lifted verbatim from the CHART_JS string in
+      the .py file, so a chart here is drawn by the code that draws it in
+      Snowflake;
+    - the questions, the interpretations, the generated SQL and the result
+      rows are the real ones, taken from DEMO_CHAT_HISTORY_v2.docx.
+
+  What is simulated, and is NOT real:
+    - the connection, the spinner timing and the typing;
+    - the closing narrative for "Why is IL so high?", which the transcript
+      does not contain. It is written from the figures in the IL table and is
+      labelled on screen as a synthesized analyst summary.
+  ----------------------------------------------------------------------------
+-->
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#f0f2f6;font-size:11px;color:#262730;}
+
+/* ---------- Streamlit frame ---------- */
+.app{display:flex;min-height:100vh;}
+.sidebar{
+  width:300px;flex:0 0 300px;background:#f0f2f6;border-right:1px solid #dfe3ea;
+  padding:14px 14px 24px;transition:margin-left .35s ease, opacity .25s ease;
+  overflow-y:auto;max-height:100vh;
+}
+.app.collapsed .sidebar{margin-left:-300px;opacity:0;pointer-events:none;}
+.sb-title{background:#4a7ba7;color:#fff;padding:8px 12px;border-radius:4px;
+  font-weight:700;font-size:13px;margin-bottom:12px;}
+.sb-caption{color:#6b7280;font-size:11px;margin-bottom:8px;}
+.sb-btn{display:block;width:100%;text-align:left;background:#fff;border:1px solid #d6dae2;
+  border-radius:6px;padding:7px 10px;margin-bottom:6px;font-size:11.5px;cursor:pointer;
+  font-family:inherit;color:#262730;transition:border-color .15s,background .15s;}
+.sb-btn:hover{border-color:#4a7ba7;background:#f6f9fc;}
+.sb-btn.used{color:#9aa5b1;}
+.sb-div{border:none;border-top:1px solid #dfe3ea;margin:12px 0;}
+.sb-meta{font-size:11px;color:#555;line-height:1.8;}
+.sb-legend{font-size:10px;color:#888;line-height:1.8;}
+
+.main{flex:1;min-width:0;padding:10px 16px 28px;position:relative;}
+.collapse-btn{
+  position:absolute;left:-1px;top:10px;z-index:30;background:#fff;border:1px solid #d6dae2;
+  border-left:none;border-radius:0 6px 6px 0;width:22px;height:34px;cursor:pointer;
+  color:#4a7ba7;font-size:13px;line-height:1;display:flex;align-items:center;justify-content:center;
+}
+.collapse-btn:hover{background:#f0f5fa;}
+
+/* ---------- the component (mirrors build_chat_html) ---------- */
+.dmw-header{background:#4a7ba7;color:white;padding:11px 16px;
+  border-bottom:2px solid #3a6b97;display:flex;align-items:center;
+  gap:10px;position:relative;border-radius:4px 4px 0 0;}
+.dmw-titles{flex:1}
+.dmw-titles h1{font-size:14px;font-weight:600;margin:0;letter-spacing:.1px;}
+.dmw-titles p{font-size:10px;opacity:.88;margin-top:2px;}
+.top-nav{display:flex;gap:4px;align-items:center;}
+.top-nav a{color:white;text-decoration:none;font-size:11px;font-weight:600;
+  padding:4px 10px;border-radius:3px;transition:background .2s;cursor:pointer;}
+.top-nav a:hover{background:rgba(255,255,255,.18);}
+.badge{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);
+  border-radius:20px;padding:3px 10px;font-size:10px;white-space:nowrap;margin-left:6px;}
+.badge.connecting{background:rgba(255,255,255,.10);}
+
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,.5);z-index:2000;justify-content:center;align-items:center;}
+.modal-overlay.active{display:flex;}
+.modal-box{background:white;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.25);
+  max-width:480px;width:92%;max-height:78vh;overflow-y:auto;}
+.modal-hdr{background:#4a7ba7;color:white;padding:12px 16px;border-radius:6px 6px 0 0;
+  display:flex;justify-content:space-between;align-items:center;}
+.modal-hdr h2{font-size:13px;font-weight:600;}
+.mc{background:transparent;border:none;color:white;font-size:22px;cursor:pointer;
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  border-radius:3px;transition:background .2s;}
+.mc:hover{background:rgba(255,255,255,.18);}
+.modal-body{padding:16px;font-size:12px;line-height:1.65;color:#333;}
+.modal-body p{margin-bottom:10px;}
+.modal-body code{background:#f0f0f0;padding:1px 5px;border-radius:3px;font-size:11px;}
+.modal-body ul{margin:6px 0 10px 18px;}
+.modal-body li{margin-bottom:4px;}
+
+.chat-area{
+  /* The Streamlit original is a fixed 565px component. On a projector that
+     leaves a band of dead grey under the form, so this one follows the
+     window instead and keeps the floor the original had. */
+  height:calc(100vh - 330px);min-height:420px;
+  overflow-y:auto;padding:13px;
+  display:flex;flex-direction:column;gap:11px;background:#fff;}
+.msg{display:flex;flex-direction:column;max-width:84%}
+.msg.wide{width:96%;max-width:96%}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.analyst{align-self:flex-start;align-items:flex-start}
+.msg-label{font-size:10px;font-weight:700;letter-spacing:.6px;
+  text-transform:uppercase;color:#6B7280;margin-bottom:4px;}
+.bubble{padding:9px 13px;border-radius:12px;
+  font-size:12.5px;line-height:1.55;word-break:break-word;}
+.msg.user .bubble{background:#4a7ba7;color:#fff;border-bottom-right-radius:3px;}
+.msg.analyst .bubble{background:#fff;color:#1F2937;border:1px solid #E5E7EB;
+  border-bottom-left-radius:3px;box-shadow:0 1px 3px rgba(0,0,0,.07);}
+.sql-wrap{margin-top:7px;width:100%}
+.sql-lbl{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
+  color:#6B7280;margin-bottom:3px;display:flex;align-items:center;gap:4px;}
+.sql-lbl::before{content:'';display:inline-block;width:7px;height:7px;
+  background:#4a7ba7;border-radius:2px;}
+.sql-code{background:#1e2537;color:#CDD5E0;padding:9px 12px;border-radius:6px;
+  font-family:'Courier New',monospace;font-size:11px;line-height:1.45;
+  white-space:pre-wrap;word-break:break-word;
+  border-left:3px solid #4a7ba7;max-height:150px;overflow-y:auto;}
+.tbl-wrap{margin-top:7px;overflow-x:auto;border-radius:5px;
+  border:1px solid #E5E7EB;max-height:200px;overflow-y:auto;}
+table{width:100%;border-collapse:collapse;font-size:11px;background:#fff}
+thead{background:#4a7ba7;color:#fff;position:sticky;top:0}
+th{padding:7px 9px;text-align:left;font-weight:600;white-space:nowrap}
+td{padding:6px 9px;border-bottom:1px solid #F3F4F6;color:#374151;white-space:nowrap}
+tr:hover td{background:#f0f5fa}
+tr:last-child td{border-bottom:none}
+.err-box{margin-top:5px;padding:7px 11px;background:#FEF2F2;border:1px solid #FECACA;
+  border-radius:5px;color:#DC2626;font-size:11px;}
+.note-box{margin-top:5px;padding:6px 10px;background:#FFF8E6;border:1px solid #F5DFA3;
+  border-radius:5px;color:#8a6d1d;font-size:11px;}
+.chart-wrap{margin-top:7px;width:100%;background:#fff;border:1px solid #E5E7EB;
+  border-radius:6px;padding:8px 10px;overflow-x:auto;}
+.chart-title{font-size:11px;font-weight:700;color:#374151;margin-bottom:4px;}
+.chart-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:10px;color:#6B7280;
+  margin-top:4px;align-items:center;}
+.chart-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;
+  margin-right:4px;vertical-align:-1px;}
+.chart-legend i.grad{width:70px;margin:0 4px;background:linear-gradient(90deg,#f0f5fa,#d9534f);}
+.empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#9CA3AF;gap:10px;padding:40px;text-align:center;}
+.empty-state .ico{font-size:40px}
+.empty-state p{font-size:13px;line-height:1.6}
+.dmw-footer{padding:5px 16px;border-top:1px solid #ddd;background:#f8f8f8;
+  display:flex;align-items:center;justify-content:space-between;
+  font-size:11px;color:#666;border-radius:0 0 4px 4px;}
+.dot{width:8px;height:8px;border-radius:50%;background:#5cb85c;
+  display:inline-block;margin-right:5px;}
+.dot.amber{background:#f0ad4e;}
+
+/* the Streamlit spinner shown while the app is "Querying provider data..." */
+.spinner-row{display:none;align-items:center;gap:8px;padding:8px 2px 0;
+  font-size:12px;color:#4a7ba7;font-weight:600;}
+.spinner-row.on{display:flex;}
+.spin{width:14px;height:14px;border:2px solid #cfe0ee;border-top-color:#4a7ba7;
+  border-radius:50%;animation:sp .7s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- input form ---------- */
+.form-row{display:flex;gap:10px;margin-top:14px;}
+.form-row input{flex:1;padding:9px 12px;border:1px solid #d6dae2;border-radius:6px;
+  font-size:12.5px;font-family:inherit;background:#fff;color:#262730;}
+.form-row input:focus{outline:none;border-color:#4a7ba7;box-shadow:0 0 0 2px rgba(74,123,167,.15);}
+.send-btn{padding:9px 26px;border:1px solid #d6dae2;background:#fff;border-radius:6px;
+  font-size:12.5px;font-family:inherit;cursor:pointer;font-weight:600;color:#262730;}
+.send-btn:hover{border-color:#4a7ba7;color:#4a7ba7;}
+.send-btn.flash{background:#4a7ba7;color:#fff;border-color:#4a7ba7;}
+
+/* ---------- demo director ---------- */
+.cue{
+  /* Docked above the app, left-aligned, the way the caption sits in the
+     upper left of each slide. Floating it over the window covered the app's
+     own header, which is part of what the demo is showing. */
+  position:sticky;top:0;z-index:3000;width:100%;
+  background:#1e2537;color:#eef2f7;
+  box-shadow:0 2px 14px rgba(0,0,0,.22);border-bottom:1px solid #2c3550;
+  display:flex;align-items:stretch;gap:0;
+}
+.cue-left{flex:1;min-width:0;padding:9px 16px;}
+.cue-right{flex:0 0 auto;display:flex;align-items:center;gap:7px;
+  padding:9px 16px;border-left:1px solid #2c3550;}
+.cue-head{display:flex;align-items:center;gap:8px;margin-bottom:3px;}
+.cue-step{background:#4a7ba7;color:#fff;border-radius:11px;padding:2px 9px;
+  font-size:10px;font-weight:700;letter-spacing:.4px;}
+.cue-head .ttl{font-size:10px;letter-spacing:.7px;text-transform:uppercase;
+  color:#9fb3cc;font-weight:700;flex:1;}
+.cue-min{background:none;border:none;color:#9fb3cc;cursor:pointer;font-size:14px;
+  line-height:1;padding:2px 4px;border-radius:3px;}
+.cue-min:hover{background:rgba(255,255,255,.12);color:#fff;}
+.cue-text{font-size:14px;line-height:1.4;font-weight:600;}
+.cue-sub{font-size:11px;color:#9fb3cc;line-height:1.45;margin-top:3px;}
+.cue-actions{display:flex;gap:7px;align-items:center;}
+.cue-btn{padding:7px 14px;white-space:nowrap;border:none;border-radius:5px;cursor:pointer;
+  font-family:inherit;font-size:11.5px;font-weight:700;background:#4a7ba7;color:#fff;}
+.cue-btn:hover{background:#3a6b97;}
+.cue-btn.ghost{flex:0 0 auto;background:#2c3550;color:#cfd8e6;}
+.cue-btn.ghost:hover{background:#39445f;}
+.cue-btn[disabled]{opacity:.45;cursor:default;}
+.cue-dots{display:flex;gap:4px;margin-top:7px;}
+.cue-dots i{flex:1;height:3px;border-radius:2px;background:#2c3550;}
+.cue-dots i.done{background:#5cb85c;}
+.cue-dots i.now{background:#4a7ba7;}
+.cue.min .cue-sub,.cue.min .cue-dots{display:none;}
+
+.hint{position:fixed;z-index:2900;pointer-events:none;
+  border:2px solid #f0ad4e;border-radius:8px;box-shadow:0 0 0 4px rgba(240,173,78,.25);
+  display:none;transition:all .25s ease;}
+.hint.on{display:block;}
+
+/* the simulated connection splash */
+.boot{position:fixed;inset:0;background:#f0f2f6;z-index:4000;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;}
+.boot.off{display:none;}
+.boot .bx{background:#fff;border:1px solid #dfe3ea;border-radius:8px;padding:22px 26px;
+  width:430px;box-shadow:0 6px 20px rgba(0,0,0,.08);}
+.boot h3{font-size:13px;color:#1e2537;margin-bottom:4px;}
+.boot .sub{font-size:11px;color:#6b7280;margin-bottom:14px;}
+.boot .ln{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#374151;
+  padding:3px 0;opacity:.35;transition:opacity .2s;}
+.boot .ln.on{opacity:1;}
+.boot .ln .tick{color:#5cb85c;font-weight:700;width:12px;}
+.boot .mock{margin-top:12px;font-size:10.5px;color:#8a6d1d;background:#FFF8E6;
+  border:1px solid #F5DFA3;border-radius:5px;padding:7px 9px;line-height:1.5;}
+
+@media (max-width:900px){ .cue{flex-direction:column;}
+  .cue-right{border-left:none;border-top:1px solid #2c3550;} }
+</style>
+</head>
+<body>
+
+<!-- ===================== simulated connection ===================== -->
+<div class="boot" id="boot">
+  <div class="bx">
+    <h3>DMW &ndash; Data Mart Workbench v1.0Beta</h3>
+    <div class="sub">Cortex Provider Analyst &middot; starting Streamlit in Snowflake</div>
+    <div class="ln" id="bl0"><span class="tick">&#10003;</span><span>Connecting to ADM_PRD.CMS_ADM_CGS_MAC</span></div>
+    <div class="ln" id="bl1"><span class="tick">&#10003;</span><span>Resuming warehouse OPI_PRD_SAS_1_WH</span></div>
+    <div class="ln" id="bl2"><span class="tick">&#10003;</span><span>Loading semantic view FFS_PROVIDER_DEMO</span></div>
+    <div class="ln" id="bl3"><span class="tick">&#10003;</span><span>Session active &mdash; ~279K DME providers</span></div>
+    <div class="mock"><strong>This is a mockup.</strong> No Snowflake connection is made. The questions,
+      SQL and result rows are a recorded transcript of the real session, replayed so the demo can run
+      without network access.</div>
+  </div>
+</div>
+
+<div class="cue" id="cue">
+  <div class="cue-left">
+    <div class="cue-head">
+      <span class="cue-step" id="cueStep">1 / 9</span>
+      <span class="ttl">Demo script</span>
+    </div>
+    <div class="cue-text" id="cueText">&nbsp;</div>
+    <div class="cue-sub" id="cueSub">&nbsp;</div>
+    <div class="cue-dots" id="cueDots"></div>
+  </div>
+  <div class="cue-right">
+    <div class="cue-actions">
+      <button class="cue-btn ghost" id="cueBack" title="Previous step">&#10094;</button>
+      <button class="cue-btn" id="cueGo">Run this step</button>
+      <button class="cue-btn ghost" id="cueAuto" title="Play the whole demo">&#9654;</button>
+      <button class="cue-min" id="cueMin" title="Minimize">&minus;</button>
+    </div>
+  </div>
+</div>
+<div class="app" id="app">
+
+  <!-- ===================== sidebar ===================== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-title">Sample Questions</div>
+    <div class="sb-caption">Click any question to ask it:</div>
+    <div id="sampleQs"></div>
+    <hr class="sb-div">
+    <button class="sb-btn" id="clearBtn">&#128465; Clear Conversation</button>
+    <hr class="sb-div">
+    <div class="sb-meta">
+      <b>App:</b> DMW v1.0Beta (Cortex Provider Analyst)<br>
+      <b>Semantic view:</b> FFS_PROVIDER_DEMO<br>
+      <b>Table:</b> FFS_PROVIDER_DEMO_FLAT<br>
+      <b>Providers:</b> ~279K DME providers<br>
+      <b>Warehouse:</b> OPI_PRD_SAS_1_WH
+    </div>
+    <hr class="sb-div">
+    <div class="sb-legend">
+      <b>Risk tier legend:</b><br>
+      <span style="color:#d9534f;font-weight:700;">HIGH</span>&nbsp;&ge;&nbsp;40&emsp;
+      <span style="color:#f0ad4e;font-weight:700;">MEDIUM</span>&nbsp;25&ndash;39&emsp;
+      <span style="color:#5cb85c;font-weight:700;">LOW</span>&nbsp;&lt;&nbsp;25
+    </div>
+  </aside>
+
+  <!-- ===================== main ===================== -->
+  <main class="main">
+    <button class="collapse-btn" id="collapseBtn" title="Collapse the sidebar">&#10094;</button>
+
+    <div class="dmw-header">
+      <div class="dmw-titles">
+        <h1>DMW &ndash; Data Mart Workbench v1.0Beta -- Provider Risk Agent</h1>
+        <p>Cortex Provider Analyst &middot; ADM_PRD.CMS_ADM_CGS_MAC &middot; ~279K DME Providers</p>
+      </div>
+      <div class="top-nav">
+        <a id="navAbout">About</a>
+        <a id="navHelp">Help</a>
+      </div>
+      <span class="badge" id="sessBadge">&#10003; Session Active</span>
+    </div>
+
+    <div class="chat-area" id="chatArea"></div>
+
+    <div class="dmw-footer">
+      <span><span class="dot"></span>Cortex Analyst &bull; FFS_PROVIDER_DEMO</span>
+      <span>ADM_PRD.CMS_ADM_CGS_MAC.FFS_PROVIDER_DEMO_FLAT</span>
+    </div>
+
+    <div class="spinner-row" id="spinRow"><span class="spin"></span><span>Querying provider data...</span></div>
+
+    <div class="form-row">
+      <input type="text" id="promptInput"
+             placeholder="e.g. Show top 20 highest-risk providers, or: heatmap of risk by state">
+      <button class="send-btn" id="sendBtn">Send</button>
+    </div>
+  </main>
+</div>
+
+<!-- ===================== modals ===================== -->
+<div class="modal-overlay" id="aboutM">
+  <div class="modal-box">
+    <div class="modal-hdr"><h2>About DMW Data Mart Workbench</h2>
+      <button class="mc" data-close="aboutM">&times;</button></div>
+    <div class="modal-body">
+      <p>The <strong>DMW &ndash; Data Mart Workbench v1.0Beta</strong> (Cortex Provider Analyst) is
+        powered by Snowflake Cortex Analyst and the <code>FFS_PROVIDER_DEMO</code> semantic view over
+        <code>FFS_PROVIDER_DEMO_FLAT</code>.</p>
+      <p>Ask plain-English questions about ~279&nbsp;K Medicare DME providers. The app converts your
+        question to SQL, executes it, and returns a colour-coded results table.</p>
+      <hr style="border:none;border-top:1px solid #e0e0e0;margin:12px 0;">
+      <p style="font-size:11px;color:#666;"><strong>Risk tiers:</strong>&nbsp;
+        <span style="color:#d9534f;font-weight:700;">HIGH</span> score&nbsp;&ge;&nbsp;40 &nbsp;|&nbsp;
+        <span style="color:#f0ad4e;font-weight:700;">MEDIUM</span> 25&ndash;39 &nbsp;|&nbsp;
+        <span style="color:#5cb85c;font-weight:700;">LOW</span> &lt;&nbsp;25</p>
+      <p style="font-size:11px;color:#666;">The DMW is modeled on the CMS Episode Workbench.
+        Long descriptions are AI-generated and should be independently verified.</p>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="helpM">
+  <div class="modal-box">
+    <div class="modal-hdr"><h2>Help &amp; Support</h2>
+      <button class="mc" data-close="helpM">&times;</button></div>
+    <div class="modal-body">
+      <p>Type a question about DME provider fraud risk in the input box and press <strong>Send</strong>,
+        or click a sample question in the sidebar.</p>
+      <p><strong>Charts:</strong> just ask for one in the chat &mdash;
+        <em>&ldquo;risk tier distribution as a pie chart&rdquo;</em>,
+        <em>&ldquo;bar chart of average score by FAAIR type&rdquo;</em>,
+        <em>&ldquo;line chart of&hellip;&rdquo;</em>,
+        <em>&ldquo;heatmap of provider counts by state and risk tier&rdquo;</em>.
+        To re-draw the last result, say <em>&ldquo;show this as a bar chart&rdquo;</em>.</p>
+      <p><strong>Key columns:</strong></p>
+      <ul>
+        <li><code>FRAUD_RISK_SCORE</code> &mdash; base risk score 0&ndash;100</li>
+        <li><code>MULTI_STATE_RISK_SCORE</code> &mdash; enhanced score including state footprint</li>
+        <li><code>RISK_TIER</code> &mdash; HIGH / MEDIUM / LOW</li>
+        <li><code>PRVDR_DME_FAAIR_TYPE_CD</code> &mdash; A=Standard, R=Revoked, S=Suspended, T=Terminated</li>
+        <li><code>STATE_COUNT</code> &mdash; states spanned in ownership records</li>
+        <li><code>CLAIM_COUNT</code> &mdash; matched Medicare claims</li>
+      </ul>
+      <p><strong>Contact:</strong> Reach out to Manuel Figallo for support.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== demo director ===================== -->
+<div class="hint" id="hint"></div>
+
+
+<script>
+/* ===================================================================== */
+/* Chart renderers, lifted verbatim from CHART_JS in                      */
+/* FFS_PROVIDER_CHAT_HJS_V2_5.py so the drawing code is the same code.    */
+/* ===================================================================== */
+
+var PAL=["#4a7ba7","#f0ad4e","#5cb85c","#d9534f","#8e6bbf","#2aa7a0","#e377a2","#7f7f7f","#bcbd22","#17becf","#9c6b4e","#6c8ebf"];
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function trunc(s,n){s=String(s);return s.length>n?s.slice(0,n-1)+'\u2026':s;}
+function fmt(v){
+  if(v===null||v===undefined)return '\u2013';
+  var a=Math.abs(v);
+  if(a>=1e6)return (v/1e6).toFixed(1)+'M';
+  if(a>=1e4)return (v/1e3).toFixed(1)+'K';
+  return (Math.round(v*100)/100).toLocaleString();
+}
+function svgOpen(w,h){
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" style="max-width:'+w+'px;display:block" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,Tahoma,sans-serif">';
+}
+function pieSvg(c){
+  var W=560,H=250,cx=125,cy=125,r=105,tot=0,i,cols=c.colors||PAL;
+  c.values.forEach(function(v){tot+=(v||0);});
+  var out=svgOpen(W,H),a0=-Math.PI/2;
+  for(i=0;i<c.values.length;i++){
+    var v=c.values[i]||0,frac=v/tot,a1=a0+frac*2*Math.PI,col=cols[i%cols.length];
+    var tip=esc(c.labels[i])+': '+fmt(v)+' ('+(frac*100).toFixed(1)+'%)';
+    if(c.values.length===1){
+      out+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+col+'"><title>'+tip+'</title></circle>';
+    }else{
+      var x0=cx+r*Math.cos(a0),y0=cy+r*Math.sin(a0),x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1);
+      out+='<path d="M'+cx+','+cy+' L'+x0.toFixed(2)+','+y0.toFixed(2)+' A'+r+','+r+' 0 '+(a1-a0>Math.PI?1:0)+' 1 '+x1.toFixed(2)+','+y1.toFixed(2)+' Z" fill="'+col+'" stroke="#fff" stroke-width="1.5"><title>'+tip+'</title></path>';
+    }
+    a0=a1;
+    var ly=22+i*20;
+    out+='<rect x="265" y="'+(ly-9)+'" width="10" height="10" rx="2" fill="'+col+'"/>'
+      +'<text x="281" y="'+ly+'" font-size="11" fill="#374151">'+esc(trunc(c.labels[i],26))+'</text>'
+      +'<text x="545" y="'+ly+'" font-size="11" fill="#6B7280" text-anchor="end">'+fmt(v)+' \u00b7 '+(frac*100).toFixed(1)+'%</text>';
+  }
+  return out+'</svg>';
+}
+function barSvg(c){
+  var n=c.labels.length,k=c.series.length,W=560,lw=140,rp=56,top=8,bot=24,bh=12,gap=8;
+  var rowH=k*bh+gap,H=top+n*rowH+bot,pw=W-lw-rp,lo=0,hi=0,i,j,t;
+  c.series.forEach(function(s){s.values.forEach(function(v){if(v!==null){if(v<lo)lo=v;if(v>hi)hi=v;}});});
+  if(hi===lo)hi=lo+1;
+  function X(v){return lw+(v-lo)/(hi-lo)*pw;}
+  var out=svgOpen(W,H);
+  for(t=0;t<=4;t++){
+    var gv=lo+(hi-lo)*t/4,gx=X(gv).toFixed(1);
+    out+='<line x1="'+gx+'" y1="'+top+'" x2="'+gx+'" y2="'+(H-bot)+'" stroke="#eef0f3"/>'
+      +'<text x="'+gx+'" y="'+(H-bot+13)+'" font-size="9" fill="#9CA3AF" text-anchor="middle">'+fmt(gv)+'</text>';
+  }
+  for(i=0;i<n;i++){
+    var y=top+i*rowH;
+    out+='<text x="'+(lw-6)+'" y="'+(y+k*bh/2+3)+'" font-size="10.5" fill="#374151" text-anchor="end"><title>'+esc(c.labels[i])+'</title>'+esc(trunc(c.labels[i],22))+'</text>';
+    for(j=0;j<k;j++){
+      var v=c.series[j].values[i];
+      if(v===null)continue;
+      var x0=X(0),x1=X(v),bx=Math.min(x0,x1),bw=Math.max(Math.abs(x1-x0),1);
+      out+='<rect x="'+bx.toFixed(1)+'" y="'+(y+j*bh)+'" width="'+bw.toFixed(1)+'" height="'+(bh-2)+'" rx="2" fill="'+PAL[j%PAL.length]+'"><title>'+esc(c.labels[i])+' \u2014 '+esc(c.series[j].name)+': '+fmt(v)+'</title></rect>'
+        +'<text x="'+(v>=0?x1+4:x1-4).toFixed(1)+'" y="'+(y+j*bh+8)+'" font-size="9" fill="#6B7280" text-anchor="'+(v>=0?'start':'end')+'">'+fmt(v)+'</text>';
+    }
+  }
+  return out+'</svg>';
+}
+function lineSvg(c){
+  var n=c.labels.length,W=560,H=270,l=52,r=14,t=14,b=64,pw=W-l-r,ph=H-t-b,lo=Infinity,hi=-Infinity,i,j,g;
+  c.series.forEach(function(s){s.values.forEach(function(v){if(v!==null){if(v<lo)lo=v;if(v>hi)hi=v;}});});
+  if(lo===Infinity){lo=0;hi=1;}
+  if(lo>0)lo=0;
+  if(hi<=lo)hi=lo+1;
+  function X(i){return n===1?l+pw/2:l+i*pw/(n-1);}
+  function Y(v){return t+ph-(v-lo)/(hi-lo)*ph;}
+  var out=svgOpen(W,H);
+  for(g=0;g<=4;g++){
+    var gv=lo+(hi-lo)*g/4,gy=Y(gv).toFixed(1);
+    out+='<line x1="'+l+'" y1="'+gy+'" x2="'+(W-r)+'" y2="'+gy+'" stroke="#eef0f3"/>'
+      +'<text x="'+(l-6)+'" y="'+(parseFloat(gy)+3)+'" font-size="9" fill="#9CA3AF" text-anchor="end">'+fmt(gv)+'</text>';
+  }
+  var step=Math.ceil(n/12);
+  for(i=0;i<n;i+=step){
+    var tx=X(i).toFixed(1),ty=H-b+14;
+    out+='<text x="'+tx+'" y="'+ty+'" font-size="9.5" fill="#6B7280" text-anchor="end" transform="rotate(-35 '+tx+' '+ty+')">'+esc(trunc(c.labels[i],16))+'</text>';
+  }
+  for(j=0;j<c.series.length;j++){
+    var col=PAL[j%PAL.length],pts=[],dots='';
+    for(i=0;i<n;i++){
+      var v=c.series[j].values[i];
+      if(v===null)continue;
+      var px=X(i).toFixed(1),py=Y(v).toFixed(1);
+      pts.push(px+','+py);
+      dots+='<circle cx="'+px+'" cy="'+py+'" r="3" fill="'+col+'"><title>'+esc(c.labels[i])+' \u2014 '+esc(c.series[j].name)+': '+fmt(v)+'</title></circle>';
+    }
+    if(pts.length>1)out+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="'+col+'" stroke-width="2"/>';
+    out+=dots;
+  }
+  return out+'</svg>';
+}
+function heatSvg(c){
+  var R=c.rows.length,C=c.cols.length,lw=140,top=70,ch=20,i,j;
+  var cw=Math.max(26,Math.min(64,(560-lw-10)/Math.max(C,1)));
+  var W=Math.max(560,lw+C*cw+60),H=top+R*ch+8;
+  var gLo=Infinity,gHi=-Infinity,cLo=[],cHi=[];
+  for(j=0;j<C;j++){cLo[j]=Infinity;cHi[j]=-Infinity;}
+  for(i=0;i<R;i++)for(j=0;j<C;j++){
+    var v=c.matrix[i][j];
+    if(v===null)continue;
+    if(v<gLo)gLo=v;if(v>gHi)gHi=v;
+    if(v<cLo[j])cLo[j]=v;if(v>cHi[j])cHi[j]=v;
+  }
+  function tOf(v,j){
+    var lo=c.colnorm?cLo[j]:gLo,hi=c.colnorm?cHi[j]:gHi;
+    return hi>lo?(v-lo)/(hi-lo):0.5;
+  }
+  function colr(t){
+    var a=[240,245,250],b=[217,83,79],m=[];
+    for(var k=0;k<3;k++)m.push(Math.round(a[k]+(b[k]-a[k])*t));
+    return 'rgb('+m.join(',')+')';
+  }
+  var out=svgOpen(W,H);
+  for(j=0;j<C;j++){
+    var hx=(lw+j*cw+cw/2).toFixed(1);
+    out+='<text x="'+hx+'" y="'+(top-8)+'" font-size="9.5" fill="#374151" transform="rotate(-35 '+hx+' '+(top-8)+')"><title>'+esc(c.cols[j])+'</title>'+esc(trunc(c.cols[j],16))+'</text>';
+  }
+  for(i=0;i<R;i++){
+    var y=top+i*ch;
+    out+='<text x="'+(lw-6)+'" y="'+(y+ch/2+3)+'" font-size="10.5" fill="#374151" text-anchor="end"><title>'+esc(c.rows[i])+'</title>'+esc(trunc(c.rows[i],22))+'</text>';
+    for(j=0;j<C;j++){
+      var v=c.matrix[i][j],x=lw+j*cw;
+      if(v===null){
+        out+='<rect x="'+x+'" y="'+y+'" width="'+(cw-2)+'" height="'+(ch-2)+'" rx="2" fill="#f3f4f6"/>';
+        continue;
+      }
+      var t=tOf(v,j);
+      out+='<rect x="'+x+'" y="'+y+'" width="'+(cw-2)+'" height="'+(ch-2)+'" rx="2" fill="'+colr(t)+'"><title>'+esc(c.rows[i])+' \u00d7 '+esc(c.cols[j])+': '+fmt(v)+'</title></rect>';
+      if(cw>=34)out+='<text x="'+(x+(cw-2)/2).toFixed(1)+'" y="'+(y+ch/2+2)+'" font-size="9" text-anchor="middle" fill="'+(t>0.6?'#fff':'#374151')+'">'+fmt(v)+'</text>';
+    }
+  }
+  return out+'</svg>';
+}
+function renderChart(c){
+  var d=document.createElement('div');
+  d.className='chart-wrap';
+  var body=c.type==='pie'?pieSvg(c):c.type==='bar'?barSvg(c):c.type==='line'?lineSvg(c):heatSvg(c);
+  var leg='';
+  if((c.type==='bar'||c.type==='line')&&c.series.length>1){
+    leg='<div class="chart-legend">'+c.series.map(function(s,i){
+      return '<span><i style="background:'+PAL[i%PAL.length]+'"></i>'+esc(s.name)+'</span>';
+    }).join('')+'</div>';
+  }
+  if(c.type==='heat'){
+    leg='<div class="chart-legend"><span>Low</span><i class="grad"></i><span>High</span>'+(c.colnorm?'<span>(scaled per column)</span>':'')+'</div>';
+  }
+  d.innerHTML='<div class="chart-title">'+esc(c.title)+'</div>'+body+leg;
+  return d;
+}
+
+</script>
+
+<script>
+const DEMO_DATA = {"tables":{"top20":{"cols":["PRVDR_PAC_ID","PRVDR_NPI_NUM","PRVDR_LGL_NAME","PRVDR_STATE_CD","FRAUD_RISK_SCORE","RISK_TIER","CLAIM_COUNT","OWNER_COUNT"],"rows":[["0244148732","1932140969","WHEATON FRANCISCAN HEALTHCARE - IOWA INC","MI","50.0","HIGH","0","289"],["6608003652","1992697114","UNITEDHEALTH GROUP INCORPORATED","WA","50.0","HIGH","0","257856"],["9537064159","1861579997","AURORA HEALTH CARE, INC.","WI","50.0","HIGH","0","18"],["7416860440","1942236724","MERCY HEALTH CORPORATION","IL","50.0","HIGH","0","846"],["8426967803","1952323974","SANFORD NORTH","ND","50.0","HIGH","0","4386"],["5698667822","1972619948","UNITEDHEALTH GROUP INCORPORATED","OH","50.0","HIGH","0","630"],["4486176757","1598503922","PRIME HEALTHCARE SERVICES, INC","CA","50.0","HIGH","0","24"],["1557268950","1972138790","MEDICAL UNIVERSITY OF SOUTH CAROLINA","SC","50.0","HIGH","0","1624"],["2264620137","1881680718","WR TERRAPIN INTERMEDIATE, LLC","WA","50.0","HIGH","0","12"],["6901794007","1982650297","THE CIGNA GROUP","TN","50.0","HIGH","0","8151"],["1153230230","1972500478","RECOVER HEALTH SERVICES LLC","PA","50.0","HIGH","0","504"],["3173511458","1730214768","WHITE OAK MANOR INC","SC","50.0","HIGH","0","387"],["2264345206","1992023295","SANFORD","WI","50.0","HIGH","0","5329"],["0345136412","1982361903","UNITEDHEALTH GROUP INCORPORATED","OH","50.0","HIGH","0","1479"],["6305755901","1871991513","THE LEV AT SAN ANTONIO, LLC","TX","50.0","HIGH","0","456"],["4284546151","1982637385","SANFORD NORTH","ND","50.0","HIGH","0","310"],["3173433265","1689607285","US PHYSICAL THERAPY LTD","TX","50.0","HIGH","0","138"],["4385538735","1962423632","PATIENT FIRST SERIES","VA","50.0","HIGH","0","260"],["8628986536","1952326688","AURORA HEALTH CARE, INC.","WI","50.0","HIGH","0","220"],["8628961638","1992303093","WALGREEN CO","IL","50.0","HIGH","0","35960"]]},"ohio":{"cols":["PRVDR_PAC_ID","PRVDR_NPI_NUM","PRVDR_LGL_NAME","PRVDR_STATE_CD","FRAUD_RISK_SCORE","RISK_TIER","CLAIM_COUNT","OWNER_COUNT"],"rows":[["5698667822","1972619948","UNITEDHEALTH GROUP INCORPORATED","OH","50.0","HIGH","0","630"],["5193635183","1144210634","SPRENGER ENTERPRISES, INC","OH","50.0","HIGH","0","8"],["0345136412","1982361903","UNITEDHEALTH GROUP INCORPORATED","OH","50.0","HIGH","0","1479"],["6507082187","1780823500","NAUTIC PARTNERS VIII LP","OH","45.0","HIGH","0","15"],["0345152955","1992406490","OHIO FOOT AND ANKLE SPECIALISTS LLC","OH","45.0","HIGH","0","57"]]},"statetier":{"cols":["PRVDR_STATE_CD","RISK_TIER","PROVIDER_COUNT","AVG_FRAUD_RISK_SCORE"],"rows":[["RI","HIGH","85","43.5"],["UNK","HIGH","405","43.1"],["ND","HIGH","20","41.8"],["VT","HIGH","4","41.3"],["NH","HIGH","9","41.1"],["MT","HIGH","10","41.0"],["VI","HIGH","5","41.0"],["WI","HIGH","152","40.7"],["IA","HIGH","26","40.6"],["HI","HIGH","10","40.5"],["MO","HIGH","215","40.4"],["CO","HIGH","27","40.4"],["SD","HIGH","50","40.4"],["ME","HIGH","25","40.4"],["AZ","HIGH","23","40.4"],["NC","HIGH","86","40.4"],["SC","HIGH","100","40.4"],["WA","HIGH","198","40.3"],["KS","HIGH","55","40.3"],["IL","HIGH","316","40.3"]]},"il":{"cols":["PRVDR_STATE_CD","RISK_TIER","PROVIDER_COUNT","AVG_RISK_SCORE","NATIONAL_AVG_RISK_SCORE","RISK_SCORE_VS_NATIONAL","AVG_CLAIM_COUNT","NATIONAL_AVG_CLAIM_COUNT","AVG_OWNER_COUNT","NATIONAL_AVG_OWNER_COUNT","AVG_DMEPOS_CNT","NATIONAL_AVG_DMEPOS_CNT","FAAIR_D_COUNT","FAAIR_C_COUNT","FAAIR_B_COUNT","FAAIR_A_COUNT"],"rows":[["IL","HIGH","316","40.3","40.3","0.0","0.0","0.0","184.83","1384.69","0.13","0.15","0","0","0","295"],["IL","MEDIUM","881","32.9","32.1","0.8","0.0","0.4","83.74","50.06","0.16","0.21","0","0","0","777"],["IL","LOW","872","20.0","20.0","0.0","0.0","0.0","1.76","1.32","0.06","0.09","0","0","0","843"]]}},"sql":["WITH __ffs_provider_demo_flat AS ( SELECT prvdr_pac_id, prvdr_npi_num, prvdr_lgl_name, prvdr_state_cd, risk_tier, fraud_risk_score, claim_count, owner_count FROM adm_prd.cms_adm_cgs_mac.ffs_provider_demo_flat ) SELECT prvdr_pac_id, prvdr_npi_num, prvdr_lgl_name, prvdr_state_cd, fraud_risk_score, risk_tier, claim_count, owner_count FROM __ffs_provider_demo_flat WHERE risk_tier = 'HIGH' ORDER BY fraud_risk_score DESC NULLS LAST LIMIT 20 -- Generated by Cortex Analyst (request_id: 8adec568-e903-4706-bd59-8c94824bbb74) ;","WITH __ffs_provider_demo_flat AS ( SELECT prvdr_pac_id, prvdr_npi_num, prvdr_lgl_name, prvdr_state_cd, risk_tier, fraud_risk_score, claim_count, owner_count FROM adm_prd.cms_adm_cgs_mac.ffs_provider_demo_flat ) SELECT prvdr_pac_id, prvdr_npi_num, prvdr_lgl_name, prvdr_state_cd, fraud_risk_score, risk_tier, claim_count, owner_count FROM __ffs_provider_demo_flat WHERE prvdr_state_cd = 'OH' ORDER BY fraud_risk_score DESC NULLS LAST LIMIT 5 -- Generated by Cortex Analyst (request_id: 57a673c1-e072-4d2f-b944-93e909526d8c) ;","WITH __ffs_provider_demo_flat AS ( SELECT prvdr_state_cd, risk_tier, fraud_risk_score FROM adm_prd.cms_adm_cgs_mac.ffs_provider_demo_flat ) SELECT prvdr_state_cd, risk_tier, COUNT(*) AS provider_count, ROUND(AVG(fraud_risk_score), 1) AS avg_fraud_risk_score FROM __ffs_provider_demo_flat GROUP BY prvdr_state_cd, risk_tier ORDER BY avg_fraud_risk_score DESC NULLS LAST LIMIT 20 -- Generated by Cortex Analyst (request_id: 363ebbef-00dc-487e-b2d8-17ea001117fc) ;","WITH __ffs_provider_demo_flat AS ( SELECT prvdr_state_cd, prvdr_dme_faair_type_cd, risk_tier, fraud_risk_score, claim_count, owner_count, prvdr_dmepos_cnt FROM adm_prd.cms_adm_cgs_mac.ffs_provider_demo_flat ), state_risk AS ( SELECT prvdr_state_cd, risk_tier, COUNT(*) AS provider_count, ROUND(AVG(fraud_risk_score), 1) AS avg_risk_score, ROUND(AVG(claim_count), 1) AS avg_claim_count, ROUND(AVG(owner_count), 2) AS avg_owner_count, ROUND(AVG(prvdr_dmepos_cnt), 2) AS avg_dmepos_cnt, COUNT(CASE WHEN prvdr_dme_faair_type_cd = 'D' THEN 1 END) AS faair_d_count, COUNT(CASE WHEN prvdr_dme_faair_type_cd = 'C' THEN 1 END) AS faair_c_count, COUNT(CASE WHEN prvdr_dme_faair_type_cd = 'B' THEN 1 END) AS faair_b_count, COUNT(CASE WHEN prvdr_dme_faair_type_cd = 'A' THEN 1 END) AS faair_a_count FROM __ffs_provider_demo_flat GROUP BY prvdr_state_cd, risk_tier ), national_avg AS ( SELECT risk_tier, ROUND(AVG(fraud_risk_score), 1) AS national_avg_risk_score, ROUND(AVG(claim_count), 1) AS national_avg_claim_count, ROUND(AVG(owner_count), 2) AS national_avg_owner_count, ROUND(AVG(prvdr_dmepos_cnt), 2) AS national_avg_dmepos_cnt FROM __ffs_provider_demo_flat GROUP BY risk_tier ) SELECT s.prvdr_state_cd, s.risk_tier, s.provider_count, s.avg_risk_score, n.national_avg_risk_score, ROUND(s.avg_risk_score - n.national_avg_risk_score, 1) AS risk_score_vs_national, s.avg_claim_count, n.national_avg_claim_count, s.avg_owner_count, n.national_avg_owner_count, s.avg_dmepos_cnt, n.national_avg_dmepos_cnt, s.faair_d_count, s.faair_c_count, s.faair_b_count, s.faair_a_count FROM state_risk AS s JOIN national_avg AS n ON s.risk_tier = n.risk_tier WHERE s.prvdr_state_cd = 'IL' ORDER BY s.avg_risk_score DESC NULLS LAST -- Generated by Cortex Analyst (request_id: 2d7d4b26-28d1-4afc-b964-282dd8c73f99) ;"]};
+
+/* =========================================================================
+ * THE RECORDED SESSION
+ *
+ * Questions, interpretations, SQL and rows come from DEMO_CHAT_HISTORY_v2.docx
+ * — the real Cortex Analyst session. DATA is injected below as DEMO_DATA.
+ * ====================================================================== */
+const D = DEMO_DATA.tables, SQL = DEMO_DATA.sql;
+
+const RISK_COLORS = { HIGH: '#d9534f', MEDIUM: '#f0ad4e', LOW: '#5cb85c' };
+
+const SAMPLE_QS = [
+    "Show the top 20 highest-risk DME providers",
+    "Which states have the most HIGH-risk providers?",
+    "What is the fraud risk tier distribution?",
+    "Show providers with composite score 90 or above",
+    "List providers with Terminated or Suspended FAAIR status",
+    "What is the average risk score by FAAIR type?",
+    "Show HIGH-risk providers in Pennsylvania",
+    "Which providers span ownership across 7 or more states?",
+    "Show providers with eligibility flag 0 (not eligible)",
+    "Top 10 states by average composite risk score?",
+    "Show the risk tier distribution as a pie chart",
+    "Bar chart of average risk score by FAAIR type",
+    "Heatmap of provider counts by state and risk tier",
+    "Now show that as a bar chart"
+];
+
+/* The turns the demo replays, in order. */
+const TURNS = {
+    top20: {
+        q: 'Show the top 20 highest-risk providers',
+        answer: 'This is our interpretation of your question: Show the top 20 highest-risk providers ' +
+                'ordered by fraud risk score descending',
+        sql: SQL[0], table: 'top20'
+    },
+    ohio: {
+        q: 'Show the top 5 highest-risk DME providers in Ohio',
+        answer: "This is our interpretation of your question: Show the top highest-risk DME providers " +
+                "in Ohio (state code 'OH') ordered by fraud risk score descending",
+        sql: SQL[1], table: 'ohio'
+    },
+    heat: {
+        q: 'Show a heatmap of the top 20 highest-risk providers by state and risk tier',
+        answer: 'This is our interpretation of your question: Show the top 20 highest-risk providers ' +
+                'grouped by state and risk tier, returning state, risk tier, provider count, and average ' +
+                'fraud risk score, ordered by average fraud risk score descending.',
+        sql: SQL[2], table: 'statetier', chart: 'heat'
+    },
+    bar: {
+        q: 'Now show that as a bar chart',
+        answer: 'Rendered the previous result as a bar chart.',
+        sql: '', table: 'statetier', chart: 'bar', hideTable: true, local: true
+    },
+    il: {
+        q: 'Why is IL so high?',
+        answer: 'This is our interpretation of your question: Analyze why Illinois (IL) has a high average ' +
+                'fraud risk score by breaking down providers in IL by risk tier, showing provider count, ' +
+                'average fraud risk score, average claim count, average owner count, average DMEPOS count, ' +
+                'and FAAIR type distribution. Also compare IL’s metrics against the national averages ' +
+                'by state and risk tier.',
+        sql: SQL[3], table: 'il',
+        /* The transcript ends at the table. This closing read is written from
+           the figures in that table and is flagged on screen, because passing
+           off a synthesized narrative as Cortex output would be a lie about
+           what the tool produced. */
+        followUp: 'IL is not an outlier on score — it is an outlier on volume. Its HIGH tier averages ' +
+                  '40.3, exactly the national HIGH average, and its LOW tier matches the national 20.0. ' +
+                  'What sets IL apart is that 316 providers sit in the HIGH tier at all, the third largest ' +
+                  'HIGH population of any state in the result. The only tier genuinely above national is ' +
+                  'MEDIUM, at 32.9 against 32.1, and the 881 providers there are the group worth a look. ' +
+                  'Note also that average owner count in the HIGH tier is 184.8 against a national 1,384.7, ' +
+                  'so IL’s risk is not being driven by sprawling ownership chains. All 316 HIGH ' +
+                  'providers carry FAAIR type A (standard) — none are revoked, suspended or terminated.',
+        followUpNote: 'Synthesized for this mockup from the figures in the table above. The recorded ' +
+                      'transcript ends at the result table; Cortex Analyst did not write this paragraph.'
+    }
+};
+
+/* The steps, matching the slides in Cortex_Provider_Analyst_Executive_VIDEO2.pptx. */
+const STEPS = [
+    { text: 'Show “About”',
+      sub: 'Opens the About dialog from the header. What the app is, what it sits on, and how the risk tiers are defined.',
+      focus: '#navAbout', run: s => { closeModals(); openModal('aboutM'); } },
+
+    { text: 'Show “Help”',
+      sub: 'The Help dialog: how to ask for a chart in plain English, and the key columns in the semantic view.',
+      focus: '#navHelp', run: s => { closeModals(); openModal('helpM'); } },
+
+    { text: 'Collapse the left pane',
+      sub: 'The sample questions have done their job. Collapsing gives the chat and the charts the full width before the questions start.',
+      focus: '#collapseBtn', run: s => { closeModals(); setCollapsed(true); } },
+
+    { text: '“Show the top 20 highest-risk providers”. Click SEND.',
+      sub: 'Cortex Analyst interprets the question, writes the SQL, runs it and returns the colour-coded table.',
+      focus: '#sendBtn', run: s => ask(TURNS.top20) },
+
+    { text: 'Show the top 5 highest-risk DME providers in Ohio. Click SEND.',
+      sub: 'The same question narrowed to one state. Note the WHERE clause the model adds for ‘Ohio’ — it maps the word to the state code.',
+      focus: '#sendBtn', run: s => ask(TURNS.ohio) },
+
+    { text: 'Show a heatmap of the top 20 highest-risk providers by state and risk tier. Click SEND.',
+      sub: 'Asking for a chart in words. The app strips the chart wording before the question reaches Cortex, then draws the result itself.',
+      focus: '#sendBtn', run: s => ask(TURNS.heat) },
+
+    { text: 'Now show that as a bar chart. Click SEND.',
+      sub: '“That” refers to the previous result, so the app redraws it without going back to Snowflake. No second query, no second charge.',
+      focus: '#sendBtn', run: s => ask(TURNS.bar) },
+
+    { text: 'Why is IL so high? Click SEND.',
+      sub: 'A follow-up in plain English. The model writes a CTE comparing Illinois against the national averages by tier.',
+      focus: '#sendBtn', run: s => ask(TURNS.il) },
+
+    { text: 'Read the answer',
+      sub: 'The closing read of the IL table. This is the part a human would otherwise spend an afternoon assembling.',
+      focus: '#chatArea', run: s => { scrollChat(); } }
+];
+
+/* =========================================================================
+ * STATE + RENDERING  (mirrors build_chat_html in the .py)
+ * ====================================================================== */
+let messages = [], busy = false;
+
+const $ = id => document.getElementById(id);
+const escHtml = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                              .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function dfToHtmlTable(t) {
+    const cols = t.cols;
+    const riskCol = cols.find(c => ['RISK_TIER','COMPOSITE_TIER'].indexOf(c.toUpperCase()) >= 0);
+    const scoreCols = cols.filter(c => c.toUpperCase().indexOf('SCORE') >= 0);
+    let rows = '';
+    t.rows.forEach(r => {
+        const tier = riskCol ? String(r[cols.indexOf(riskCol)]) : '';
+        const colr = RISK_COLORS[tier] || '';
+        let cells = '';
+        cols.forEach((c, i) => {
+            let style = '';
+            if (c === riskCol && colr) style = ' style="color:' + colr + ';font-weight:700;"';
+            else if (scoreCols.indexOf(c) >= 0 && colr) style = ' style="color:' + colr + ';"';
+            cells += '<td' + style + '>' + escHtml(r[i]) + '</td>';
+        });
+        rows += '<tr>' + cells + '</tr>';
+    });
+    return '<div class="tbl-wrap"><table><thead><tr>' +
+        cols.map(c => '<th>' + escHtml(c) + '</th>').join('') +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
+
+/* The chart specs the Python chart_spec() would produce for these results,
+   in the shape the lifted renderers expect. */
+function chartSpecFor(kind) {
+    const t = D.statetier, R = t.rows;
+    if (kind === 'heat') {
+        return { type: 'heat',
+            title: 'PROVIDER COUNT — PRVDR STATE CD × RISK TIER',
+            rows: R.map(r => r[0]), cols: ['HIGH'],
+            matrix: R.map(r => [parseFloat(r[2])]), colnorm: false };
+    }
+    return { type: 'bar',
+        title: 'PROVIDER COUNT, AVG FRAUD RISK SCORE by PRVDR STATE CD',
+        labels: R.map(r => r[0]),
+        series: [ { name: 'PROVIDER COUNT',        values: R.map(r => parseFloat(r[2])) },
+                  { name: 'AVG FRAUD RISK SCORE',  values: R.map(r => parseFloat(r[3])) } ] };
+}
+
+function renderChat() {
+    const area = $('chatArea');
+    area.innerHTML = '';
+    if (!messages.length) {
+        area.innerHTML = '<div class="empty-state"><div class="ico">&#128202;</div>' +
+            '<p>Ask a plain-English question about Medicare DME provider fraud risk.<br>' +
+            'Add &ldquo;as a pie chart&rdquo;, &ldquo;bar chart&rdquo;, &ldquo;line chart&rdquo; ' +
+            'or &ldquo;heatmap&rdquo; to see it visually.</p></div>';
+        return;
+    }
+    messages.forEach(m => {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg ' + (m.role === 'user' ? 'user' : 'analyst') + (m.chart ? ' wide' : '');
+        const lbl = document.createElement('div');
+        lbl.className = 'msg-label';
+        lbl.textContent = m.role === 'user' ? 'You' : 'Cortex Analyst';
+        const bub = document.createElement('div');
+        bub.className = 'bubble';
+        bub.textContent = m.text;
+        wrap.appendChild(lbl); wrap.appendChild(bub);
+
+        if (m.chart) {
+            try { wrap.appendChild(renderChart(m.chart)); }
+            catch (e) {
+                const nb = document.createElement('div');
+                nb.className = 'note-box';
+                nb.textContent = 'Chart could not be drawn: ' + e;
+                wrap.appendChild(nb);
+            }
+        }
+        if (m.sql) {
+            const sw = document.createElement('div'); sw.className = 'sql-wrap';
+            const sl = document.createElement('div'); sl.className = 'sql-lbl';
+            sl.textContent = 'Generated SQL';
+            const sc = document.createElement('div'); sc.className = 'sql-code';
+            sc.textContent = m.sql;
+            sw.appendChild(sl); sw.appendChild(sc); wrap.appendChild(sw);
+        }
+        if (m.table) {
+            const td = document.createElement('div');
+            td.innerHTML = dfToHtmlTable(D[m.table]);
+            wrap.appendChild(td);
+        }
+        if (m.followUp) {
+            const fb = document.createElement('div');
+            fb.className = 'bubble';
+            fb.style.cssText = 'margin-top:8px;background:#fff;border:1px solid #E5E7EB;' +
+                               'box-shadow:0 1px 3px rgba(0,0,0,.07);';
+            fb.textContent = m.followUp;
+            wrap.appendChild(fb);
+            if (m.followUpNote) {
+                const nn = document.createElement('div');
+                nn.className = 'note-box';
+                nn.textContent = m.followUpNote;
+                wrap.appendChild(nn);
+            }
+        }
+        area.appendChild(wrap);
+    });
+    scrollChat();
+}
+
+function scrollChat() { const a = $('chatArea'); a.scrollTop = a.scrollHeight; }
+
+/* =========================================================================
+ * THE SIMULATED ROUND TRIP
+ * ====================================================================== */
+function typeInto(el, text, done) {
+    el.value = '';
+    let i = 0;
+    (function tick() {
+        el.value = text.slice(0, ++i);
+        if (i < text.length) setTimeout(tick, 16);
+        else setTimeout(done, 180);
+    })();
+}
+
+function ask(turn) {
+    if (busy) return Promise.resolve();
+    busy = true;
+    closeModals();
+    return new Promise(resolve => {
+        typeInto($('promptInput'), turn.q, () => {
+            $('sendBtn').classList.add('flash');
+            setTimeout(() => $('sendBtn').classList.remove('flash'), 220);
+            $('promptInput').value = '';
+            messages.push({ role: 'user', text: turn.q });
+            renderChat();
+
+            /* A local redraw never leaves the browser in the real app either,
+               so it gets no spinner. */
+            const wait = turn.local ? 320 : 1500;
+            if (!turn.local) $('spinRow').classList.add('on');
+
+            setTimeout(() => {
+                $('spinRow').classList.remove('on');
+                const m = { role: 'analyst', text: turn.answer, sql: turn.sql || '' };
+                if (!turn.hideTable) m.table = turn.table;
+                if (turn.chart) m.chart = chartSpecFor(turn.chart);
+                if (turn.followUp) { m.followUp = turn.followUp; m.followUpNote = turn.followUpNote; }
+                messages.push(m);
+                renderChat();
+                busy = false;
+                resolve();
+            }, wait);
+        });
+    });
+}
+
+/* =========================================================================
+ * CHROME
+ * ====================================================================== */
+function openModal(id)  { $(id).classList.add('active'); }
+function closeModals()  { document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active')); }
+function setCollapsed(on) { $('app').classList.toggle('collapsed', on);
+                            $('collapseBtn').innerHTML = on ? '&#10095;' : '&#10094;'; }
+
+function buildSidebar() {
+    const host = $('sampleQs');
+    host.innerHTML = '';
+    SAMPLE_QS.forEach(q => {
+        const b = document.createElement('button');
+        b.className = 'sb-btn'; b.textContent = q;
+        b.addEventListener('click', () => {
+            b.classList.add('used');
+            const known = findTurn(q);
+            if (known) { ask(known); return; }
+            /* Only the recorded questions have answers. Saying so is better
+               than inventing a result in front of an audience. */
+            messages.push({ role: 'user', text: q });
+            messages.push({ role: 'analyst',
+                text: 'This mockup replays a recorded session, and this question is not part of it. ' +
+                      'The demo script covers: the top 20 providers, the top 5 in Ohio, the heatmap by ' +
+                      'state and risk tier, the same result as a bar chart, and the Illinois follow-up.' });
+            renderChat();
+        });
+        host.appendChild(b);
+    });
+}
+
+/* =========================================================================
+ * THE DIRECTOR
+ * ====================================================================== */
+let step = 0, playing = false;
+
+function paintCue() {
+    const s = STEPS[step];
+    $('cueStep').textContent = (step + 1) + ' / ' + STEPS.length;
+    $('cueText').textContent = s.text;
+    $('cueSub').textContent = s.sub;
+    $('cueBack').disabled = step === 0;
+    $('cueDots').innerHTML = STEPS.map((_, i) =>
+        '<i class="' + (i < step ? 'done' : i === step ? 'now' : '') + '"></i>').join('');
+    showHint(s.focus);
+}
+
+function showHint(sel) {
+    const h = $('hint'), el = sel && document.querySelector(sel);
+    if (!el) { h.classList.remove('on'); return; }
+    const r = el.getBoundingClientRect();
+    h.style.left = (r.left - 4) + 'px';
+    h.style.top = (r.top - 4) + 'px';
+    h.style.width = (r.width + 8) + 'px';
+    h.style.height = (r.height + 8) + 'px';
+    h.classList.add('on');
+}
+
+async function runStep() {
+    const s = STEPS[step];
+    $('cueGo').disabled = true;
+    try { await s.run(s); } finally { $('cueGo').disabled = false; }
+    if (step < STEPS.length - 1) { step++; paintCue(); }
+    else { $('cueGo').textContent = 'Demo complete'; showHint(null); }
+}
+
+async function playAll() {
+    if (playing) { playing = false; $('cueAuto').innerHTML = '&#9654;'; return; }
+    playing = true;
+    $('cueAuto').innerHTML = '&#10073;&#10073;';
+    while (playing && step < STEPS.length) {
+        const last = step;
+        await runStep();
+        await new Promise(r => setTimeout(r, 2200));
+        if (step === last) break;           /* reached the end */
+    }
+    playing = false;
+    $('cueAuto').innerHTML = '&#9654;';
+}
+
+/* =========================================================================
+ * BOOT
+ * ====================================================================== */
+function boot() {
+    buildSidebar();
+    renderChat();
+    paintCue();
+
+    ['bl0','bl1','bl2','bl3'].forEach((id, i) =>
+        setTimeout(() => $(id).classList.add('on'), 300 + i * 420));
+    setTimeout(() => { $('boot').classList.add('off'); paintCue(); }, 2400);
+
+    $('navAbout').addEventListener('click', e => { e.preventDefault(); openModal('aboutM'); });
+    $('navHelp').addEventListener('click',  e => { e.preventDefault(); openModal('helpM'); });
+    document.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => closeModals()));
+    document.querySelectorAll('.modal-overlay').forEach(ov =>
+        ov.addEventListener('click', e => { if (e.target === ov) closeModals(); }));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModals(); });
+
+    $('collapseBtn').addEventListener('click', () =>
+        setCollapsed(!$('app').classList.contains('collapsed')));
+    $('clearBtn').addEventListener('click', () => { messages = []; renderChat(); });
+
+    $('sendBtn').addEventListener('click', () => sendTyped());
+    $('promptInput').addEventListener('keydown', e => { if (e.key === 'Enter') sendTyped(); });
+
+    $('cueGo').addEventListener('click', runStep);
+    $('cueAuto').addEventListener('click', playAll);
+    $('cueBack').addEventListener('click', () => { if (step > 0) { step--; paintCue(); } });
+    $('cueMin').addEventListener('click', () => {
+        const c = $('cue'); c.classList.toggle('min');
+        $('cueMin').innerHTML = c.classList.contains('min') ? '&#43;' : '&minus;';
+    });
+
+    window.addEventListener('resize', () => paintCue());
+    $('chatArea').addEventListener('scroll', () => showHint(STEPS[step] && STEPS[step].focus));
+}
+
+/* One matcher for the sidebar buttons and the input box. The sidebar wording
+   is not identical to the recorded wording -- "top 20 highest-risk DME
+   providers" against "top 20 highest-risk providers" -- so an exact compare
+   sent the demo's own sample question to the not-recorded message. */
+function findTurn(text) {
+    const norm = s => String(s).toLowerCase()
+        .replace(/[^a-z0-9 ]/g, ' ').replace(/\bdme\b/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+    const want = norm(text);
+    if (!want) return null;
+    const all = Object.keys(TURNS).map(k => TURNS[k]);
+    return all.find(t => norm(t.q) === want)
+        || all.find(t => norm(t.q).indexOf(want) >= 0 || want.indexOf(norm(t.q)) >= 0)
+        || null;
+}
+
+/* Typing a question by hand matches it against the recorded ones. */
+function sendTyped() {
+    const v = $('promptInput').value.trim();
+    if (!v || busy) return;
+    const hit = findTurn(v);
+    $('promptInput').value = '';
+    if (hit) { ask(hit); return; }
+    messages.push({ role: 'user', text: v });
+    messages.push({ role: 'analyst',
+        text: 'This mockup replays a recorded session and has no answer for that question. ' +
+              'The recorded ones are: “Show the top 20 highest-risk providers”, ' +
+              '“Show the top 5 highest-risk DME providers in Ohio”, ' +
+              '“Show a heatmap of the top 20 highest-risk providers by state and risk tier”, ' +
+              '“Now show that as a bar chart” and “Why is IL so high?”' });
+    renderChat();
+}
+
+boot();
+
+</script>
+</body>
+</html>

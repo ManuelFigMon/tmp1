@@ -1,0 +1,17 @@
+{
+  "baseFileURL": "https://cgssaswebu.a70admed.com/custom/projects/dmq/temp/v3/data/",
+  "baseAPIURL": "https://cgssaswebu.a70admed.com/SASStoredProcess/do?_program=/User%20Folders/731o/My%20Folder/",
+  "Mapping": {
+    "DME_JB_PALS_SYNPUF_FEB2026": "DME_JB_PALS_SYNPUF_FEB2026.json",
+    "DME_JB_PALS_SYNPUF_JAN2026": "DME_JB_PALS_SYNPUF_JAN2026.json",
+    "DME_PALS_ANALYSIS": "dme_pals_analysis.json",
+    "PA_KY_tblClaims": "PA_KY_tblClaims.json",
+    "TOP5_DCN_API": "dmq_explicit_chatgpt_v5",
+    "DME_JB_SYNPUF_100rows": "DME_JB_SYNPUF_100rows.json",
+    "DME_JB_SYNPUF_1000rows": "DME_JB_SYNPUF_1000rows.json",
+    "DME_JB_SYNPUF_100rows_V2": "DME_JB_SYNPUF_100rows_V2.json",
+    "DME_JB_SYNPUF_100rows_06_2026": "DME_JB_SYNPUF_100rows_06_2026.json",
+    "CMS_LCD_SIJ_COMMENTS": "CMS_LCD_SIJ_SynPUF_Comments.json",
+    "CR14443_JUNE2026_API_CALLS": "CR14443_June2026_api_calls.json"
+  }
+}

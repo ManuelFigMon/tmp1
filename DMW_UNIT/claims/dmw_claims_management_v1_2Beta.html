@@ -1,0 +1,2568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>DMW -- Claims Management Solution v1.2Beta</title>
+
+<!-- =============================================================================
+     CONFIGURATION BLOCK
+     =============================================================================
+     Deliberately in the document head, above all CSS and markup, so it is the
+     first thing you see. Nothing below needs editing to point this at
+     different files.
+     ========================================================================== -->
+<script>
+/* =============================================================================
+ * DMW (Data Mart Workbench) -- Claims Management Solution
+ * CONFIGURATION
+ * =============================================================================
+ *
+ * HOW THIS DIFFERS FROM THE IT MANAGEMENT SOLUTION
+ * ------------------------------------------------
+ * dmw_it_management reads SQL Server through a SAS Stored Process. This one
+ * reads NO DATABASE AT ALL. It loads two static files from data/ and does
+ * every enrichment in the browser:
+ *
+ *     data/CMS_LCD_SIJ_SynPUF_Comments.json           24 comments, raw
+ *     data/cms_2022_0190_SENT_SUMMARIZE_CAT_v1.json   898 comments, enriched
+ *
+ * There is no SAS session, no logon, no stored process. The page works from
+ * any web server, which is the point: it demonstrates the pipeline without
+ * needing Snowflake or a database behind it.
+ *
+ * WHAT THE PIPELINE ACTUALLY IS
+ * -----------------------------
+ * The eight stage cards on the Home tab mirror the cgs_ai functions that ran
+ * in Snowflake ONEPI. The JavaScript here reimplements the DETERMINISTIC
+ * parts -- the same keyword rules, the same counts -- so the workflow can be
+ * watched end to end. It is NOT a reimplementation of Cortex: summarizeText
+ * in Snowflake generates abstractive text, while this page builds an
+ * extractive summary from the comment's own sentences. snowflake/__init__.py
+ * is the system of record; see the About panel.
+ *
+ * EDITING
+ * -------
+ *   1. Change the values in CONFIG below.
+ *   2. Save and refresh (Ctrl+F5, or Clear Cache & Reload in the header).
+ * ============================================================================= */
+const CONFIG = {
+
+    /* ---------------------- APPLICATION IDENTITY ---------------------- */
+    APP_NAME:     "DMW (Data Mart Workbench) -- Claims Management Solution",
+    APP_VERSION:  "1.2Beta",
+    APP_SUBTITLE: "CMS public comment pipeline — sentiment, summarisation, categorisation",
+
+    /* =========================================================================
+     * 1. DATA SOURCES
+     * =========================================================================
+     * Each entry becomes an option in the source picker on the Home tab.
+     * `file` is relative to this HTML page. `enriched` records whether the
+     * file already carries overall_sentiment and COMMENT_CATEGORY from the
+     * Snowflake run -- the pipeline recomputes them either way, and the
+     * Console reports where the two disagree.
+     * ====================================================================== */
+    SOURCES: [
+        {
+            key:   "cms2022",
+            label: "CMS-2022-0190 comments (default)",
+            file:  "data/cms_2022_0190_SENT_SUMMARIZE_CAT_v1.json",
+            note:  "898 comments, already enriched in Snowflake ONEPI",
+            enriched: true,
+
+            /* The narrative createExecutiveBriefing obtained from Snowflake
+               Cortex Complete on THIS docket, carried verbatim from
+               cgs_executive_briefing.docx. It is reproduced rather than
+               regenerated because no language model runs in a browser --
+               this is the real Cortex output, not an imitation of it.
+
+               Its figures were reconciled against the data before being
+               embedded: 898 comments, 76% neutral, 49.4% administrative
+               burden, 6.3% reimbursement, 5.0% care quality, 1.3% health
+               equity. All six match what the pipeline computes, so the
+               paragraph describes this dataset and not an earlier one. If
+               you replace the data file, re-run the Snowflake briefing and
+               replace this text too, or it will quietly describe the wrong
+               docket. */
+            cortexNarrative: [
+                "Executive Summary: Public Comment Analysis on Proposed Rule",
+                "As we conclude our analysis of the 898 public comments received on the proposed rule, we have identified key themes and areas of concern that will inform our regulatory decision-making. The sentiment analysis reveals a predominantly neutral tone, with 76% of comments falling into this category. However, a closer examination of the data reveals that a significant proportion of comments (49.4%) express concerns about the administrative burden imposed by the proposed rule on healthcare providers. This suggests that stakeholders are grappling with the practical implications of the rule on their operations and workflows.",
+                "The data also highlights areas where stakeholders are seeking clarification or changes to the proposed rule. Specifically, 6.3% of comments (Medicare/Medicaid Reimbursement) and 5.0% (Patient Care Quality & Safety) indicate a need for more detailed guidance on reimbursement and quality metrics. Furthermore, 1.3% of comments (Health Equity & Insurance Access) highlight concerns about the potential impact on vulnerable populations. These areas warrant further consideration and potential revisions to ensure that the final rule aligns with the agency's goals of improving healthcare quality and access.",
+                "Our analysis underscores the importance of engaging with stakeholders to address their concerns and ensure that the final rule is effective and implementable. We recommend that the agency prioritize addressing the administrative burden concerns, providing clearer guidance on reimbursement and quality metrics, and considering the potential impact on health equity and insurance access. By doing so, we can ensure that the final rule achieves its intended goals while minimizing unnecessary burdens on healthcare providers and promoting better health outcomes for all."
+            ],
+            cortexModel: "Snowflake Cortex Complete"
+        },
+        {
+            key:   "sij",
+            label: "CMS-2026-0042 — LCD / SI joint injections (SynPUF)",
+            file:  "data/CMS_LCD_SIJ_SynPUF_Comments.normalized.json",
+            note:  "24 synthetic comments, raw — every column computed here",
+            enriched: false,
+            /* This docket was never run through Snowflake, so there is no
+               Cortex narrative to show. The briefing falls back to a computed
+               summary and labels it as such. */
+            cortexNarrative: null
+        }
+    ],
+    DEFAULT_SOURCE: "cms2022",
+
+    /* =========================================================================
+     * 2. COLUMN METADATA  (the "i" icon beside every column name)
+     * =========================================================================
+     * External file, in the SAME FOLDER as this page, in the same seven-column
+     * schema the other DMW pages use. Data stewards edit it without touching
+     * HTML.
+     * ====================================================================== */
+    METADATA_CSV_PATH: "column_metadata.csv",
+    METADATA_ENABLED:  true,
+
+    /* =========================================================================
+     * 3. PIPELINE BEHAVIOUR
+     * =========================================================================
+     * STAGE_DELAY_MS gives each card a visible moment in the running state.
+     * The work itself is fast enough to finish between frames, and a workflow
+     * that blinks from grey to green teaches nobody what it did. Set 0 to run
+     * at full speed.
+     * ====================================================================== */
+    STAGE_DELAY_MS: 420,
+    SUMMARY_SENTENCES: 2,     /* sentences kept by the extractive summariser */
+    MIN_COMMENT_CHARS: 20,    /* shorter comments are excluded from the word cloud */
+    WORDCLOUD_MAX_WORDS: 60,
+
+    /* =========================================================================
+     * 4. ASK DMW AGENT
+     * =========================================================================
+     * Embedded as an iframe rather than wired through an API, so this page
+     * holds no API key and no CORS configuration. An embeddable agent requires
+     * Copilot Studio; the free agent builder bundled with M365 Copilot cannot
+     * be embedded.
+     * ====================================================================== */
+    ASK_DMW_ENABLED: true,
+    ASK_DMW_URL: "https://www.office365.us/chat/?titleId=T_6bf356fc-aeac-71f5-1498-5ac17ec0a62e&source=embedded-builder",
+
+    /* ---------------------- GRID BEHAVIOUR ---------------------- */
+    GRID_PAGE_SIZE: 50,
+    GRID_PAGE_SIZES: [25, 50, 100, 500],
+    GRID_THEME: "ag-theme-alpine"
+};
+</script>
+
+    <link rel="stylesheet" href="styles/ag-grid.css">
+    <link rel="stylesheet" href="styles/ag-theme-alpine.css">
+
+    <style>
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            font-size: 11px;
+            color: #222;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ---- Header (reused from the DMW Query Builder) ---- */
+        .header {
+            background: #4a7ba7;
+            color: #fff;
+            padding: 15px 20px;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+            flex-shrink: 0;
+        }
+        .header h1 { font-size: 16px; font-weight: 600; }
+        .header p  { font-size: 11px; opacity: .95; margin-top: 3px; }
+
+        .top-nav {
+            position: absolute; top: 15px; right: 70px;
+            display: flex; gap: 15px; align-items: center;
+        }
+        .top-nav a {
+            color: #fff; text-decoration: none; font-size: 11px; font-weight: 600;
+            padding: 5px 10px; border-radius: 3px; transition: background .2s;
+        }
+        .top-nav a:hover { background: rgba(255,255,255,.15); }
+
+        #nav-welcome {
+            color: #d4f5d4; font-size: 11px; font-weight: 700;
+            padding: 5px 10px; display: none;
+        }
+
+        /* ---- Hamburger + dropdown (reused) ---- */
+        .hamburger-container { position: absolute; top: 15px; right: 20px; }
+        .hamburger {
+            width: 30px; height: 30px; background: transparent; border: none;
+            cursor: pointer; padding: 5px; display: flex; flex-direction: column;
+            justify-content: center; gap: 4px; border-radius: 3px; transition: background .2s;
+        }
+        .hamburger:hover { background: rgba(255,255,255,.15); }
+        .hamburger span { display: block; width: 20px; height: 2px; background: #fff; transition: all .3s; }
+        .hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px,5px); }
+        .hamburger.active span:nth-child(2) { opacity: 0; }
+        .hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px,-5px); }
+
+        .dropdown-menu {
+            position: absolute; top: 50px; right: 20px; background: #fff;
+            border: 1px solid #c0c0c0; border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15);
+            /* Wider than the IT build's 210px: the two Unstructured Data
+               entries wrap onto a second line at that width. */
+            min-width: 260px; display: none; z-index: 1000; white-space: nowrap;
+        }
+        .dropdown-menu.active { display: block; }
+        .dropdown-menu a {
+            display: block; padding: 12px 20px; color: #333; text-decoration: none;
+            font-size: 11px; font-weight: 600; border-bottom: 1px solid #f0f0f0;
+            transition: background .2s;
+        }
+        .dropdown-menu a:last-child { border-bottom: none; }
+        .dropdown-menu a:hover { background: #f8f8f8; }
+        .dropdown-menu a.dashboard-item { color: #4a7ba7; }
+        .dropdown-menu a.visualize-item { color: #7b4aa7; }
+        .dropdown-menu a.export-item    { color: #2e7d32; }
+
+        /* ---- Toolbar ---- */
+        .toolbar {
+            background: #fff; border-bottom: 1px solid #d0d7de;
+            padding: 8px 16px; display: flex; gap: 8px; align-items: center;
+            flex-wrap: wrap; flex-shrink: 0;
+        }
+        .btn {
+            padding: 6px 12px; font-size: 11px; border: 1px solid transparent;
+            border-radius: 4px; cursor: pointer; font-weight: 600;
+            font-family: inherit;
+        }
+        .btn-primary   { background: #4a7ba7; color: #fff; }
+        .btn-primary:hover { background: #3a6b97; }
+        .btn-run       { background: #16a34a; color: #fff; }
+        .btn-run:hover { background: #22c55e; }
+        .btn-secondary { background: #e6e9ed; color: #222; border-color: #c0c7cf; }
+        .btn-secondary:hover { background: #d6dae0; }
+        .btn-warn      { background: #92400e; color: #fff; border-color: #b45309; }
+        .btn-warn:hover{ background: #b45309; }
+        .btn:disabled  { opacity: .45; cursor: not-allowed; }
+
+        .toolbar input[type="search"] {
+            padding: 6px 10px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 12px; min-width: 240px;
+        }
+        .toolbar select {
+            padding: 5px 8px; border: 1px solid #c0c7cf; border-radius: 4px;
+            font-size: 11px; background: #fff; max-width: 300px;
+        }
+        .toolbar label { font-size: 11px; color: #555; font-weight: 600; }
+
+        /* ---- Info pills ---- */
+        .info-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; padding: 7px 16px;
+            background: #fafbfc; border-bottom: 1px solid #e1e4e8; font-size: 11px;
+            flex-shrink: 0; align-items: center;
+        }
+        .pill { background: #fff; border: 1px solid #d0d7de; border-radius: 14px; padding: 3px 10px; }
+        .pill strong { color: #4a7ba7; }
+        .pill.ok strong   { color: #2e7d32; }
+        .pill.warn strong { color: #b45309; }
+        .pill.err strong  { color: #c0392b; }
+
+        /* ---- Tabs ---- */
+        .tab-bar {
+            display: flex; gap: 2px; padding: 0 16px; background: #eef2f6;
+            border-bottom: 1px solid #d0d7de; flex-shrink: 0;
+        }
+        .tab-btn {
+            padding: 7px 14px; font-size: 11px; font-weight: 600; border: none;
+            background: transparent; color: #556; cursor: pointer;
+            border-bottom: 2px solid transparent; font-family: inherit;
+        }
+        .tab-btn:hover  { color: #222; }
+        .tab-btn.active { color: #4a7ba7; background: #fff; border-bottom-color: #4a7ba7; }
+
+        /* ---- Panels ---- */
+        .panel-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .panel { display: none; flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px; }
+        .panel.active { display: flex; flex-direction: column; }
+
+        #gridPanel.active { padding: 0 16px 12px; }
+        #dmwGrid { flex: 1 1 auto; min-height: 300px; width: 100%; }
+
+        /* ---- SQL editor ---- */
+        .sql-wrap { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+        #sqlEditor {
+            flex: 1 1 auto; min-height: 180px; width: 100%;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+            line-height: 1.5; padding: 10px; border: 1px solid #c0c7cf;
+            border-radius: 4px; resize: none; outline: none; tab-size: 4;
+            background: #1e1e1e; color: #d4d4d4; caret-color: #fff;
+        }
+        #sqlEditor:focus { border-color: #4a7ba7; }
+        .sql-hint { font-size: 11px; color: #666; }
+
+        /* ---- Console ---- */
+        #consoleOut {
+            flex: 1 1 auto; font-family: 'Consolas','Courier New',monospace;
+            font-size: 11px; white-space: pre-wrap; line-height: 1.6;
+            background: #1e1e1e; color: #ccc; padding: 12px; border-radius: 4px;
+            overflow: auto; min-height: 200px;
+        }
+        .c-ok  { color: #22c55e; font-weight: 700; }
+        .c-err { color: #ef4444; font-weight: 700; }
+        .c-warn{ color: #f59e0b; font-weight: 700; }
+        .c-dim { color: #888; }
+
+        /* ---- Connection detail cards ---- */
+        .conn-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+        @media (min-width: 820px) { .conn-grid { grid-template-columns: 1fr 1fr; } }
+        .card {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px; padding: 12px;
+        }
+        .card h3 {
+            font-size: 12px; color: #4a7ba7; margin-bottom: 8px;
+            padding-bottom: 6px; border-bottom: 1px solid #eef0f2;
+        }
+        .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; padding: 3px 0; }
+        .kv span:first-child { color: #777; }
+        .kv span:last-child  { font-family: 'Consolas',monospace; color: #222; text-align: right; word-break: break-all; }
+        .code-pre {
+            background: #1e1e1e; color: #22c55e; padding: 10px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; overflow-x: auto;
+            white-space: pre; margin-top: 8px;
+        }
+
+        /* ---- Dashboard / Chart ---- */
+        .kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+        .kpi {
+            background: #fff; border: 1px solid #d0d7de; border-radius: 6px;
+            padding: 12px 16px; min-width: 130px;
+        }
+        .kpi .v { font-size: 22px; font-weight: 700; color: #4a7ba7; line-height: 1; }
+        .kpi .l { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+        .kpi .v.ok  { color: #2e7d32; }
+        .kpi .v.err { color: #c0392b; }
+        .kpi .v.warn{ color: #b45309; }
+
+        table.sum { width: 100%; border-collapse: collapse; font-size: 11px; background: #fff; }
+        table.sum th {
+            background: #eef2f6; border-bottom: 2px solid #4a7ba7; padding: 7px 10px;
+            text-align: left; white-space: nowrap;
+        }
+        table.sum td { padding: 6px 10px; border-bottom: 1px solid #eef0f2; }
+        table.sum tr:nth-child(even) td { background: #fafbfc; }
+
+        .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; }
+        .bar-label { width: 190px; text-align: right; color: #444; flex-shrink: 0; word-break: break-word; }
+        .bar-track { flex: 1 1 auto; background: #eef2f6; border-radius: 3px; height: 20px; position: relative; }
+        .bar-fill  { background: #4a7ba7; height: 100%; border-radius: 3px; min-width: 2px; }
+        .bar-val   { width: 70px; color: #222; font-weight: 600; flex-shrink: 0; }
+
+        /* ---- Modals (reused) ---- */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5);
+            z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal-content {
+            background: #fff; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.3);
+            max-width: 620px; width: 90%; max-height: 85vh;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .modal-header {
+            background: #4a7ba7; color: #fff; padding: 13px 18px;
+            display: flex; justify-content: space-between; align-items: center;
+            font-weight: 600; font-size: 13px;
+        }
+        .modal-close {
+            background: none; border: none; color: #fff; font-size: 22px;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-body {
+            padding: 18px; overflow-y: auto; font-size: 12px; line-height: 1.6; color: #333;
+        }
+        .modal-body p  { margin-bottom: 11px; }
+        .modal-body h4 { font-size: 12px; color: #222; margin: 14px 0 6px; }
+        .modal-body ol, .modal-body ul { padding-left: 22px; margin-bottom: 11px; }
+        .modal-body li { margin-bottom: 5px; }
+        .modal-body code {
+            background: #f4f4f4; padding: 2px 5px; border-radius: 3px;
+            font-family: 'Consolas',monospace; color: #a3324a;
+        }
+        .modal-body .cfgbox {
+            background: #1e1e1e; color: #ccc; padding: 11px; border-radius: 4px;
+            font-family: 'Consolas',monospace; font-size: 11px; white-space: pre; overflow-x: auto;
+        }
+
+        /* ========== v2: Home / SLA, Visualize Performance, Security ========== */
+        .sla-head { display:flex; align-items:center; gap:14px; margin-bottom:12px; flex-wrap:wrap; }
+        .sla-head h2 { font-size:15px; color:#1f3864; }
+        .sla-stamp { font-size:10px; color:#777; font-family:Consolas,monospace; }
+        .sla-stale { background:#fff3cd; border:1px solid #f0ad4e; color:#8a6d3b;
+                     padding:2px 8px; border-radius:10px; font-size:10px; font-weight:700; }
+        .head-side { margin-left:auto; display:flex; flex-direction:column; gap:7px;
+                     align-items:stretch; max-width:340px; }
+        .login-nudge { background:#eef4fa; border:1px solid #cfe0ef;
+                       padding:8px 12px; border-radius:4px; font-size:11px; }
+        .sla-link {
+            background:#eef4fa; border:1px solid #cfe0ef; border-radius:4px;
+            padding:9px 12px; font-size:11px; font-weight:600; color:#1f3864;
+            cursor:pointer; text-align:left; display:flex; align-items:center; gap:8px;
+            font-family:inherit; transition:background .15s, border-color .15s;
+        }
+        .sla-link:hover { background:#dce9f5; border-color:#a8c6e0; }
+        .sla-link-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:16px; height:16px; border-radius:50%; background:#4a7ba7; color:#fff;
+            font-size:10px; font-weight:700; flex-shrink:0;
+        }
+        .sla-body h4 { font-size:11px; color:#1f3864; margin:14px 0 6px; }
+        .sla-body p  { font-size:11px; line-height:1.65; margin-bottom:8px; }
+        .sla-body .sum { margin-bottom:4px; }
+        .sla-body .sum td { font-size:11px; line-height:1.55; }
+        .sla-caveat { border-top:1px solid #e2e8ee; padding-top:9px; margin-top:12px;
+                      color:#666; font-style:italic; }
+        .login-nudge strong { color:#1f3864; }
+        .login-nudge button { margin-left:8px; }
+
+        .sec-title { font-size:12px; font-weight:700; color:#1f3864; margin:18px 0 8px;
+                     padding-bottom:4px; border-bottom:2px solid #dce6f1; }
+
+        .svc-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:10px; }
+
+        /* One row of tiles per environment. */
+        .env-row { margin-bottom:10px; }
+        .env-row-label {
+            font-size:9px; font-weight:700; letter-spacing:.8px; color:#7a8794;
+            text-transform:uppercase; margin:0 0 5px 2px;
+        }
+        .svc-card { border:1px solid #d8dfe6; border-radius:4px; padding:10px 12px; background:#fff;
+                    border-left-width:5px; }
+        .svc-card.up       { border-left-color:#2e7d32; }
+        .svc-card.degraded { border-left-color:#f0ad4e; }
+        .svc-card.down     { border-left-color:#c00000; }
+        .svc-card.unknown  { border-left-color:#999; }
+        .svc-name { font-weight:700; font-size:12px; color:#222; }
+        .svc-env  { display:inline-block; font-size:9px; font-weight:700; padding:1px 6px;
+                    border-radius:8px; background:#eceff3; color:#555; margin-left:6px; vertical-align:middle; }
+        .svc-env.PROD { background:#1f3864; color:#fff; }
+        .svc-state { font-size:16px; font-weight:700; margin:4px 0 2px; }
+        .svc-card.up .svc-state       { color:#2e7d32; }
+        .svc-card.degraded .svc-state { color:#b07400; }
+        .svc-card.down .svc-state     { color:#c00000; }
+        .svc-card.unknown .svc-state  { color:#777; }
+        .svc-meta { font-size:10px; color:#666; line-height:1.5; }
+
+        .kpi-row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+        .kpi { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:10px 16px; min-width:120px; }
+        .kpi .v { font-size:22px; font-weight:700; color:#1f3864; }
+        .kpi .l { font-size:9px; text-transform:uppercase; letter-spacing:.5px; color:#777; margin-top:2px; }
+        .kpi.bad  .v { color:#c00000; }
+        .kpi.warn .v { color:#b07400; }
+        .kpi.good .v { color:#2e7d32; }
+
+        .chart-box { border:1px solid #d8dfe6; border-radius:4px; background:#fff; padding:12px; margin-bottom:12px; }
+        .chart-box h4 { font-size:11px; color:#1f3864; margin-bottom:8px; }
+        .chart-legend { display:flex; gap:10px; flex-wrap:wrap; font-size:10px; color:#555; margin-top:8px; align-items:center; }
+        .chart-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:middle; }
+        .lg-item { cursor:pointer; padding:2px 7px; border-radius:10px; border:1px solid #dde3e9;
+                   background:#fff; user-select:none; transition:background .12s, opacity .12s; }
+        .lg-item:hover { background:#eef4fa; border-color:#b9cde0; }
+        .lg-item.off   { opacity:.4; text-decoration:line-through; background:#f4f6f8; }
+        .lg-static { padding:2px 7px; color:#777; }
+        .lg-reset  { font-size:10px; padding:2px 8px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#4a7ba7; }
+        .lg-reset:hover { background:#eef4fa; }
+
+        /* One shared tooltip that follows the cursor. Replaces per-point
+           <title>, which the browser delays by about a second. */
+        .chart-tip {
+            position:fixed; z-index:9999; display:none; pointer-events:none;
+            background:rgba(24,34,48,.95); color:#fff; font-size:11px; line-height:1.5;
+            padding:6px 9px; border-radius:4px; max-width:280px;
+            box-shadow:0 4px 14px rgba(0,0,0,.28); font-family:'Segoe UI',sans-serif;
+        }
+        .chart-tip strong { color:#9ec8f0; }
+
+        .filter-bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                      background:#f7f9fb; border:1px solid #e2e8ee; border-radius:4px;
+                      padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .filter-bar label { color:#555; font-weight:600; }
+        .filter-bar input[type=date] { font-size:11px; padding:3px 6px; border:1px solid #ccd4db; border-radius:3px; }
+        .range-btn { font-size:10px; padding:3px 9px; border:1px solid #cfd8e0; background:#fff;
+                     border-radius:10px; cursor:pointer; color:#444; }
+        .range-btn:hover  { background:#eef4fa; }
+        .range-btn.active { background:#4a7ba7; color:#fff; border-color:#4a7ba7; }
+        .filter-note { color:#777; margin-left:auto; font-family:Consolas,monospace; font-size:10px; }
+
+        /* Active cross-filters. A filter you cannot see is a filter you will
+           misread the whole tab through, so every one is listed with the way
+           to remove it. */
+        .chipbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                   background:#fff8e1; border:1px solid #f0d9a0; border-radius:4px;
+                   padding:8px 12px; margin-bottom:12px; font-size:11px; }
+        .chipbar .lbl { font-weight:700; color:#8a6d3b; }
+        .chip { background:#fff; border:1px solid #e0cfa0; border-radius:12px;
+                padding:2px 6px 2px 9px; display:inline-flex; align-items:center; gap:6px; }
+        .chip b { font-weight:600; color:#333; }
+        .chip button { border:none; background:none; cursor:pointer; color:#a06a00;
+                       font-size:13px; line-height:1; padding:0 2px; }
+        .chip button:hover { color:#c00000; }
+        .chip-clear { font-size:10px; padding:3px 9px; border:1px solid #e0cfa0;
+                      background:#fff; border-radius:10px; cursor:pointer; color:#8a6d3b; }
+        .chip-clear:hover { background:#fff3d6; }
+        .viz-2col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        @media (max-width:1100px){ .viz-2col { grid-template-columns:1fr; } }
+
+        /* The donut and the time series do not deserve equal width. The donut
+           is a composition -- a dozen slices read at a glance, and past a
+           certain size it stops telling you more. The time series is a
+           hundred-plus days against a log axis, where every extra pixel of
+           width is another day you can actually resolve. So this row is
+           asymmetric, and only this row: the step-level pair below it stays
+           50/50 because both halves there are lists.
+
+           align-items:start lets each box take its own height, rather than
+           the shorter one being stretched to leave empty space under its
+           chart. */
+        .viz-row-split { display:grid; grid-template-columns:minmax(0,330px) minmax(0,1fr);
+                         gap:12px; align-items:start; }
+        @media (max-width:1100px){ .viz-row-split { grid-template-columns:1fr; } }
+        /* Narrow column: tighter legend chips so a dozen programs do not push
+           the box twice as tall as the chart beside it. */
+        .viz-row-split .chart-legend { gap:6px; }
+        .viz-row-split .lg-item { padding:1px 6px; font-size:9.5px; }
+
+        /* ---- metadata "i" icon + pencil in grid headers ---- */
+        .hdr-wrap { display:inline-flex; align-items:center; gap:5px; }
+        .hdr-ico {
+            display:inline-flex; align-items:center; justify-content:center;
+            width:14px; height:14px; border-radius:50%; font-size:9px; font-weight:700;
+            cursor:pointer; border:none; padding:0; line-height:1; flex-shrink:0;
+        }
+        .hdr-ico.info   { background:#4a7ba7; color:#fff; }
+        .hdr-ico.info:hover { background:#1f3864; }
+        .hdr-ico.info.off { background:#c8d2da; color:#fff; cursor:default; }
+        .hdr-sort { font-size:9px; color:#c3ccd4; margin-left:2px; user-select:none; }
+        .hdr-sort.active { color:#1f3864; font-size:10px; }
+        .hdr-ico.edit   { background:none; color:#b07400; font-size:11px; width:auto; }
+        .hdr-ico.edit:hover { color:#8a5600; }
+        .cell-editable { cursor:pointer; border-bottom:1px dotted #b07400; }
+        .cell-editable:hover { background:#fff8e1; }
+
+        /* ---- metadata modal (matches query_builder v1_21 behaviour) ---- */
+        .meta-field { margin-bottom:10px; }
+        .meta-label { font-size:9px; font-weight:700; letter-spacing:.6px; text-transform:uppercase;
+                      color:#777; margin-bottom:3px; }
+        .meta-value { border:1px solid #ccd4db; border-radius:3px; background:#f8fafc;
+                      padding:7px 9px; font-size:11px; line-height:1.55; color:#222; }
+        .meta-value.mono { font-family:Consolas,monospace; color:#A31515; }
+        .meta-value.scroll { max-height:120px; overflow-y:auto; }
+        .meta-chip { display:inline-block; background:#dce6f1; color:#1f3864; font-family:Consolas,monospace;
+                     font-size:11px; padding:2px 8px; border-radius:3px; margin-left:8px; }
+
+        /* ---- Ask DMW ---- */
+        .ask-wrap { display:flex; flex-direction:column; height:100%; }
+        .ask-note { background:#eef4fa; border:1px solid #cfe0ef; padding:8px 12px;
+                    font-size:10px; color:#334; margin-bottom:8px; line-height:1.6; }
+        .ask-frame { flex:1; min-height:520px; border:1px solid #d8dfe6; border-radius:4px; background:#fff; }
+        .ask-frame iframe { width:100%; height:100%; min-height:520px; border:none; display:block; }
+
+        /* ---- Security diagram ---- */
+        .sec-wrap { background:#fff; border:1px solid #d8dfe6; border-radius:4px; padding:16px; }
+        .sec-wrap svg { width:100%; height:auto; display:block; }
+
+        .modal-footer {
+            padding: 11px 18px; background: #f5f7f9; border-top: 1px solid #e1e4e8;
+            display: flex; justify-content: flex-end;
+        }
+
+        /* ---- Footer / session bar ---- */
+        .session-bar {
+            padding: 6px 16px; border-top: 1px solid #ddd; background: #f8f8f8;
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 11px; color: #666; flex-shrink: 0;
+        }
+        .session-ind { display: flex; align-items: center; gap: 7px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex-shrink: 0; }
+        .dot.active { background: #22c55e; animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+        #footer-signout { color: #c0392b; text-decoration: none; display: none; }
+        #footer-signout:hover { text-decoration: underline; }
+
+        .loading-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+            z-index: 9999; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .loading-overlay.active { display: flex; }
+        .spinner {
+            border: 5px solid #f3f3f3; border-top: 5px solid #4a7ba7; border-radius: 50%;
+            width: 54px; height: 54px; animation: spin 1s linear infinite; margin-bottom: 16px;
+        }
+        @keyframes spin { 0%{transform:rotate(0)} 100%{transform:rotate(360deg)} }
+        .loading-overlay .txt { color: #fff; font-size: 14px; font-weight: 500; }
+
+        .empty-note {
+            padding: 36px; text-align: center; color: #666; font-size: 13px;
+            background: #fff; border: 1px dashed #d0d7de; border-radius: 4px;
+        }
+        .empty-note h2 { color: #4a7ba7; margin-bottom: 9px; font-size: 15px; }
+
+        /* ================= CLAIMS: pipeline runner ================= */
+        .pipe-head { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+        .pipe-head h2 { font-size:15px; color:#1f3864; }
+        .pipe-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+        .pipe-controls select { font-size:11px; padding:5px 8px; border:1px solid #ccd4db; border-radius:3px; min-width:300px; }
+        .pipe-note { font-size:10px; color:#777; font-family:Consolas,monospace; }
+
+        .pipe-rowlabel { font-size:9px; font-weight:700; letter-spacing:.8px; color:#7a8794;
+                         text-transform:uppercase; margin:12px 0 6px 2px; }
+        /* Card, arrow, card, arrow, card, arrow, card. The arrow columns are
+           auto-width so the cards still share the remaining space evenly.
+           Below the breakpoints the cards stack and the arrows rotate to
+           point down, because a right-pointing arrow above a card that sits
+           underneath it is worse than no arrow. */
+        .pipe-grid { display:grid; grid-template-columns:1fr auto 1fr auto 1fr auto 1fr;
+                     gap:10px; align-items:stretch; }
+        @media (max-width:1150px){ .pipe-grid { grid-template-columns:1fr auto 1fr; } }
+        @media (max-width:640px){ .pipe-grid { grid-template-columns:1fr; } }
+
+        .pipe-arrow {
+            display:flex; align-items:center; justify-content:center;
+            color:#c3ccd4; font-size:17px; line-height:1; user-select:none;
+            transition:color .25s;
+        }
+        .pipe-arrow.flowed { color:#2e7d32; }        /* upstream card finished */
+        .pipe-arrow.active { color:#4a7ba7; animation:pulse 1s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity:.35; } 50% { opacity:1; } }
+        @media (max-width:1150px){ .pipe-arrow { transform:rotate(90deg); } }
+        @media (max-width:640px){
+            .pipe-arrow { transform:rotate(90deg); height:18px; }
+        }
+
+        /* The analysis pipeline feeds the output pipeline, so the handoff
+           between the two rows gets an arrow of its own rather than the rows
+           simply sitting one above the other. */
+        .pipe-handoff { display:flex; align-items:center; gap:9px; margin:10px 0 2px 2px;
+                        font-size:9px; font-weight:700; letter-spacing:.8px;
+                        text-transform:uppercase; color:#7a8794; }
+        .pipe-handoff .arr { color:#c3ccd4; font-size:15px; transform:rotate(90deg);
+                             display:inline-block; transition:color .25s; }
+        .pipe-handoff.flowed .arr { color:#2e7d32; }
+
+        .stage {
+            border:1px solid #d8dfe6; border-left-width:5px; border-left-color:#c8d2da;
+            border-radius:4px; background:#fff; padding:11px 13px; position:relative;
+            transition:border-color .2s, background .2s, box-shadow .2s; min-height:92px;
+        }
+        .stage.queued  { opacity:.75; }
+        .stage.running { border-left-color:#4a7ba7; background:#f4f9ff; box-shadow:0 0 0 2px rgba(74,123,167,.12); }
+        .stage.done    { border-left-color:#2e7d32; cursor:pointer; }
+        .stage.done:hover { background:#f6fbf6; box-shadow:0 2px 8px rgba(0,0,0,.09); }
+        .stage.failed  { border-left-color:#c00000; background:#fdf2f2; }
+        .stage-n    { position:absolute; top:9px; right:11px; font-size:9px; color:#b6c0c9; font-weight:700; }
+        .stage-name { font-weight:700; font-size:11.5px; color:#222; font-family:Consolas,monospace; }
+        .stage-desc { font-size:10px; color:#6b7883; margin-top:3px; line-height:1.5; }
+        .stage-foot { margin-top:8px; font-size:10px; display:flex; align-items:center; gap:7px; min-height:16px; }
+        .stage.queued  .stage-foot { color:#9aa5af; }
+        .stage.running .stage-foot { color:#1f5e8f; font-weight:600; }
+        .stage.done    .stage-foot { color:#2e7d32; font-weight:600; }
+        .stage.failed  .stage-foot { color:#c00000; font-weight:600; }
+        .stage-open { margin-left:auto; color:#4a7ba7; font-weight:600; }
+
+        .spinner { width:11px; height:11px; border:2px solid #cfe0ef; border-top-color:#4a7ba7;
+                   border-radius:50%; animation:spin .7s linear infinite; flex-shrink:0; }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .tick { color:#2e7d32; font-weight:700; }
+
+        .pipe-outputs { margin-top:16px; }
+        /* Links into the raw free text, above the stage cards. */
+        .unstruct-links {
+            display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+            margin:14px 0 4px; padding:8px 12px;
+            background:#f4f8fc; border:1px solid #d8e3ef; border-radius:4px;
+        }
+        .unstruct-links .ul-label { font-size:11px; font-weight:700; color:#1f3864; }
+        .unstruct-links a {
+            font-size:11px; font-weight:600; color:#2e7d32; text-decoration:none;
+            padding:3px 9px; border:1px solid #bcd3bc; border-radius:3px; background:#fff;
+        }
+        .unstruct-links a:hover { background:#eaf5ea; text-decoration:underline; }
+        .unstruct-links a.off { color:#9aa5ad; border-color:#dde3e8; background:#fafbfc; }
+        .unstruct-links .ul-note { font-size:10px; color:#777; margin-left:auto; }
+
+        .outfile { display:flex; align-items:center; gap:10px; border:1px solid #d8dfe6;
+                   border-radius:4px; background:#fff; padding:9px 12px; margin-bottom:7px; font-size:11px; }
+        .outfile .nm { font-family:Consolas,monospace; color:#1f3864; font-weight:600; }
+        .outfile .sz { color:#888; font-size:10px; }
+        .outfile .dl { margin-left:auto; }
+
+        .briefing-pane { border:1px solid #d8dfe6; border-radius:4px; background:#fff;
+                         padding:16px 20px; max-height:520px; overflow-y:auto; }
+        .briefing-pane h1 { font-size:15px; color:#1f3864; margin-bottom:10px; }
+        .briefing-pane h2 { font-size:12px; color:#1f3864; margin:16px 0 7px;
+                            border-bottom:1px solid #e2e8ee; padding-bottom:4px; }
+        .briefing-pane p, .briefing-pane li { font-size:11px; line-height:1.68; margin-bottom:7px; }
+        .briefing-pane ul { margin-left:18px; }
+        .briefing-pane table { width:100%; border-collapse:collapse; margin:8px 0 12px; }
+        .briefing-pane th, .briefing-pane td { border:1px solid #dde3e9; padding:5px 8px;
+                                               font-size:11px; text-align:left; }
+        .briefing-pane th { background:#dce6f1; color:#1f3864; }
+        .briefing-meta { font-family:Consolas,monospace; font-size:10px; color:#666;
+                         background:#f7f9fb; padding:8px 12px; border-radius:3px; margin-bottom:12px; }
+
+        /* ---- stage output modals ---- */
+        .modal-wide .modal-content { max-width:1040px; }
+        .scroll-box { max-height:430px; overflow-y:auto; border:1px solid #e2e8ee; border-radius:3px; }
+        .scroll-box table { width:100%; border-collapse:collapse; }
+        .scroll-box th { position:sticky; top:0; background:#dce6f1; color:#1f3864; z-index:2;
+                         font-size:10px; text-align:left; padding:6px 8px; border-bottom:2px solid #b9cde0; }
+        .scroll-box td { font-size:10.5px; padding:6px 8px; border-bottom:1px solid #eef2f6;
+                         vertical-align:top; line-height:1.55; }
+        .scroll-box tr:nth-child(even) td { background:#fafcfe; }
+        .cmp-orig { color:#555; }
+        .cmp-sum  { color:#1f3864; }
+        .pct-cut  { font-family:Consolas,monospace; color:#2e7d32; font-weight:700; }
+
+        .cfgpanel { display:grid; grid-template-columns:270px 1fr; gap:14px; align-items:start; }
+        @media (max-width:900px){ .cfgpanel { grid-template-columns:1fr; } }
+        .cfgbox2 { border-left:3px solid #4a7ba7; background:#f7f9fb; padding:12px 14px; border-radius:3px; }
+        .cfgbox2 h5 { font-size:11px; color:#1f3864; margin-bottom:10px; }
+        .cfgbox2 label { display:block; font-size:10px; color:#555; margin:9px 0 3px; font-weight:600; }
+        .cfgbox2 input[type=text], .cfgbox2 input[type=number], .cfgbox2 select {
+            width:100%; font-size:10.5px; padding:4px 6px; border:1px solid #ccd4db; border-radius:3px; }
+        .cfgbox2 .chk { display:flex; align-items:center; gap:6px; font-size:10.5px; margin-bottom:5px; font-weight:400; }
+        .wordcloud { border:1px solid #e2e8ee; border-radius:3px; background:#fff; padding:16px;
+                     min-height:330px; display:flex; flex-wrap:wrap; align-content:center;
+                     justify-content:center; gap:3px 11px; line-height:1.25; }
+        .wc-word { cursor:default; white-space:nowrap; }
+        .wc-head { font-size:10px; color:#777; background:#eef4fa; padding:5px 10px;
+                   border:1px solid #cfe0ef; border-bottom:none; border-radius:3px 3px 0 0; }
+
+        .approve-row { display:flex; align-items:center; gap:10px; margin:10px 0; font-size:11px; }
+        .fmt-pill { padding:4px 12px; border:1px solid #cfd8e0; background:#fff; border-radius:12px;
+                    cursor:pointer; font-size:11px; }
+        .fmt-pill.active { background:#4a7ba7; color:#fff; border-color:#4a7ba7; }
+        .approved-stamp { background:#eaf5ec; border:1px solid #2e7d4f; color:#1d6b3c;
+                          padding:3px 10px; border-radius:11px; font-size:10px; font-weight:700; }
+
+        .kv { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:11px; }
+        .kv dt { color:#777; }
+        .kv dd { font-family:Consolas,monospace; color:#222; }
+
+        .fn-list dt { font-family:Consolas,monospace; font-weight:700; color:#1f3864;
+                      font-size:11px; margin-top:10px; }
+        .fn-list dd { font-size:11px; line-height:1.62; margin:3px 0 0 0; color:#333; }
+    </style>
+</head>
+<body>
+
+<!-- ===================== HEADER ===================== -->
+<div class="header">
+    <h1 id="appTitle">—</h1>
+    <p id="appSubtitle">—</p>
+    <div class="top-nav">
+        <a href="#" id="nav-about">About</a>
+        <a href="#" id="nav-help">Help</a>
+    </div>
+    <!-- Hamburger, upper right, matching dmw_it_management_v1_8Beta.html.
+         The .hamburger-container wrapper is what positions it: without it the
+         button is a static sibling of the <h1> and lands under the title. -->
+    <div class="hamburger-container">
+        <button class="hamburger" id="hamburgerBtn" aria-label="Menu" title="Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <div class="dropdown-menu" id="hamburgerMenu">
+            <a href="#" id="menuRun">Run Pipeline</a>
+            <a href="#" class="dashboard-item" id="menuUnstructuredGrid">Unstructured Data — Data Grid</a>
+            <a href="#" class="export-item"    id="menuUnstructuredCsv">Unstructured Data — Export to CSV</a>
+            <a href="#" id="menuExport">Export Grid to CSV</a>
+            <a href="#" id="menuBrief">Open Executive Briefing</a>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== TOOLBAR ===================== -->
+<div class="toolbar">
+    <button class="btn btn-primary" id="runBtn">Run Pipeline</button>
+    <label style="font-size:11px;color:#555;">Source:</label>
+    <select id="sourcePicker"></select>
+    <input type="text" id="quickFilter" placeholder="Quick search across all columns…">
+    <button class="btn" id="clearFiltersBtn">Clear Filters</button>
+    <button class="btn" id="autoSizeBtn">Auto-Size</button>
+    <button class="btn btn-primary" id="exportBtn">Export CSV</button>
+    <button class="btn btn-danger" id="cacheBtn" style="margin-left:auto;">Clear Cache &amp; Reload</button>
+</div>
+
+<!-- ===================== STATUS PILLS ===================== -->
+<div class="info-bar">
+    <span class="pill">Docket: <strong id="infoDocket">—</strong></span>
+    <span class="pill">Comments: <strong id="infoRows">0</strong></span>
+    <span class="pill">Columns: <strong id="infoCols">0</strong></span>
+    <span class="pill">Filtered: <strong id="infoFiltered">0</strong></span>
+    <span class="pill">Pipeline: <strong id="infoPipe">not run</strong></span>
+    <span class="pill">Elapsed: <strong id="infoElapsed">—</strong></span>
+</div>
+
+<!-- ===================== TABS ===================== -->
+<div class="tab-bar">
+    <button class="tab-btn active" data-panel="homePanel">Home</button>
+    <button class="tab-btn" data-panel="gridPanel">Data Grid</button>
+    <button class="tab-btn" data-panel="briefPanel">Executive Briefing</button>
+    <button class="tab-btn" data-panel="askPanel">Ask DMW Agent</button>
+    <button class="tab-btn" data-panel="consolePanel">Console</button>
+</div>
+
+<div class="panel-host">
+    <div class="panel active" id="homePanel"></div>
+    <div class="panel" id="gridPanel"><div id="dmwGrid"></div></div>
+    <div class="panel" id="briefPanel"></div>
+    <div class="panel" id="askPanel"></div>
+    <div class="panel" id="consolePanel">
+        <div class="console" id="consoleOut">Ready.</div>
+    </div>
+</div>
+
+<!-- ===================== SESSION BAR ===================== -->
+<div class="session-bar">
+    <div class="session-ind">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusLabel">No database connection — reads data/ only</span>
+    </div>
+    <div style="display:flex; gap:14px; align-items:center;">
+        <span id="buildStamp" style="font-family:Consolas,monospace;">—</span>
+    </div>
+</div>
+
+<!-- ===================== STAGE OUTPUT MODAL (shared) ===================== -->
+<div class="modal-overlay modal-wide" id="stageModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span id="stageModalTitle">—</span>
+            <button class="modal-close" data-close="stageModal">&times;</button>
+        </div>
+        <div class="modal-body" id="stageModalBody"></div>
+        <div class="modal-footer">
+            <button class="btn" data-close="stageModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== COLUMN METADATA MODAL ===================== -->
+<div class="modal-overlay" id="metaModal">
+    <div class="modal-content" style="max-width:560px;">
+        <div class="modal-header">
+            <span>Column Metadata <span class="meta-chip" id="metaChip">—</span></span>
+            <button class="modal-close" data-close="metaModal">&times;</button>
+        </div>
+        <div class="modal-body" id="metaBody"></div>
+        <div class="modal-footer">
+            <button class="btn" data-close="metaModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== ABOUT MODAL ===================== -->
+<div class="modal-overlay modal-wide" id="aboutModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>About DMW -- Claims Management Solution</span>
+            <button class="modal-close" data-close="aboutModal">&times;</button>
+        </div>
+        <div class="modal-body sla-body">
+            <p><strong>DMW (Data Mart Workbench) — Claims Management Solution</strong> runs a CMS
+               public-comment analysis pipeline end to end and shows what each stage produced.
+               It reads two static files and connects to no database.</p>
+
+            <h4>cgs_ai, and why it exists</h4>
+            <p><code>cgs_ai</code> is a standard-library-first Python package for turning unstructured
+               public-comment text into something a regulatory team can act on. A CMS docket draws
+               hundreds to tens of thousands of free-text submissions; reading them is the bottleneck
+               between a comment period closing and a rule being finalised.</p>
+            <p><strong>The business value is throughput with an audit trail.</strong> The pipeline
+               classifies every comment rather than a sample, so a domain representing half the
+               docket cannot be missed because nobody happened to read those submissions. Each
+               enrichment is written back as a column, so any conclusion in the briefing can be
+               traced to the comments behind it — which matters when a final rule has to withstand
+               challenge.</p>
+
+            <h4>The pipeline functions</h4>
+            <p class="meta-note">All six ran in <strong>Snowflake ONEPI</strong>. The source is in
+               <code>snowflake/__init__.py</code> in this folder.</p>
+            <dl class="fn-list">
+                <dt>doSentimentAnalysis</dt>
+                <dd>Adds character and word counts, then labels each comment Positive, Negative or
+                    Neutral by intersecting its words with two small keyword sets. A proxy, not a
+                    model: it reads word presence, not meaning.</dd>
+                <dt>visualizeNLP</dt>
+                <dd>Renders the corpus shape — a histogram of words per comment and the most frequent
+                    terms after stop-word removal. Answers "what is in this docket" before any
+                    classification is trusted.</dd>
+                <dt>summarizeText</dt>
+                <dd>Calls Snowflake Cortex <code>Summarize</code> on every comment, in parallel, to
+                    produce an abstractive summary. This is the one stage the browser cannot
+                    reproduce; see the caveat below.</dd>
+                <dt>categorizeText</dt>
+                <dd>Assigns each comment to the CMS policy domain whose keyword set it matches most
+                    — reimbursement, care quality, drug pricing, administrative burden, or equity and
+                    access — and returns <code>Uncategorized</code> when nothing matches.</dd>
+                <dt>formatCSV</dt>
+                <dd>Writes the enriched table to a styled Excel workbook: banner, frozen filtered
+                    header, zebra striping. The only function here that does not require Snowflake.</dd>
+                <dt>createExecutiveBriefing</dt>
+                <dd>Aggregates the enrichment columns, asks Cortex <code>Complete</code> for a
+                    three-paragraph executive narrative, and emits the briefing as Markdown, PDF or
+                    Word.</dd>
+            </dl>
+
+            <h4>What this page reimplements, and what it does not</h4>
+            <p>The deterministic stages — counts, keyword sentiment, keyword categorisation,
+               formatting, aggregation — are reimplemented in JavaScript using the same rules, so the
+               workflow is demonstrable without a Snowflake session.</p>
+            <p><strong>summarizeText is the exception.</strong> Cortex generates <em>abstractive</em>
+               text — new sentences. The browser builds an <em>extractive</em> summary by scoring the
+               comment's own sentences and keeping the best ones. Every word in a summary shown here
+               appears in the original comment. The two are not interchangeable, and where they
+               differ the Snowflake output is the system of record.</p>
+
+            <h4>The briefing narrative is AI-generated</h4>
+            <p>It was produced by Snowflake Cortex <code>Complete</code> during the run that enriched
+               the CMS-2022-0190 file, and is carried here verbatim from
+               <code>cgs_executive_briefing.docx</code> — <strong>reproduced, not regenerated</strong>,
+               because no language model runs in a browser.</p>
+            <p>Its figures were reconciled against this page's data before it was embedded: 898
+               comments, 76% neutral, 49.4% administrative burden, 6.3% reimbursement, 5.0% care
+               quality, 1.3% health equity. All six match what the pipeline computes, so the paragraph
+               describes this dataset. <strong>If you replace the data file, re-run the Snowflake
+               briefing and replace the narrative with it</strong>, or it will quietly describe a
+               different docket.</p>
+            <p>The SIJ sample was never run through Snowflake and so has no Cortex narrative. For that
+               source the briefing falls back to a paragraph assembled from the computed figures and
+               labels it <em>Computed Executive Analysis</em> instead.</p>
+
+            <h4>Reading the sentiment and category columns honestly</h4>
+            <p>Both are keyword rules. They cannot see negation, sarcasm or context, and
+               <code>Uncategorized</code> is the second largest group in the supplied CSV. That is a
+               real finding about taxonomy fit, not a gap to be hidden — a domain breakdown that
+               drops it overstates how well the five domains cover the docket.</p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="aboutModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===================== HELP MODAL ===================== -->
+<div class="modal-overlay" id="helpModal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span>Help &amp; Support</span>
+            <button class="modal-close" data-close="helpModal">&times;</button>
+        </div>
+        <div class="modal-body">
+            <h4>Running the pipeline</h4>
+            <ol>
+                <li>Pick a source in the toolbar. The default is the 898-comment CMS-2022-0190 docket.</li>
+                <li>Press <strong>Run Pipeline</strong>. The eight cards light up left to right, two rows:
+                    the analysis pipeline then the output pipeline.</li>
+                <li>Click any finished card to see what that stage produced.</li>
+            </ol>
+
+            <h4>What each card shows when clicked</h4>
+            <table class="sum">
+                <thead><tr><th>Card</th><th>Output</th></tr></thead>
+                <tbody>
+                    <tr><td><code>doSentimentAnalysis</code></td><td>Sentiment distribution bar chart with counts.</td></tr>
+                    <tr><td><code>visualizeNLP</code></td><td>Word-count histogram and the 30 most frequent terms.</td></tr>
+                    <tr><td><code>summarizeText</code></td><td>Scrollable comment-against-summary table with the reduction achieved.</td></tr>
+                    <tr><td><code>categorizeText</code></td><td>Configurable word cloud plus the category breakdown.</td></tr>
+                    <tr><td><code>formatCSV</code></td><td>The formatted output table, scrollable.</td></tr>
+                    <tr><td><code>createExecutiveBriefing</code></td><td>Approval and export format, then writes the briefing.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>No database</h4>
+            <p>This page reads <code>data/</code> and nothing else. There is no SAS session, no stored
+               process and no SQL Server connection, so it runs from any web server. It must be served
+               over <strong>http(s)</strong> — a <code>file://</code> page cannot fetch its own data files.</p>
+
+            <h4>Troubleshooting</h4>
+            <table class="sum">
+                <thead><tr><th>Symptom</th><th>Resolution</th></tr></thead>
+                <tbody>
+                    <tr><td>Nothing loads, Console shows a fetch error</td><td>Serve over http(s); <code>file://</code> blocks the fetch.</td></tr>
+                    <tr><td>All "i" icons grey</td><td><code>column_metadata.csv</code> was not fetched. Check the Console tab.</td></tr>
+                    <tr><td>Ask DMW Agent panel blank</td><td>The agent's host refuses to be framed. Use <strong>Open in a new tab</strong>.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" data-close="helpModal">Close</button>
+        </div>
+    </div>
+</div>
+
+<script src="scripts/ag-grid-community.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+function esc(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, ch =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch]));
+}
+
+
+function parseCSV(text) {
+    const rows = [];
+    let row = [], field = '', inQ = false;
+    text = String(text).replace(/^﻿/, '');          /* strip UTF-8 BOM */
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (inQ) {
+            if (c === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++; }
+                else inQ = false;
+            } else field += c;
+        } else if (c === '"') inQ = true;
+        else if (c === ',') { row.push(field); field = ''; }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+        else if (c !== '\r') field += c;
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    if (!rows.length) return [];
+    const head = rows.shift().map(h => h.trim());
+    return rows.filter(r => r.some(v => String(v).trim() !== ''))
+               .map(r => { const o = {}; head.forEach((h, i) => o[h] = (r[i] === undefined ? '' : r[i])); return o; });
+}
+
+
+async function fetchCSV(path) {
+    const res = await fetch(bust(path), { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + path);
+    return parseCSV(await res.text());
+}
+
+
+function openModal(id)  { $(id).classList.add('active'); }
+function closeModal(id) { $(id).classList.remove('active'); }const Chart = (function () {
+    const PALETTE = ['#4a7ba7','#2e7d32','#b07400','#8e44ad','#c0392b','#16a085',
+                     '#2c3e50','#d35400','#7f8c8d','#27ae60','#2980b9','#c0392b',
+                     '#9b59b6','#f39c12','#1abc9c','#34495e'];
+    const color = i => PALETTE[i % PALETTE.length];
+
+    /* =====================================================================
+     * WHY THIS IS NOT <title>
+     * =====================================================================
+     * v1.3Beta used a native SVG <title> on every point. That is free to
+     * write and awful to use: the browser waits about a second before
+     * showing it, it vanishes while you move, and a dense scatter needs one
+     * DOM node per point -- 968 of them on the sample data.
+     *
+     * So: no per-point nodes. Each chart keeps a plain array of its plotted
+     * points, one mousemove listener finds the nearest, and a single shared
+     * div follows the cursor. The tooltip appears on the same frame as the
+     * movement, and the SVG holds a few hundred fewer elements.
+     * ================================================================== */
+
+    let seq = 0;
+    const reg = {};                     /* id -> spec, including its point index */
+
+    function tipEl() {
+        let t = document.getElementById('chartTip');
+        if (!t) {
+            t = document.createElement('div');
+            t.id = 'chartTip';
+            t.className = 'chart-tip';
+            document.body.appendChild(t);
+        }
+        return t;
+    }
+    function hideTip() { const t = document.getElementById('chartTip'); if (t) t.style.display = 'none'; }
+
+    function register(kind, series, opts) {
+        const id = 'chart' + (++seq);
+        reg[id] = { id: id, kind: kind, series: series, opts: opts || {},
+                    hidden: new Set(), pts: [], mounted: false };
+        return '<div class="chart-host" id="' + id + '"></div>';
+    }
+
+    /* Public entry points keep their old signatures, so every existing call
+       site works unchanged; they now return a placeholder that mount() fills. */
+    const line    = (series, opts) => register('line', series, opts);
+    const scatter = (series, opts) => register('scatter', series, opts);
+    const donut   = (items,  opts) => register('donut', items, opts);
+
+    function bars(items, opts) {
+        opts = opts || {};
+        if (!items.length) return '<div class="notes-empty">No data.</div>';
+        const max = Math.max.apply(null, items.map(i => i.value)) || 1;
+        const fmt = v => opts.format ? opts.format(v) : v.toLocaleString('en-US');
+        return '<table class="sum" style="margin-top:4px;"><tbody>' + items.map((it, i) =>
+            '<tr title="' + esc(it.name) + ': ' + esc(fmt(it.value)) + '">' +
+            '<td style="width:210px;">' + esc(it.name) + '</td>' +
+            '<td><div style="background:' + color(i) + ';height:13px;border-radius:2px;width:' +
+            Math.max(1, (it.value / max) * 100).toFixed(1) + '%;"></div></td>' +
+            '<td style="width:90px;text-align:right;font-family:Consolas,monospace;">' +
+            esc(fmt(it.value)) + '</td></tr>').join('') + '</tbody></table>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* Draw one registered chart into its placeholder.                   */
+    function draw(id) {
+        const spec = reg[id];
+        const host = document.getElementById(id);
+        if (!spec || !host) return;
+        spec.pts = [];
+        host.innerHTML = (spec.kind === 'donut') ? drawDonut(spec) : drawXY(spec);
+        wire(host, spec);
+        spec.mounted = true;
+    }
+
+    /* Call after any innerHTML that contains chart placeholders. */
+    function mount(root) {
+        const scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.chart-host').forEach(h => { if (h.id && reg[h.id]) draw(h.id); });
+    }
+
+    /* ---------------------------------------------------------------- */
+    function drawXY(spec) {
+        const o = spec.opts;
+        const isScatter = spec.kind === 'scatter';
+        const W = o.width || 980, H = o.height || (isScatter ? 300 : 250);
+        const m = { t: 12, r: 16, b: 34, l: 54 };
+        const iw = W - m.l - m.r, ih = H - m.t - m.b;
+
+        const vis = spec.series.map((s, i) => ({ s: s, i: i }))
+                               .filter(x => !spec.hidden.has(x.i));
+
+        let xs = [], ys = [];
+        vis.forEach(v => v.s.points.forEach(p => { xs.push(+p.x); ys.push(p.y); }));
+        if (!xs.length) {
+            return '<div class="notes-empty" style="height:' + (H - 40) + 'px;display:flex;' +
+                   'align-items:center;justify-content:center;">Every series is hidden. ' +
+                   'Click a legend entry to bring one back.</div>' + legendHtml(spec);
+        }
+
+        const x0 = Math.min.apply(null, xs), x1 = Math.max.apply(null, xs);
+        const useLog = !!o.logY;
+        const floor = Math.max(1, o.yFloor || 1);
+        const tf = v => useLog ? Math.log10(Math.max(v, floor)) : v;
+        const tv = ys.map(tf);
+        const y0 = o.yMin !== undefined ? tf(o.yMin) : Math.min.apply(null, tv);
+        const y1 = o.yMax !== undefined ? tf(o.yMax) : Math.max.apply(null, tv);
+        const sx = v => m.l + (x1 === x0 ? iw / 2 : ((+v - x0) / (x1 - x0)) * iw);
+        const sy = v => m.t + ih - (y1 === y0 ? ih / 2 : ((tf(v) - y0) / (y1 - y0)) * ih);
+
+        let g = '';
+        const yTicks = [];
+        if (useLog) { for (let d = Math.floor(y0); d <= Math.ceil(y1); d++) yTicks.push(Math.pow(10, d)); }
+        else { for (let i = 0; i <= 4; i++) yTicks.push(y0 + ((y1 - y0) * i / 4)); }
+        yTicks.forEach(yv => {
+            const yy = sy(yv);
+            if (yy < m.t - 1 || yy > m.t + ih + 1) return;
+            g += '<line x1="' + m.l + '" y1="' + yy.toFixed(1) + '" x2="' + (W - m.r) + '" y2="' + yy.toFixed(1) +
+                 '" stroke="#eceff3" stroke-width="1"/>' +
+                 '<text x="' + (m.l - 6) + '" y="' + (yy + 3).toFixed(1) + '" font-size="9" fill="#999" text-anchor="end">' +
+                 esc(o.yFormat ? o.yFormat(yv) : Math.round(yv)) + '</text>';
+        });
+
+        /* More x labels than before, and the density adapts to the span so
+           they stay readable instead of overlapping. */
+        const spanDays = (x1 - x0) / 86400000;
+        /* The cap is a per-label width budget in viewBox units, so labels can
+           never collide however many a caller asks for. 80 fits "Oct 13" with
+           the year beneath it and leaves margin. */
+        const nTicks = Math.max(2, Math.min(o.xTicks || 10, Math.round(iw / (o.xTickWidth || 80))));
+        const fmtX = v => {
+            const d = new Date(v);
+            if (spanDays <= 2)   return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+            if (spanDays <= 14)  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            if (spanDays <= 400) return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+        };
+        for (let i = 0; i <= nTicks; i++) {
+            const xv = x0 + (x1 - x0) * (i / nTicks);
+            const px = sx(xv);
+            g += '<line x1="' + px.toFixed(1) + '" y1="' + m.t + '" x2="' + px.toFixed(1) + '" y2="' + (m.t + ih) +
+                 '" stroke="#f4f6f8" stroke-width="1"/>' +
+                 '<text x="' + px.toFixed(1) + '" y="' + (H - 18) + '" font-size="9" fill="#999" text-anchor="' +
+                 (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' + esc(fmtX(xv)) + '</text>';
+            if (spanDays > 14 && spanDays <= 400) {
+                g += '<text x="' + px.toFixed(1) + '" y="' + (H - 7) + '" font-size="8" fill="#bbb" text-anchor="' +
+                     (i === 0 ? 'start' : i === nTicks ? 'end' : 'middle') + '">' +
+                     esc(new Date(xv).getFullYear()) + '</text>';
+            }
+        }
+
+        vis.forEach(v => {
+            const c = color(v.i);
+            const pts = v.s.points.slice().sort((a, b) => a.x - b.x);
+            if (!isScatter) {
+                const d = pts.map((p, i) => (i ? 'L' : 'M') + sx(p.x).toFixed(1) + ' ' + sy(p.y).toFixed(1)).join(' ');
+                g += '<path d="' + d + '" fill="none" stroke="' + c + '" stroke-width="1.7" ' +
+                     'stroke-linejoin="round" stroke-linecap="round"/>';
+            }
+            pts.forEach(p => {
+                const px = sx(p.x), py = sy(p.y);
+                if (isScatter) {
+                    const down = !!p.down;
+                    g += '<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="' + (down ? 2.6 : 1.7) +
+                         '" fill="' + (down ? '#c00000' : c) + '" fill-opacity="' + (down ? 0.95 : 0.5) + '"/>';
+                }
+                /* The point index the tooltip reads. No DOM node per point. */
+                spec.pts.push({ px: px, py: py, x: p.x, y: p.y, down: !!p.down, name: v.s.name, ci: v.i });
+            });
+        });
+
+        g += '<circle id="' + spec.id + '-hl" r="4.5" fill="none" stroke="#1f3864" stroke-width="1.8" ' +
+             'style="display:none;pointer-events:none;"/>';
+
+        return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;height:auto;display:block;cursor:crosshair;">' + g + '</svg>' + legendHtml(spec);
+    }
+
+    /* ---------------------------------------------------------------- */
+    function drawDonut(spec) {
+        const o = spec.opts;
+        const items = spec.series;
+        const W = o.width || 420, H = o.height || 190;
+        const R = o.radius || 64, r = o.inner || 36;
+        /* Centre follows the radius. A fixed centre clips the ring as soon as
+           the radius grows past it. */
+        const cx = o.cx || (R + 14), cy = H / 2;
+        const vis = items.map((it, i) => ({ it: it, i: i })).filter(x => !spec.hidden.has(x.i));
+        const total = vis.reduce((a, b) => a + b.it.value, 0);
+        if (!total) return '<div class="notes-empty">Nothing selected.</div>' + legendHtml(spec, true);
+
+        let a0 = -Math.PI / 2, g = '';
+        vis.forEach(v => {
+            const frac = v.it.value / total, a1 = a0 + frac * Math.PI * 2;
+            const large = frac > 0.5 ? 1 : 0;
+            const pt = (ang, rad) => [cx + rad * Math.cos(ang), cy + rad * Math.sin(ang)];
+            const [x1, y1] = pt(a0, R), [x2, y2] = pt(a1, R), [x3, y3] = pt(a1, r), [x4, y4] = pt(a0, r);
+            g += '<path class="donut-seg" data-idx="' + v.i + '" style="cursor:pointer;" ' +
+                 'd="M' + x1 + ' ' + y1 + ' A' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x2 + ' ' + y2 +
+                 ' L' + x3 + ' ' + y3 + ' A' + r + ' ' + r + ' 0 ' + large + ' 0 ' + x4 + ' ' + y4 + ' Z" ' +
+                 'fill="' + color(v.i) + '" stroke="#fff" stroke-width="1"/>';
+            a0 = a1;
+        });
+        const fsV = Math.max(13, Math.round(R * 0.26)), fsL = Math.max(8, Math.round(R * 0.13));
+        g += '<text x="' + cx + '" y="' + (cy - 2) + '" text-anchor="middle" font-size="' + fsV +
+             '" font-weight="700" fill="#1f3864">' + esc(o.centerValue || '') + '</text>' +
+             '<text x="' + cx + '" y="' + (cy + fsL + 6) + '" text-anchor="middle" font-size="' + fsL +
+             '" fill="#888">' + esc(o.centerLabel || '') + '</text>';
+
+        return '<svg class="chart-svg donut" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" ' +
+               'style="width:100%;max-width:' + W + 'px;height:auto;display:block;">' + g + '</svg>' +
+               legendHtml(spec, true);
+    }
+
+    /* ---------------------------------------------------------------- */
+    function legendHtml(spec, isDonut) {
+        const src = spec.series;
+        const items = src.map((s, i) => {
+            const off = spec.hidden.has(i);
+            const label = isDonut ? s.name : s.name;
+            return '<span class="lg-item' + (off ? ' off' : '') + '" data-idx="' + i + '" ' +
+                   'title="' + (off ? 'Hidden — click to show' : 'Click to hide') + '">' +
+                   '<i style="background:' + color(i) + '"></i>' + esc(label) + '</span>';
+        }).join('');
+        const anyHidden = spec.hidden.size > 0;
+        return '<div class="chart-legend" data-for="' + spec.id + '">' + items +
+               (spec.opts.markLabel ? '<span class="lg-static"><i style="background:#c00000"></i>' +
+                    esc(spec.opts.markLabel) + '</span>' : '') +
+               (anyHidden ? '<button class="lg-reset" data-for="' + spec.id + '">show all</button>' : '') +
+               '</div>';
+    }
+
+    /* ---------------------------------------------------------------- */
+    function wire(host, spec) {
+        /* Legend: click to filter. Works for lines, scatters and the donut. */
+        host.querySelectorAll('.lg-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const i = Number(el.dataset.idx);
+                if (spec.kind === 'donut' && spec.opts.onSegmentClick) {
+                    spec.opts.onSegmentClick(spec.series[i], i); return;
+                }
+                if (spec.hidden.has(i)) spec.hidden.delete(i); else spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+        });
+        const reset = host.querySelector('.lg-reset');
+        if (reset) reset.addEventListener('click', () => {
+            spec.hidden.clear(); draw(spec.id);
+            if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+        });
+
+        /* Donut segments are clickable too, which is the natural gesture. */
+        host.querySelectorAll('.donut-seg').forEach(seg => {
+            seg.addEventListener('click', () => {
+                const i = Number(seg.dataset.idx);
+                /* When the host supplies onSegmentClick it owns the filter, so
+                   the selection can drive a whole panel rather than just this
+                   chart. Hiding the slice internally would scope the filter to
+                   the donut and leave the rest of the tab disagreeing with it. */
+                if (spec.opts.onSegmentClick) { spec.opts.onSegmentClick(spec.series[i], i); return; }
+                spec.hidden.add(i);
+                draw(spec.id);
+                if (spec.opts.onFilter) spec.opts.onFilter(visibleNames(spec));
+            });
+            seg.addEventListener('mousemove', ev => {
+                const it = spec.series[Number(seg.dataset.idx)];
+                const total = spec.series.filter((s, i) => !spec.hidden.has(i))
+                                         .reduce((a, b) => a + b.value, 0) || 1;
+                showTip(ev, '<strong>' + esc(it.name) + '</strong><br>' +
+                    esc(spec.opts.valueFormat ? spec.opts.valueFormat(it.value) : it.value.toLocaleString('en-US')) +
+                    '<br><span style="color:#aab">' + ((it.value / total) * 100).toFixed(1) +
+                    '% · click to hide</span>');
+            });
+            seg.addEventListener('mouseleave', hideTip);
+        });
+
+        /* XY tooltip: one listener, nearest-point lookup, no per-point nodes. */
+        const svg = host.querySelector('svg.chart-svg:not(.donut)');
+        if (!svg || !spec.pts.length) return;
+        const hl = document.getElementById(spec.id + '-hl');
+        const vb = svg.getAttribute('viewBox').split(/\s+/).map(Number);
+
+        svg.addEventListener('mousemove', ev => {
+            const r = svg.getBoundingClientRect();
+            if (!r.width) return;
+            const mx = ((ev.clientX - r.left) / r.width) * vb[2];
+            const my = ((ev.clientY - r.top) / r.height) * vb[3];
+
+            let best = null, bestD = Infinity;
+            const pts = spec.pts;
+            for (let i = 0; i < pts.length; i++) {
+                const dx = pts[i].px - mx, dy = pts[i].py - my;
+                const d = dx * dx + dy * dy;
+                if (d < bestD) { bestD = d; best = pts[i]; }
+            }
+            if (!best || bestD > 900) { hideTip(); if (hl) hl.style.display = 'none'; return; }
+
+            if (hl) {
+                hl.setAttribute('cx', best.px); hl.setAttribute('cy', best.py);
+                hl.setAttribute('stroke', best.down ? '#c00000' : color(best.ci));
+                hl.style.display = '';
+            }
+            const f = spec.opts.tipFormat;
+            showTip(ev, f ? f(best) : defaultTip(best, spec.opts));
+        });
+        svg.addEventListener('mouseleave', () => { hideTip(); if (hl) hl.style.display = 'none'; });
+    }
+
+    function visibleNames(spec) {
+        return spec.series.filter((s, i) => !spec.hidden.has(i)).map(s => s.name);
+    }
+
+    function defaultTip(p, o) {
+        const d = new Date(p.x);
+        const when = (o.tipDateTime)
+            ? d.toLocaleString('en-US')
+            : d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+        return '<strong>' + esc(p.name) + '</strong><br>' + esc(when) + '<br>' +
+               esc(o.yFormat ? o.yFormat(p.y) : p.y) + (p.down ? ' <span style="color:#ff9b9b">(timed out)</span>' : '');
+    }
+
+    function showTip(ev, html) {
+        const t = tipEl();
+        t.innerHTML = html;
+        t.style.display = 'block';
+        const pad = 14;
+        let x = ev.clientX + pad, y = ev.clientY + pad;
+        const r = t.getBoundingClientRect();
+        if (x + r.width > window.innerWidth - 8)  x = ev.clientX - r.width - pad;
+        if (y + r.height > window.innerHeight - 8) y = ev.clientY - r.height - pad;
+        t.style.left = x + 'px';
+        t.style.top  = y + 'px';
+    }
+
+    return { line, scatter, donut, bars, color, mount, hideTip };
+})();
+/* =========================================================================
+ * STATE
+ * ====================================================================== */
+let rows = [];            /* the working set: source rows + enrichment */
+let cols = [];
+let gridApi = null;
+let currentSource = null;
+let pipelineRun = null;   /* { started, stages:{}, outputs:[] } */
+let briefingApproved = false;
+let briefingFormat = 'docx';
+
+const FIELD_ORDER = ["id","agencyId","postedDate","title","comment","docketId",
+                     "attachmentCount","attachmentLinks","character_count","word_count",
+                     "overall_sentiment","COMMENT_CATEGORY","Comment_summary"];
+
+/* =========================================================================
+ * cgs_ai RULES, PORTED
+ * =========================================================================
+ * These word sets and the scoring are copied from snowflake/__init__.py so
+ * the browser reaches the same labels as the Snowflake run on the same text.
+ * If you change one, change the other -- two drifting copies of a rule is
+ * how a dashboard starts disagreeing with its own source of record.
+ * ====================================================================== */
+const POS_WORDS = new Set(['support','agree','great','benefit','improve','excellent',
+    'good','positive','helpful','effective','appreciate','thank','strong','important',
+    'necessary','critical','valuable']);
+const NEG_WORDS = new Set(['oppose','disagree','harmful','concern','against','burden',
+    'bad','negative','problem','issue','risk','dangerous','inadequate','insufficient',
+    'fail','error','wrong','waste']);
+
+const CMS_DOMAINS = {
+    "Medicare/Medicaid Reimbursement": ['medicare','medicaid','reimbursement','reimburs','payment',
+        'billing','fee','rate','cost','fund','reimburse','physician','hospital','schedule','allowable','claim'],
+    "Patient Care Quality & Safety": ['quality','safety','patient','care','outcome','clinical',
+        'treatment','standard','protocol','adverse','event','infection','readmission','mortality','measure','metric'],
+    "Drug Pricing & Coverage": ['drug','medication','prescription','formulary','pharmacy','pricing',
+        'part d','pharmaceutical','generic','brand','rebate','negotiation','copay','deductible','covered'],
+    "Provider Administrative Burden": ['administrative','burden','reporting','compliance','documentation',
+        'ehr','electronic','paperwork','authorization','prior','overhead','requirement','audit','attestation','regulation','rule'],
+    "Health Equity & Insurance Access": ['equity','access','insurance','underserved','community','social',
+        'disparity','enrollment','barrier','uninsured','rural','minority','race','income','poverty','sdoh']
+};
+
+const STOPWORDS = new Set(['the','a','an','and','or','but','in','on','at','to','for','of','with','by',
+    'from','is','are','was','were','be','been','being','have','has','had','do','does','did','will',
+    'would','could','should','may','might','shall','that','this','these','those','it','its','as','not',
+    'i','we','they','he','she','you','my','our','their','if','no','so','up','out','about','which','who',
+    'all','comment','regulation','cms','proposed','rule','we','us','your','there','than','them','also',
+    'can','more','any','such','when','what','how','into','over','because','been','other','each','some']);
+
+const tokens = t => String(t||'').toLowerCase().split(/\s+/)
+    .map(w => w.replace(/^[^a-z0-9&-]+|[^a-z0-9&-]+$/g,'')).filter(Boolean);
+
+/* doSentimentAnalysis -- the Python labels these "Positive Language" etc.
+   in the chart it produces, and Positive/Negative/Neutral in the column
+   categorizeText writes. Both exist in the sample data, so the pipeline
+   writes the short form and the chart prints the long one. */
+function ruleSentiment(text) {
+    const w = new Set(tokens(text));
+    let pos = 0, neg = 0;
+    w.forEach(x => { if (POS_WORDS.has(x)) pos++; if (NEG_WORDS.has(x)) neg++; });
+    if (pos > neg) return 'Positive';
+    if (neg > pos) return 'Negative';
+    return 'Neutral';
+}
+const SENT_LONG = { 'Positive':'Positive Language', 'Negative':'Negative Language', 'Neutral':'Neutral / Other' };
+
+function assignCategory(text) {
+    const w = new Set(tokens(text));
+    if (!w.size) return 'Uncategorized';
+    let best = null, bestScore = 0;
+    Object.keys(CMS_DOMAINS).forEach(label => {
+        let n = 0;
+        CMS_DOMAINS[label].forEach(k => { if (w.has(k)) n++; });
+        if (n > bestScore) { bestScore = n; best = label; }
+    });
+    return bestScore === 0 ? 'Uncategorized' : best;
+}
+
+/* summarizeText, browser edition.
+   EXTRACTIVE, not abstractive. Cortex writes new sentences; this scores the
+   comment's own sentences on the frequency of their non-stopword terms and
+   keeps the highest scoring ones in their original order. Every word in the
+   result appears in the source comment. The About panel says so, because a
+   summary the reader believes was written by a model is a different claim
+   from one assembled out of the text. */
+function extractiveSummary(text, maxSentences) {
+    const clean = String(text||'').trim();
+    if (!clean) return '';
+    const sentences = clean.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 15);
+    if (sentences.length <= maxSentences) return clean;
+
+    const freq = {};
+    tokens(clean).forEach(w => { if (!STOPWORDS.has(w) && w.length > 2) freq[w] = (freq[w]||0)+1; });
+
+    const scored = sentences.map((s, i) => {
+        const tw = tokens(s).filter(w => !STOPWORDS.has(w) && w.length > 2);
+        const score = tw.reduce((a,w) => a + (freq[w]||0), 0) / Math.max(1, Math.sqrt(tw.length));
+        return { i, s: s.trim(), score };
+    });
+    return scored.slice().sort((a,b) => b.score - a.score)
+                 .slice(0, maxSentences)
+                 .sort((a,b) => a.i - b.i)
+                 .map(x => x.s).join(' ');
+}
+
+/* =========================================================================
+ * STAGE DEFINITIONS -- two rows of four, as specified
+ * ====================================================================== */
+const STAGES = [
+  { row:1, key:'load',      name:'Load Comments',        fn:'JSON / CSV source',
+    desc:'Read the docket file and normalise it to one schema.' },
+  { row:1, key:'sentiment', name:'doSentimentAnalysis',  fn:'cgs_ai',
+    desc:'Character and word counts, then a keyword sentiment proxy.' },
+  { row:1, key:'nlp',       name:'visualizeNLP',         fn:'cgs_ai',
+    desc:'Corpus shape: word-count histogram and frequent terms.' },
+  { row:1, key:'summary',   name:'summarizeText',        fn:'cgs_ai',
+    desc:'One summary per comment. Extractive here, Cortex in Snowflake.' },
+  { row:2, key:'category',  name:'categorizeText',       fn:'cgs_ai',
+    desc:'Assign each comment to a CMS policy domain by keyword score.' },
+  { row:2, key:'format',    name:'formatCSV',            fn:'cgs_ai',
+    desc:'Build the formatted, distributable output table.' },
+  { row:2, key:'briefing',  name:'createExecutiveBriefing', fn:'cgs_ai',
+    desc:'Aggregate the enrichment columns into an executive memo.' },
+  { row:2, key:'output',    name:'Output',               fn:'files',
+    desc:'Emit the artefacts and open the briefing preview.' }
+];
+
+/* =========================================================================
+ * PIPELINE RUNNER
+ * ====================================================================== */
+const Pipeline = (function () {
+
+    function reset() {
+        pipelineRun = { started: null, stages: {}, outputs: [] };
+        STAGES.forEach(s => pipelineRun.stages[s.key] = { state:'queued', ms:0, note:'' });
+    }
+
+    function paint() {
+        refreshUnstructuredLinks();
+        STAGES.forEach(s => {
+            const el = $('stage-' + s.key);
+            if (!el) return;
+            const st = pipelineRun.stages[s.key];
+            el.className = 'stage ' + st.state;
+            const foot = el.querySelector('.stage-foot');
+            if (st.state === 'queued')  foot.innerHTML = 'Queued';
+            if (st.state === 'running') foot.innerHTML = '<span class="spinner"></span> Running…';
+            if (st.state === 'failed')  foot.innerHTML = '✕ ' + esc(st.note || 'Failed');
+            if (st.state === 'done')    foot.innerHTML = '<span class="tick">✓</span> ' +
+                st.ms + ' ms &middot; ' + esc(st.note) +
+                (hasOutput(s.key) ? '<span class="stage-open">view →</span>' : '');
+
+            /* The arrow out of this stage: green once the stage is done, and
+               pulsing while the stage it feeds is running, so the eye follows
+               the work rather than hunting for which card changed. */
+            const arr = $('arrow-' + s.key);
+            if (arr) {
+                const nextKey = nextStageKey(s);
+                const nextSt  = nextKey ? pipelineRun.stages[nextKey] : null;
+                arr.classList.toggle('flowed', st.state === 'done');
+                arr.classList.toggle('active', st.state === 'done' && nextSt && nextSt.state === 'running');
+            }
+        });
+
+        /* The handoff between the two rows flows when the last analysis stage
+           is done. */
+        const lastRow1 = STAGES.filter(s => s.row === 1).slice(-1)[0];
+        const hand = $('pipeHandoff');
+        if (hand && lastRow1) hand.classList.toggle('flowed',
+            pipelineRun.stages[lastRow1.key].state === 'done');
+        $('infoPipe').textContent = !pipelineRun.started ? 'not run'
+            : (STAGES.every(s => pipelineRun.stages[s.key].state === 'done') ? 'complete' : 'running');
+    }
+
+    const hasOutput = k => ['sentiment','nlp','summary','category','format','briefing'].includes(k);
+
+    /* The next stage in the same row, or null at the end of a row. */
+    function nextStageKey(s) {
+        const row = STAGES.filter(x => x.row === s.row);
+        const i = row.findIndex(x => x.key === s.key);
+        return (i >= 0 && i < row.length - 1) ? row[i + 1].key : null;
+    }
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    async function stage(key, work) {
+        const st = pipelineRun.stages[key];
+        st.state = 'running'; paint();
+        await sleep(CONFIG.STAGE_DELAY_MS);
+        const t0 = performance.now();
+        try {
+            st.note = (await work()) || '';
+            st.ms = Math.max(1, Math.round(performance.now() - t0));
+            st.state = 'done';
+        } catch (e) {
+            st.state = 'failed'; st.note = e.message;
+            logConsole('<span class="c-err">PIPELINE:</span> ' + esc(key) + ' failed — ' + esc(e.message));
+            throw e;
+        }
+        paint();
+    }
+
+    async function run() {
+        const src = CONFIG.SOURCES.find(s => s.key === $('sourcePicker').value) || CONFIG.SOURCES[0];
+        currentSource = src;
+        reset();
+        pipelineRun.started = new Date();
+        $('runBtn').disabled = true;
+        const t0 = performance.now();
+        logConsole('<span class="c-ok">PIPELINE:</span> starting on ' + esc(src.label) +
+                   '\nSource file: ' + esc(src.file) + '  (' + esc(src.note) + ')');
+        renderHome();
+
+        try {
+            await stage('load', async () => {
+                const res = await fetch(src.file + '?_cb=' + Date.now(), { cache:'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + src.file);
+                const data = await res.json();
+                if (!Array.isArray(data)) throw new Error('Expected a JSON array in ' + src.file);
+                rows = data.map(r => Object.assign({}, r));
+                return rows.length.toLocaleString('en-US') + ' comments loaded';
+            });
+
+            await stage('sentiment', async () => {
+                let changed = 0;
+                rows.forEach(r => {
+                    const t = r.comment || '';
+                    r.character_count = t.length;
+                    r.word_count = t.split(/\s+/).filter(Boolean).length;
+                    const computed = ruleSentiment(t);
+                    /* Where the file already carries a Snowflake label, keep it and
+                       count the disagreements rather than silently overwriting. */
+                    if (r.overall_sentiment && r.overall_sentiment !== computed) changed++;
+                    if (!r.overall_sentiment) r.overall_sentiment = computed;
+                    r._sent_computed = computed;
+                });
+                if (changed) logConsole('<span class="c-warn">doSentimentAnalysis:</span> ' + changed +
+                    ' of ' + rows.length + ' rows carry a Snowflake sentiment label that differs from the ' +
+                    'label this rule produces on the same text. The stored value is kept; the computed one ' +
+                    'is in _sent_computed. Worth a look if it is a large share.');
+                return rows.length.toLocaleString('en-US') + ' comments scored';
+            });
+
+            await stage('nlp', async () => {
+                const words = {};
+                rows.forEach(r => tokens(r.comment).forEach(w => {
+                    if (w.length > 1 && !STOPWORDS.has(w)) words[w] = (words[w]||0)+1;
+                }));
+                pipelineRun.topWords = Object.keys(words).map(w => ({ name:w, value:words[w] }))
+                    .sort((a,b) => b.value - a.value).slice(0, 30);
+                pipelineRun.vocab = Object.keys(words).length;
+                return pipelineRun.vocab.toLocaleString('en-US') + ' distinct terms';
+            });
+
+            await stage('summary', async () => {
+                let origChars = 0, sumChars = 0;
+                rows.forEach(r => {
+                    r.Comment_summary = extractiveSummary(r.comment, CONFIG.SUMMARY_SENTENCES);
+                    origChars += (r.comment||'').length;
+                    sumChars  += r.Comment_summary.length;
+                });
+                pipelineRun.reduction = origChars ? (1 - sumChars/origChars) * 100 : 0;
+                return rows.length.toLocaleString('en-US') + ' comments summarized';
+            });
+
+            await stage('category', async () => {
+                let changed = 0;
+                rows.forEach(r => {
+                    const computed = assignCategory(r.comment);
+                    if (r.COMMENT_CATEGORY && r.COMMENT_CATEGORY !== computed) changed++;
+                    if (!r.COMMENT_CATEGORY) r.COMMENT_CATEGORY = computed;
+                    r._cat_computed = computed;
+                });
+                if (changed) logConsole('<span class="c-warn">categorizeText:</span> ' + changed +
+                    ' of ' + rows.length + ' rows differ from the stored Snowflake category. Stored value kept.');
+                const n = new Set(rows.map(r => r.COMMENT_CATEGORY)).size;
+                return n + ' domains assigned';
+            });
+
+            await stage('format', async () => {
+                cols = FIELD_ORDER.filter(f => rows.some(r => r[f] !== undefined && r[f] !== ''));
+                renderGrid();
+                return cols.length + ' columns formatted';
+            });
+
+            await stage('briefing', async () => {
+                pipelineRun.briefing = buildBriefing();
+                return 'memo drafted';
+            });
+
+            await stage('output', async () => {
+                const csvBytes  = toCSV(rows, cols).length;
+                const jsonBytes = JSON.stringify(rows).length;
+                /* The briefing ships as .docx, matching what
+                   createExecutiveBriefing writes in Snowflake. v1.0Beta
+                   emitted Markdown, which nobody circulates to a steering
+                   committee. */
+                const docBytes  = wordDoc(pipelineRun.briefing.html).length;
+                pipelineRun.outputs = [
+                    { name:'cms_comments_enriched.csv',   bytes:csvBytes,  kind:'csv'  },
+                    { name:'cms_comments_enriched.json',  bytes:jsonBytes, kind:'json' },
+                    { name:'cgs_executive_briefing.docx', bytes:docBytes,  kind:'docx' }
+                ];
+                renderBriefingPanel();
+                renderOutputs();          /* the list is built by this stage, so paint it here */
+                return pipelineRun.outputs.length + ' files ready';
+            });
+
+            const total = Math.round(performance.now() - t0);
+            $('infoElapsed').textContent = total.toLocaleString('en-US') + ' ms';
+            logConsole('<span class="c-ok">PIPELINE:</span> complete in ' + total + ' ms. ' +
+                       'Click any finished card to see what it produced.');
+            updatePills();
+        } catch (e) {
+            /* stage() already logged and painted the failure */
+        } finally {
+            $('runBtn').disabled = false;
+            paint();
+        }
+    }
+
+    return { run, reset, paint, hasOutput };
+})();
+
+/* =========================================================================
+ * HOME: the stage cards
+ * ====================================================================== */
+function renderHome() {
+    const host = $('homePanel');
+    /* Between every pair of cards goes an arrow carrying the id of the stage
+       it flows OUT of, so paint() can colour it from that stage's state. */
+    const rowCards = n => STAGES.filter(s => s.row === n).map((s, i, arr) => {
+        const card =
+            '<div class="stage queued" id="stage-' + s.key + '" data-key="' + s.key + '">' +
+              '<span class="stage-n">' + (n === 1 ? i + 1 : i + 5) + '</span>' +
+              '<div class="stage-name">' + esc(s.name) + '</div>' +
+              '<div class="stage-desc">' + esc(s.desc) + '</div>' +
+              '<div class="stage-foot">Queued</div>' +
+            '</div>';
+        const arrow = (i < arr.length - 1)
+            ? '<div class="pipe-arrow" id="arrow-' + s.key + '" aria-hidden="true" ' +
+              'title="' + esc(s.name) + ' feeds ' + esc(arr[i+1].name) + '">\u2192</div>'
+            : '';
+        return card + arrow;
+    }).join('');
+
+    host.innerHTML =
+        '<div class="card">' +
+        '<div class="pipe-head"><h2>Pipeline Runner Workflow</h2>' +
+          '<span class="pipe-note" id="pipeStamp">' +
+            (pipelineRun && pipelineRun.started
+              ? 'Last run ' + esc(pipelineRun.started.toLocaleString('en-US'))
+              : 'Not run yet — press Run Pipeline') + '</span>' +
+          '<div class="pipe-controls">' +
+            '<button class="btn btn-primary" id="runBtn2">Run Pipeline</button>' +
+          '</div>' +
+        '</div>' +
+
+        /* Two ways into the raw free text, beside the pipeline that reads it. */
+        '<div class="unstruct-links">' +
+          '<span class="ul-label">Unstructured data (raw comment text):</span>' +
+          '<a href="#" id="linkUnstructuredGrid">Data Grid</a>' +
+          '<a href="#" id="linkUnstructuredCsv">Export to CSV</a>' +
+          '<span class="ul-note" id="unstructNote"></span>' +
+        '</div>' +
+
+        '<div class="pipe-rowlabel">Analysis pipeline</div>' +
+        '<div class="pipe-grid">' + rowCards(1) + '</div>' +
+        '<div class="pipe-handoff" id="pipeHandoff"><span class="arr">\u2192</span>' +
+          'feeds the output pipeline</div>' +
+        '<div class="pipe-rowlabel">Output pipeline</div>' +
+        '<div class="pipe-grid">' + rowCards(2) + '</div>' +
+
+        '<div class="pipe-outputs" id="pipeOutputs"></div>' +
+        '</div>';
+
+    $('runBtn2').addEventListener('click', () => Pipeline.run());
+    $('linkUnstructuredGrid').addEventListener('click', e => { e.preventDefault(); openUnstructuredGrid(); });
+    $('linkUnstructuredCsv').addEventListener('click',  e => { e.preventDefault(); exportUnstructuredCSV(); });
+    refreshUnstructuredLinks();
+    host.querySelectorAll('.stage').forEach(el => el.addEventListener('click', () => {
+        const k = el.dataset.key;
+        if (pipelineRun && pipelineRun.stages[k] && pipelineRun.stages[k].state === 'done'
+            && Pipeline.hasOutput(k)) StageView.open(k);
+    }));
+    if (pipelineRun) Pipeline.paint();
+    renderOutputs();
+}
+
+/* Nothing is loaded until the pipeline's Load Comments stage runs, so the
+   links are greyed until there is text behind them. They still respond — the
+   handlers say what is missing rather than doing nothing. renderHome() runs
+   before the load stage, so paint() calls this again once rows arrive. */
+function refreshUnstructuredLinks() {
+    const strip = document.querySelector('#homePanel .unstruct-links');
+    if (!strip) return;
+    const live = rows.length > 0;
+    strip.querySelectorAll('a').forEach(a => a.classList.toggle('off', !live));
+    const un = $('unstructNote');
+    if (un) un.textContent = live
+        ? rows.length.toLocaleString('en-US') + ' comments in ' + unstructuredCols().length + ' columns'
+        : 'available once Load Comments has run';
+}
+
+function renderOutputs() {
+    const host = $('pipeOutputs');
+    if (!host) return;
+    if (!pipelineRun || !pipelineRun.outputs.length) { host.innerHTML = ''; return; }
+    host.innerHTML = '<div class="sec-title">Output files</div>' +
+        pipelineRun.outputs.map(o =>
+            '<div class="outfile"><span class="nm">' + esc(o.name) + '</span>' +
+            '<span class="sz">' + (o.bytes/1024).toFixed(1) + ' KB</span>' +
+            '<span class="dl"><button class="btn" data-dl="' + esc(o.kind) + '">Download</button></span></div>').join('');
+    host.querySelectorAll('[data-dl]').forEach(b =>
+        b.addEventListener('click', () => downloadOutput(b.dataset.dl)));
+}
+
+/* =========================================================================
+ * STAGE OUTPUT PANELS
+ * ====================================================================== */
+const StageView = (function () {
+
+    function open(key) {
+        const titles = {
+            sentiment: 'doSentimentAnalysis — sentiment distribution',
+            nlp:       'visualizeNLP — corpus shape',
+            summary:   'summarizeText — comment against summary',
+            category:  'categorizeText — domains and word cloud',
+            format:    'formatCSV — formatted output table',
+            briefing:  'createExecutiveBriefing — approve and export'
+        };
+        $('stageModalTitle').textContent = titles[key] || key;
+        $('stageModalBody').innerHTML = '<p>Building…</p>';
+        openModal('stageModal');
+        setTimeout(() => {
+            ({ sentiment, nlp, summary, category, format, briefing })[key]();
+            Chart.mount($('stageModalBody'));
+        }, 30);
+    }
+
+    /* ---- doSentimentAnalysis: the bar chart the Python renders ---- */
+    function sentiment() {
+        const counts = {};
+        rows.forEach(r => {
+            const k = SENT_LONG[r.overall_sentiment] || r.overall_sentiment || 'Neutral / Other';
+            counts[k] = (counts[k]||0) + 1;
+        });
+        const order = ['Neutral / Other','Positive Language','Negative Language'];
+        const items = order.filter(k => counts[k]).map(k => ({ name:k, value:counts[k] }));
+        Object.keys(counts).forEach(k => { if (!order.includes(k)) items.push({name:k,value:counts[k]}); });
+        const total = rows.length;
+
+        $('stageModalBody').innerHTML =
+            '<div class="chart-box"><h4>Distribution of Comment Sentiment Proxies</h4>' +
+            Chart.bars(items, { format: v => v.toLocaleString('en-US') +
+                ' (' + (v/total*100).toFixed(1) + '%)' }) + '</div>' +
+            '<div class="notes-warn" style="margin-top:12px;"><strong>This is a proxy, not a model.</strong> ' +
+            'Each label comes from intersecting the comment with two keyword lists, so negation and ' +
+            'sarcasm are invisible to it — &ldquo;I do not support this&rdquo; scores as positive. ' +
+            'Use it to decide which comments to read, never as a measured opinion.</div>' +
+            '<dl class="kv" style="margin-top:12px;">' +
+              '<dt>Comments scored</dt><dd>' + total.toLocaleString('en-US') + '</dd>' +
+              '<dt>Mean characters</dt><dd>' + Math.round(avg(rows.map(r=>r.character_count))).toLocaleString('en-US') + '</dd>' +
+              '<dt>Mean words</dt><dd>' + Math.round(avg(rows.map(r=>r.word_count))).toLocaleString('en-US') + '</dd>' +
+              '<dt>Empty comments</dt><dd>' + rows.filter(r=>!r.character_count).length + '</dd>' +
+            '</dl>';
+    }
+
+    /* ---- visualizeNLP: histogram + top terms, the two-panel figure ---- */
+    function nlp() {
+        const wc = rows.map(r => r.word_count || 0);
+        const maxW = Math.max.apply(null, wc.concat([1]));
+        const BINS = 30, size = Math.ceil(maxW / BINS) || 1;
+        const hist = new Array(BINS).fill(0);
+        wc.forEach(v => hist[Math.min(BINS-1, Math.floor(v/size))]++);
+        const histItems = hist.map((v,i) => ({ name: (i*size) + '–' + ((i+1)*size-1), value:v }))
+                              .filter(x => x.value > 0);
+
+        $('stageModalBody').innerHTML =
+            '<div class="viz-2col">' +
+              '<div class="chart-box"><h4>Distribution of Comment Word Counts</h4>' +
+                 Chart.bars(histItems, { format: v => v.toLocaleString('en-US') + ' comments' }) + '</div>' +
+              '<div class="chart-box"><h4>Top 30 Most Frequent Words in Comments</h4>' +
+                 Chart.bars(pipelineRun.topWords, { format: v => v.toLocaleString('en-US') }) + '</div>' +
+            '</div>' +
+            '<div class="ask-note" style="margin-top:12px;">Stop words and the docket’s own vocabulary ' +
+            '(<code>cms</code>, <code>comment</code>, <code>rule</code>) are removed before counting, ' +
+            'otherwise the top of the list is the same for every docket and tells you nothing. ' +
+            '<strong>' + pipelineRun.vocab.toLocaleString('en-US') + '</strong> distinct terms remain.</div>';
+    }
+
+    /* ---- summarizeText: the comparison table the spec asks for ---- */
+    function summary() {
+        const sample = rows.slice(0, 250);
+        const origC = rows.reduce((a,r) => a + (r.comment||'').length, 0);
+        const sumC  = rows.reduce((a,r) => a + (r.Comment_summary||'').length, 0);
+        const origW = rows.reduce((a,r) => a + (r.word_count||0), 0);
+        const sumW  = rows.reduce((a,r) => a + (r.Comment_summary||'').split(/\s+/).filter(Boolean).length, 0);
+
+        $('stageModalBody').innerHTML =
+            '<div class="kpi-row">' +
+              kpi(rows.length.toLocaleString('en-US'), 'Comments summarized') +
+              kpi((origC/1000).toFixed(0) + 'K', 'Original characters') +
+              kpi((sumC/1000).toFixed(0) + 'K', 'Summary characters') +
+              kpi(((1-sumC/origC)*100).toFixed(1) + '%', 'Character reduction', 'good') +
+              kpi(((1-sumW/origW)*100).toFixed(1) + '%', 'Word reduction', 'good') +
+            '</div>' +
+            '<div class="notes-warn"><strong>Extractive, not abstractive.</strong> Every word below appears ' +
+            'in the original comment: sentences are scored on term frequency and the best are kept. ' +
+            'The Snowflake stage calls Cortex <code>Summarize</code>, which writes new sentences. ' +
+            'Do not read this table as a reproduction of the Cortex output.</div>' +
+            '<p style="font-size:10px;color:#777;margin:10px 0 6px;">Showing the first ' +
+              sample.length.toLocaleString('en-US') + ' of ' + rows.length.toLocaleString('en-US') +
+              ' rows; the full set is in the Data Grid and the exports.</p>' +
+            '<div class="scroll-box"><table><thead><tr>' +
+              '<th style="width:110px;">ID</th><th>comment</th><th>Comment_summary</th>' +
+              '<th style="width:70px;">Cut</th></tr></thead><tbody>' +
+            sample.map(r => {
+                const o = (r.comment||'').length, s = (r.Comment_summary||'').length;
+                const cut = o ? (1 - s/o) * 100 : 0;
+                return '<tr><td style="font-family:Consolas,monospace;font-size:9.5px;">' + esc(r.id) + '</td>' +
+                       '<td class="cmp-orig">' + esc(trunc(r.comment, 460)) + '</td>' +
+                       '<td class="cmp-sum">' + esc(r.Comment_summary) + '</td>' +
+                       '<td class="pct-cut">' + cut.toFixed(0) + '%</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    /* ---- categorizeText: configurable word cloud + breakdown ---- */
+    function category() {
+        $('stageModalBody').innerHTML =
+            '<div class="cfgpanel">' +
+              '<div class="cfgbox2"><h5>Configuration Selection</h5>' +
+                '<label class="chk"><input type="checkbox" id="wcShow" checked> Show Word Cloud</label>' +
+                '<label class="chk"><input type="checkbox" id="wcSummaries" checked> Show Category Breakdown</label>' +
+                '<label>Colour words by</label>' +
+                '<select id="wcColour">' +
+                  '<option value="sentiment">Sentiment of the comments using the word</option>' +
+                  '<option value="frequency">Frequency only</option>' +
+                '</select>' +
+                '<label>Categories (comma-separated, blank = all)</label>' +
+                '<input type="text" id="wcCats" value="">' +
+                '<label>Min. comment length to include (characters)</label>' +
+                '<input type="number" id="wcMinLen" value="' + CONFIG.MIN_COMMENT_CHARS + '" min="0">' +
+                '<label>Word Cloud — Max words</label>' +
+                '<input type="number" id="wcMax" value="' + CONFIG.WORDCLOUD_MAX_WORDS + '" min="10" max="200">' +
+                '<button class="btn btn-primary" id="wcApply" style="margin-top:12px;width:100%;">Apply</button>' +
+              '</div>' +
+              '<div><div class="wc-head">Word Cloud</div><div class="wordcloud" id="wcOut"></div>' +
+                   '<div id="wcBreak" style="margin-top:12px;"></div></div>' +
+            '</div>';
+        ['wcApply'].forEach(id => $(id).addEventListener('click', drawCloud));
+        drawCloud();
+    }
+
+    function drawCloud() {
+        const show   = $('wcShow').checked;
+        const breaks = $('wcSummaries').checked;
+        const mode   = $('wcColour').value;
+        const minLen = Number($('wcMinLen').value) || 0;
+        const maxW   = Number($('wcMax').value) || 60;
+        const catFilter = $('wcCats').value.split(',').map(s=>s.trim()).filter(Boolean);
+
+        let set = rows.filter(r => (r.character_count||0) >= minLen);
+        if (catFilter.length) set = set.filter(r => catFilter.some(c =>
+            String(r.COMMENT_CATEGORY||'').toLowerCase().includes(c.toLowerCase())));
+
+        const freq = {}, sent = {};
+        set.forEach(r => {
+            const s = r.overall_sentiment || 'Neutral';
+            new Set(tokens(r.comment)).forEach(w => {
+                if (w.length < 3 || STOPWORDS.has(w)) return;
+                freq[w] = (freq[w]||0)+1;
+                sent[w] = sent[w] || { Positive:0, Negative:0, Neutral:0 };
+                sent[w][s] = (sent[w][s]||0)+1;
+            });
+        });
+        const top = Object.keys(freq).map(w => ({ w, n:freq[w] }))
+                          .sort((a,b) => b.n - a.n).slice(0, maxW);
+
+        const host = $('wcOut');
+        if (!show) { host.innerHTML = '<span class="notes-empty">Word cloud hidden.</span>'; }
+        else if (!top.length) { host.innerHTML = '<span class="notes-empty">Nothing matches that filter.</span>'; }
+        else {
+            const hi = top[0].n, lo = top[top.length-1].n;
+            host.innerHTML = top.map(t => {
+                const scale = hi === lo ? 0.5 : (t.n - lo) / (hi - lo);
+                const size  = 11 + scale * 28;
+                let colour = '#4a7ba7';
+                if (mode === 'sentiment') {
+                    const s = sent[t.w];
+                    colour = s.Positive > s.Negative ? '#2e7d32'
+                           : s.Negative > s.Positive ? '#c0392b' : '#7f8c8d';
+                } else {
+                    colour = scale > 0.66 ? '#1f3864' : scale > 0.33 ? '#4a7ba7' : '#8aa6bd';
+                }
+                return '<span class="wc-word" style="font-size:' + size.toFixed(1) + 'px;color:' + colour +
+                       ';font-weight:' + (scale > 0.5 ? 700 : 400) + ';" title="' + esc(t.w) + ' — ' +
+                       t.n + ' comments">' + esc(t.w) + '</span>';
+            }).join('');
+        }
+
+        const bhost = $('wcBreak');
+        if (!breaks) { bhost.innerHTML = ''; return; }
+        const counts = {};
+        set.forEach(r => { const c = r.COMMENT_CATEGORY || 'Uncategorized'; counts[c] = (counts[c]||0)+1; });
+        const items = Object.keys(counts).map(c => ({name:c, value:counts[c]}))
+                            .sort((a,b) => b.value - a.value);
+        const unc = counts['Uncategorized'] || 0;
+        bhost.innerHTML = '<div class="chart-box"><h4>Category breakdown — ' +
+            set.length.toLocaleString('en-US') + ' comments after filtering</h4>' +
+            Chart.bars(items, { format: v => v.toLocaleString('en-US') +
+                ' (' + (v/set.length*100).toFixed(1) + '%)' }) +
+            (unc ? '<div class="ask-note" style="margin-top:10px;"><strong>Uncategorized is ' +
+                   (unc/set.length*100).toFixed(1) + '% of this selection.</strong> No domain keyword ' +
+                   'matched those comments at all. That is a finding about how well the five domains fit ' +
+                   'this docket, not a gap to be hidden — a breakdown that drops it overstates coverage.</div>' : '') +
+            '</div>';
+    }
+
+    /* ---- formatCSV: the formatted table, scrollable ---- */
+    function format() {
+        const show = cols.filter(c => c !== 'comment');
+        const sample = rows.slice(0, 300);
+        $('stageModalBody').innerHTML =
+            '<div class="ask-note">This is the table <code>formatCSV</code> writes to Excel: banner, frozen ' +
+            'filtered header, zebra striping. The <code>comment</code> column is omitted from this preview ' +
+            'because a 5,000-character cell makes every other column unreadable; it is present in the export.</div>' +
+            '<p style="font-size:10px;color:#777;margin:10px 0 6px;">Showing the first ' +
+              sample.length.toLocaleString('en-US') + ' of ' + rows.length.toLocaleString('en-US') + ' rows · ' +
+              show.length + ' of ' + cols.length + ' columns</p>' +
+            '<div class="scroll-box"><table><thead><tr>' +
+              show.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
+            sample.map(r => '<tr>' + show.map(c =>
+                '<td>' + esc(trunc(r[c], 220)) + '</td>').join('') + '</tr>').join('') +
+            '</tbody></table></div>';
+    }
+
+    /* ---- createExecutiveBriefing: approval + export format ---- */
+    function briefing() {
+        const b = pipelineRun.briefing;
+        $('stageModalBody').innerHTML =
+            '<dl class="kv" style="margin-bottom:12px;">' +
+              '<dt>Docket</dt><dd>' + esc(b.docket) + '</dd>' +
+              '<dt>Comments analysed</dt><dd>' + b.total.toLocaleString('en-US') + '</dd>' +
+              '<dt>Substantive (&gt;5 words)</dt><dd>' + b.substantive.toLocaleString('en-US') + '</dd>' +
+              '<dt>Generated</dt><dd>' + esc(b.date) + '</dd>' +
+            '</dl>' +
+            '<div class="approve-row"><label class="chk" style="display:flex;align-items:center;gap:7px;">' +
+              '<input type="checkbox" id="briefApprove"' + (briefingApproved ? ' checked' : '') + '> ' +
+              '<strong>Approved for distribution</strong></label>' +
+              '<span id="briefStamp">' + (briefingApproved
+                  ? '<span class="approved-stamp">APPROVED</span>'
+                  : '<span style="color:#b07400;font-size:10px;font-weight:700;">DRAFT — NOT APPROVED</span>') +
+              '</span></div>' +
+            '<div class="approve-row">Export format: ' +
+              '<button class="fmt-pill' + (briefingFormat==='docx'?' active':'') + '" data-fmt="docx">docx (default)</button>' +
+              '<button class="fmt-pill' + (briefingFormat==='pdf'?' active':'') + '" data-fmt="pdf">pdf</button>' +
+              '<button class="btn btn-primary" id="briefExport" style="margin-left:auto;">Export briefing</button>' +
+            '</div>' +
+            '<div class="notes-warn"><strong>Approval is recorded in this page only.</strong> Ticking the box ' +
+            'stamps the exported document and nothing else — there is no workflow, no second approver and no ' +
+            'audit record behind it. Treat it as a label on the artefact, not as sign-off.</div>' +
+            '<div class="sec-title">Preview</div>' +
+            '<div class="briefing-pane">' + b.html + '</div>';
+
+        $('briefApprove').addEventListener('change', e => {
+            briefingApproved = e.target.checked;
+            $('briefStamp').innerHTML = briefingApproved
+                ? '<span class="approved-stamp">APPROVED</span>'
+                : '<span style="color:#b07400;font-size:10px;font-weight:700;">DRAFT — NOT APPROVED</span>';
+            renderBriefingPanel();
+        });
+        $('stageModalBody').querySelectorAll('[data-fmt]').forEach(btn =>
+            btn.addEventListener('click', () => {
+                briefingFormat = btn.dataset.fmt;
+                $('stageModalBody').querySelectorAll('[data-fmt]').forEach(b2 =>
+                    b2.classList.toggle('active', b2.dataset.fmt === briefingFormat));
+            }));
+        $('briefExport').addEventListener('click', exportBriefing);
+    }
+
+    return { open };
+})();
+
+/* =========================================================================
+ * EXECUTIVE BRIEFING
+ * =========================================================================
+ * Mirrors createExecutiveBriefing's memo structure. The Snowflake version
+ * asks Cortex Complete for the narrative paragraph; there is no model here,
+ * so the narrative is assembled from the computed figures and says so. A
+ * page that printed invented prose under the heading "AI-Generated
+ * Executive Analysis" would be claiming something it did not do.
+ * ====================================================================== */
+function buildBriefing() {
+    const total = rows.length;
+    const substantive = rows.filter(r => (r.word_count||0) > 5).length;
+    const docket = (rows[0] && rows[0].docketId) || currentSource.label;
+    const date = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+    const sent = {}, cat = {};
+    rows.forEach(r => {
+        const s = r.overall_sentiment || 'Neutral'; sent[s] = (sent[s]||0)+1;
+        const c = r.COMMENT_CATEGORY || 'Uncategorized'; cat[c] = (cat[c]||0)+1;
+    });
+    const catRanked = Object.keys(cat).map(k => ({k, n:cat[k]})).sort((a,b) => b.n - a.n);
+    const topCat = catRanked[0] || { k:'—', n:0 };
+    const unc = cat['Uncategorized'] || 0;
+
+    /* Prefer the real Cortex narrative for this source. It was generated by
+       Snowflake Cortex Complete during the pipeline run that produced the
+       enriched file, so "AI-Generated" is an accurate label for it. The
+       computed paragraph below is the fallback for a source that was never
+       run through Snowflake, and is labelled differently. */
+    const cortex = currentSource && currentSource.cortexNarrative;
+    const computed =
+        'Of ' + total.toLocaleString('en-US') + ' comments on ' + docket + ', ' +
+        substantive.toLocaleString('en-US') + ' carry more than five words and are treated as substantive. ' +
+        'The dominant theme is ' + topCat.k + ', at ' + (topCat.n/total*100).toFixed(1) + '% of the docket. ' +
+        'Sentiment is ' + Object.keys(sent).sort((a,b)=>sent[b]-sent[a])
+            .map(k => k.toLowerCase() + ' ' + (sent[k]/total*100).toFixed(1) + '%').join(', ') + '. ' +
+        (unc ? 'A further ' + (unc/total*100).toFixed(1) + '% matched no domain keyword and are ' +
+               'reported as Uncategorized; that share is itself a finding about taxonomy fit and ' +
+               'warrants manual review before the breakdown is quoted. ' : '') +
+        'These figures are produced by keyword rules, not a trained model, and should be used to direct ' +
+        'reading effort rather than quoted as measured opinion.';
+
+    const aiGenerated = !!(cortex && cortex.length);
+    const narrativeHtml = aiGenerated
+        ? cortex.map(x => '<p>' + esc(x) + '</p>').join('')
+        : '<p>' + esc(computed) + '</p>';
+    const narrativeHeading = aiGenerated
+        ? 'AI-Generated Executive Analysis (Snowflake Cortex):'
+        : 'Computed Executive Analysis:';
+    const narrativeNote = aiGenerated
+        ? 'Generated by ' + esc(currentSource.cortexModel || 'Snowflake Cortex Complete') +
+          ' during the pipeline run that produced this file, and reproduced here verbatim. ' +
+          'Its figures were reconciled against the data on this page before it was embedded.'
+        : 'This source was never run through Snowflake, so there is no Cortex narrative for it. ' +
+          'The paragraph above is assembled from the computed figures, not generated.';
+
+    const catRows = catRanked.map((c,i) =>
+        '<tr><td><strong>' + (i+1) + '</strong></td><td>' + esc(c.k) + '</td><td>' +
+        (c.n/total*100).toFixed(1) + '%</td><td>' + c.n.toLocaleString('en-US') + '</td></tr>').join('');
+
+    const samples = catRanked.slice(0,5).map(c => {
+        const ex = rows.filter(r => (r.COMMENT_CATEGORY||'Uncategorized') === c.k)
+                       .filter(r => r.Comment_summary).slice(0,2);
+        return '<p><strong>' + esc(c.k) + '</strong></p><ul>' +
+               ex.map(e => '<li>' + esc(trunc(e.Comment_summary, 300)) + '</li>').join('') + '</ul>';
+    }).join('');
+
+    const html =
+        '<h1>EXECUTIVE BRIEFING &amp; REGULATORY PROJECT PLAN</h1>' +
+        '<div class="briefing-meta"><strong>TO:</strong> Senior Leadership &amp; Project Steering Committee<br>' +
+        '<strong>FROM:</strong> Data Analytics &amp; Regulatory Intelligence Unit<br>' +
+        '<strong>DATE:</strong> ' + esc(date) + '<br>' +
+        '<strong>SUBJECT:</strong> Public Feedback Analysis — ' + esc(docket) + '<br>' +
+        '<strong>STATUS:</strong> ' + (briefingApproved ? 'APPROVED FOR DISTRIBUTION' : 'DRAFT — NOT APPROVED') + '</div>' +
+        '<h2>1. Executive Dashboard</h2>' +
+        '<p>A semantic analysis evaluated <strong>' + total.toLocaleString('en-US') + '</strong> public comments (' +
+        substantive.toLocaleString('en-US') + ' substantive entries with more than 5 words).</p>' +
+        '<p><strong>Overall Sentiment Distribution:</strong> ' +
+        Object.keys(sent).map(k => esc(k) + ': <strong>' + sent[k].toLocaleString('en-US') + '</strong>').join(' | ') + '</p>' +
+        '<p><strong>' + narrativeHeading + '</strong></p>' + narrativeHtml +
+        '<p style="font-size:10px;color:#777;"><em>' + narrativeNote + '</em></p>' +
+        '<h2>2. Weighted Thematic Landscape</h2>' +
+        '<table><thead><tr><th>Rank</th><th>Category</th><th>Volume (%)</th><th>Comment Count</th></tr></thead>' +
+        '<tbody>' + catRows + '</tbody></table>' +
+        '<h2>3. Sample Insights by Category</h2>' + samples +
+        '<h2>4. Implementation Plan</h2><ul>' +
+        '<li><strong>Phase 1 — Operational Review (Weeks 1–4):</strong> route the ' + esc(topCat.k) +
+        ' comments, the largest group, to the owning division leads.</li>' +
+        '<li><strong>Phase 2 — Impact Modeling (Weeks 5–8):</strong> assess categories above 25% of volume.</li>' +
+        '<li><strong>Phase 3 — Final Rule Amendment (Weeks 9–12):</strong> draft variance clauses for the burdens raised.</li></ul>' +
+        '<h2>5. Key Risk Index</h2><ul>' +
+        '<li><strong>Form-letter bias:</strong> coordinated campaigns can dominate sentiment without representing distinct views.</li>' +
+        '<li><strong>Rule-based classification:</strong> sentiment and category are keyword proxies; they miss negation and context.</li>' +
+        '<li><strong>Taxonomy fit:</strong> ' + (unc/total*100).toFixed(1) + '% of comments matched no domain and need manual review.</li></ul>';
+
+    /* Retained for anyone who wants the plain-text form in the console or a
+       future export; it is no longer written as a file. */
+    const markdown =
+        '# EXECUTIVE BRIEFING & REGULATORY PROJECT PLAN\n\n' +
+        '**TO:** Senior Leadership & Project Steering Committee  \n' +
+        '**FROM:** Data Analytics & Regulatory Intelligence Unit  \n' +
+        '**DATE:** ' + date + '  \n**SUBJECT:** Public Feedback Analysis — ' + docket + '  \n' +
+        '**STATUS:** ' + (briefingApproved ? 'APPROVED FOR DISTRIBUTION' : 'DRAFT — NOT APPROVED') + '\n\n---\n\n' +
+        '## 1. Executive Dashboard\n\nA semantic analysis evaluated **' + total + '** public comments (' +
+        substantive + ' substantive entries with more than 5 words).\n\n' +
+        '**Overall Sentiment Distribution:** ' + Object.keys(sent).map(k => k + ': ' + sent[k]).join(' | ') + '\n\n' +
+        '**' + narrativeHeading + '**\n\n' +
+        (aiGenerated ? cortex.join('\n\n') : computed) + '\n\n' +
+        '> ' + narrativeNote.replace(/<[^>]+>/g,'') + '\n\n---\n\n' +
+        '## 2. Weighted Thematic Landscape\n\n| Rank | Category | Volume (%) | Comment Count |\n| :--- | :--- | :--- | :--- |\n' +
+        catRanked.map((c,i) => '| **' + (i+1) + '** | ' + c.k + ' | ' + (c.n/total*100).toFixed(1) + '% | ' + c.n + ' |').join('\n') +
+        '\n\n---\n\n## 3. Key Risk Index\n\n' +
+        '* **Form-letter bias:** coordinated campaigns can dominate sentiment without representing distinct views.\n' +
+        '* **Rule-based classification:** sentiment and category are keyword proxies; they miss negation and context.\n' +
+        '* **Taxonomy fit:** ' + (unc/total*100).toFixed(1) + '% of comments matched no domain and need manual review.\n';
+
+    return { html, markdown, total, substantive, docket, date, sent, cat: catRanked };
+}
+
+function renderBriefingPanel() {
+    const host = $('briefPanel');
+    if (!pipelineRun || !pipelineRun.briefing) {
+        host.innerHTML = '<div class="card"><p class="notes-empty">Run the pipeline to produce the briefing.</p></div>';
+        return;
+    }
+    host.innerHTML = '<div class="card">' +
+        '<div class="pipe-head"><h2>Executive Briefing</h2>' +
+        '<span class="pipe-note">' + (briefingApproved ? 'Approved' : 'Draft — not approved') + '</span>' +
+        '<div class="pipe-controls">' +
+          '<button class="btn" id="briefOpenCard">Approve / export…</button></div></div>' +
+        '<div class="briefing-pane">' + pipelineRun.briefing.html + '</div></div>';
+    $('briefOpenCard').addEventListener('click', () => StageView.open('briefing'));
+}
+
+/* =========================================================================
+ * GRID
+ * ====================================================================== */
+class DmwHeader {
+    init(params) {
+        this.params = params;
+        const col = params.column.getColId();
+        const e = document.createElement('div');
+        e.className = 'hdr-wrap';
+        const label = document.createElement('span');
+        label.textContent = params.displayName;
+        e.appendChild(label);
+
+        this.sortable = params.enableSorting !== false;
+        if (this.sortable) {
+            this.sortEl = document.createElement('span');
+            this.sortEl.className = 'hdr-sort';
+            e.appendChild(this.sortEl);
+            this.onSortChanged = () => {
+                const d = params.column.getSort();
+                this.sortEl.textContent = d === 'asc' ? '▲' : d === 'desc' ? '▼' : '⇅';
+                this.sortEl.classList.toggle('active', !!d);
+                this.sortEl.title = d === 'asc' ? 'Sorted ascending' : d === 'desc' ? 'Sorted descending' : 'Click to sort';
+            };
+            params.column.addEventListener('sortChanged', this.onSortChanged);
+            this.onSortChanged();
+        }
+        if (CONFIG.METADATA_ENABLED) {
+            const i = document.createElement('button');
+            const known = Meta.has(col);
+            i.className = 'hdr-ico info' + (known ? '' : ' off');
+            i.textContent = 'i';
+            i.title = known ? 'Column metadata' : 'No metadata available for ' + col;
+            i.addEventListener('click', ev => { ev.stopPropagation(); if (known) Meta.show(col); });
+            e.appendChild(i);
+        }
+        if (this.sortable) {
+            const sort = ev => params.progressSort(ev.shiftKey);
+            label.style.cursor = 'pointer'; label.addEventListener('click', sort);
+            this.sortEl.style.cursor = 'pointer'; this.sortEl.addEventListener('click', sort);
+        }
+        this.gui = e;
+    }
+    getGui() { return this.gui; }
+    refresh() { return false; }
+    destroy() {
+        if (this.onSortChanged && this.params) {
+            try { this.params.column.removeEventListener('sortChanged', this.onSortChanged); } catch (_) {}
+        }
+    }
+}
+
+function renderGrid() {
+    const host = $('dmwGrid');
+    host.className = CONFIG.GRID_THEME;
+    const columnDefs = cols.map(c => ({
+        field: c, headerName: c, sortable: true, filter: true, resizable: true,
+        floatingFilter: true, minWidth: c === 'comment' || c === 'Comment_summary' ? 320 : 120,
+        headerComponent: DmwHeader,
+        tooltipValueGetter: p => {
+            if (p.value === null || p.value === undefined) return '';
+            const m = Meta.get(c);
+            return m ? (m.LOGICAL_COLUMN_NAME + ' — ' + m.DESCRIPTION) : String(p.value);
+        }
+    }));
+    const options = {
+        theme: 'legacy', columnDefs, rowData: rows,
+        defaultColDef: { flex: 1, minWidth: 110, sortable: true, filter: true, resizable: true },
+        pagination: true, paginationPageSize: CONFIG.GRID_PAGE_SIZE,
+        paginationPageSizeSelector: CONFIG.GRID_PAGE_SIZES,
+        animateRows: false, rowSelection: 'multiple', suppressDragLeaveHidesColumns: true,
+        onFilterChanged: updateFilteredCount,
+        onGridReady: p => { gridApi = p.api; updateFilteredCount(); }
+    };
+    host.innerHTML = '';
+    if (gridApi && gridApi.destroy) { try { gridApi.destroy(); } catch (_) {} gridApi = null; }
+    agGrid.createGrid(host, options);
+}
+
+function updateFilteredCount() {
+    if (!gridApi) return;
+    let n = 0; gridApi.forEachNodeAfterFilter(() => n++);
+    $('infoFiltered').textContent = n.toLocaleString('en-US');
+}
+function visibleRows() {
+    if (!gridApi) return rows.slice();
+    const out = []; gridApi.forEachNodeAfterFilterAndSort(n => { if (n.data) out.push(n.data); });
+    return out.length ? out : rows.slice();
+}
+
+/* =========================================================================
+ * METADATA
+ * ====================================================================== */
+const Meta = (function () {
+    let map = {}, count = 0, pending = null;
+    function refreshHeaders() {
+        if (gridApi && typeof gridApi.refreshHeader === 'function') {
+            try { gridApi.refreshHeader(); } catch (_) {}
+        }
+    }
+    function load() { if (pending) return pending; pending = doLoad(); return pending; }
+    async function doLoad() {
+        if (!CONFIG.METADATA_ENABLED) return;
+        try {
+            const res = await fetch(CONFIG.METADATA_CSV_PATH + '?_cb=' + Date.now(), { cache:'no-store' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            parseCSV(await res.text()).forEach(m => {
+                const k = (m.PHYSICAL_COLUMN_NAME||'').trim().toUpperCase();
+                if (k) map[k] = m;
+            });
+            count = Object.keys(map).length;
+            refreshHeaders();
+            logConsole('<span class="c-ok">METADATA:</span> loaded ' + count + ' column definitions.');
+        } catch (e) {
+            refreshHeaders();
+            logConsole('<span class="c-warn">METADATA:</span> ' + esc(e.message) +
+                ' — the "i" icons will be greyed out. The CSV must sit beside this page and be served over http(s).');
+        }
+    }
+    const has = c => !!map[String(c||'').trim().toUpperCase()];
+    const get = c => map[String(c||'').trim().toUpperCase()] || null;
+    function show(col) {
+        const m = get(col);
+        $('metaChip').textContent = col;
+        const f = (l,v,cls) => '<div class="meta-field"><div class="meta-label">' + esc(l) + '</div>' +
+            '<div class="meta-value ' + (cls||'') + '">' + (esc(v) || '&mdash;') + '</div></div>';
+        $('metaBody').innerHTML = !m
+            ? '<div class="meta-value">No metadata for this column.</div>'
+            : f('Logical column name', m.LOGICAL_COLUMN_NAME) +
+              f('Physical / table column name', m.TABLE_COLUMN_NAME || m.PHYSICAL_COLUMN_NAME, 'mono') +
+              f('Description', m.DESCRIPTION) +
+              f('Long description', m.LONG_DESCRIPTION, 'scroll') +
+              f('Load frequency', m.LOAD_FREQUENCY) +
+              f('Line of business (LOB)', m.LOB);
+        openModal('metaModal');
+    }
+    return { load, has, get, show, size: () => count, ready: () => pending || Promise.resolve() };
+})();
+
+/* =========================================================================
+ * EXPORTS, ASK DMW, HELPERS, INIT
+ * ====================================================================== */
+function toCSV(data, columns) {
+    const q = v => { const s = (v===null||v===undefined) ? '' : String(v);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+    return columns.join(',') + '\n' + data.map(r => columns.map(c => q(r[c])).join(',')).join('\n');
+}
+function saveBlob(text, name, mime) {
+    const b = new Blob([text], { type: mime || 'text/plain;charset=utf-8' });
+    const u = URL.createObjectURL(b), a = document.createElement('a');
+    a.href = u; a.download = name; document.body.appendChild(a); a.click();
+    document.body.removeChild(a); setTimeout(() => URL.revokeObjectURL(u), 1500);
+    logConsole('<span class="c-ok">OUTPUT:</span> ' + esc(name) + ' downloaded.');
+}
+function exportCSV() {
+    const r = visibleRows();
+    if (!r.length) { switchPanel('consolePanel'); logConsole('<span class="c-warn">OUTPUT:</span> nothing to export.'); return; }
+    saveBlob(toCSV(r, cols.length ? cols : Object.keys(r[0])),
+        'cms_comments_enriched_' + stamp() + '.csv', 'text/csv;charset=utf-8');
+}
+/* ---------------------------- Unstructured data ---------------------------
+ * The free text the pipeline reads: the comment body and its title, carried
+ * with the id and posted date so a row can be traced back to the docket.
+ * Everything else in the grid is enrichment the pipeline computed, not
+ * unstructured input, so it is deliberately left out of this slice.
+ * ----------------------------------------------------------------------- */
+const UNSTRUCTURED_COLS = ['id', 'postedDate', 'title', 'comment'];
+
+function unstructuredCols() {
+    /* Only the ones this source actually has — the SIJ docket is narrower. */
+    const present = rows.length ? Object.keys(rows[0]) : [];
+    return UNSTRUCTURED_COLS.filter(c => present.includes(c));
+}
+
+/* Switch to the Data Grid and bring the comment text into view, so the link
+   lands on the unstructured column rather than at column 1 of 24. */
+function openUnstructuredGrid() {
+    if (!rows.length) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">GRID:</span> no comment text is loaded yet. ' +
+            'Press Run Pipeline — the Load Comments stage reads the docket file.');
+        return;
+    }
+    switchPanel('gridPanel');
+    const target = unstructuredCols().includes('comment') ? 'comment' : 'title';
+    if (gridApi && typeof gridApi.ensureColumnVisible === 'function') {
+        try { gridApi.ensureColumnVisible(target); } catch (_) {}
+    }
+    logConsole('<span class="c-ok">GRID:</span> Data Grid opened on the unstructured column <code>' +
+        esc(target) + '</code>.');
+}
+
+function exportUnstructuredCSV() {
+    const r = visibleRows();
+    const c = unstructuredCols();
+    if (!r.length || !c.length) {
+        switchPanel('consolePanel');
+        logConsole('<span class="c-warn">OUTPUT:</span> no comment text is loaded yet. ' +
+            'Press Run Pipeline — the Load Comments stage reads the docket file.');
+        return;
+    }
+    saveBlob(toCSV(r, c), 'cms_comments_unstructured_' + stamp() + '.csv', 'text/csv;charset=utf-8');
+    logConsole('<span class="c-dim">OUTPUT:</span> ' + r.length.toLocaleString('en-US') +
+        ' rows, columns ' + c.join(', ') + '. Grid filters and sort are honoured.');
+}
+
+function downloadOutput(kind) {
+    if (kind === 'csv')  return saveBlob(toCSV(rows, cols), 'cms_comments_enriched.csv', 'text/csv;charset=utf-8');
+    if (kind === 'json') return saveBlob(JSON.stringify(rows, null, 1), 'cms_comments_enriched.json', 'application/json');
+    if (kind === 'docx') return saveBlob(wordDoc(pipelineRun.briefing.html),
+                                        'cgs_executive_briefing.docx', 'application/msword');
+}
+
+/* The spec names cgs_executive_briefing.docx as the artefact. A browser
+   cannot write a real .docx without a library, and shipping a .doc that is
+   actually HTML would be a lie about the file. Word opens this HTML-based
+   .doc correctly, and the Console says plainly what it is. */
+/* One place that turns the briefing into a Word-openable document, so the
+   export button and the output-file list cannot drift apart. */
+function wordDoc(innerHtml) {
+    return '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+        '<head><meta charset="utf-8"><title>cgs_executive_briefing</title>' +
+        '<style>body{font-family:Calibri,sans-serif;font-size:11pt;line-height:1.5;}' +
+        'h1{font-size:16pt;color:#1F3864;}h2{font-size:13pt;color:#1F3864;}' +
+        'table{border-collapse:collapse;}th,td{border:1px solid #999;padding:4pt 6pt;font-size:10pt;}' +
+        'th{background:#DCE6F1;}</style></head><body>' + innerHtml + '</body></html>';
+}
+
+function exportBriefing() {
+    const b = pipelineRun.briefing;
+    if (briefingFormat === 'pdf') {
+        const w = window.open('', '_blank');
+        if (!w) { logConsole('<span class="c-warn">EXPORT:</span> the print window was blocked. Allow pop-ups.'); return; }
+        w.document.write('<html><head><title>cgs_executive_briefing</title><style>' +
+            'body{font-family:Georgia,serif;max-width:7.5in;margin:0.5in auto;line-height:1.55;}' +
+            'h1{font-size:18px;}h2{font-size:14px;border-bottom:1px solid #999;padding-bottom:3px;}' +
+            'table{border-collapse:collapse;width:100%;}th,td{border:1px solid #999;padding:5px 8px;font-size:11px;}' +
+            'th{background:#dce6f1;}</style></head><body>' + b.html +
+            '</body></html>');
+        w.document.close(); setTimeout(() => w.print(), 400);
+        logConsole('<span class="c-ok">EXPORT:</span> briefing opened for PDF via the browser print dialog.');
+        return;
+    }
+    saveBlob(wordDoc(b.html), 'cgs_executive_briefing.docx', 'application/msword');
+    logConsole('<span class="c-dim">EXPORT:</span> cgs_executive_briefing.docx written as Word-compatible HTML, ' +
+        'which Word opens and re-saves as a true .docx. The Snowflake createExecutiveBriefing writes a native ' +
+        'file via python-docx; this is the browser equivalent, not the same artefact.');
+}
+
+function renderAsk() {
+    const host = $('askPanel');
+    if (host.dataset.done) return;
+    host.dataset.done = '1';
+    if (!CONFIG.ASK_DMW_ENABLED) { host.innerHTML = '<div class="card"><p>Disabled.</p></div>'; return; }
+    const url = CONFIG.ASK_DMW_URL;
+    host.innerHTML = '<div class="card ask-wrap">' +
+        '<div class="pipe-head"><h2>Ask DMW Agent</h2>' +
+        '<span class="pipe-note">Prototype — embedded Copilot Studio agent</span></div>' +
+        '<div class="ask-note" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+          '<span><strong>Panel blank or showing "This content is blocked"?</strong> The agent’s host ' +
+          'decides whether it may be framed, and this page cannot override that.</span>' +
+          '<button class="btn btn-primary" id="askOpenTab" style="margin-left:auto;">Open in a new tab</button></div>' +
+        '<div class="ask-frame"><iframe id="askFrame" src="' + esc(url) + '" title="Ask DMW Agent" ' +
+        'referrerpolicy="origin-when-cross-origin" allow="microphone; clipboard-write"></iframe></div></div>';
+    $('askOpenTab').addEventListener('click', () => window.open(url, '_blank', 'noopener'));
+}
+
+/* ---- small helpers ---- */
+const avg = a => a.length ? a.reduce((x,y) => x + (Number(y)||0), 0) / a.length : 0;
+const trunc = (v, n) => { const s = (v===null||v===undefined) ? '' : String(v);
+    return s.length > n ? s.slice(0, n) + '…' : s; };
+const kpi = (v, l, cls) => '<div class="kpi ' + (cls||'') + '"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>';
+const stamp = () => { const d = new Date(), p = n => String(n).padStart(2,'0');
+    return '' + p(d.getMonth()+1) + p(d.getDate()) + d.getFullYear() + '_' + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds()); };
+
+function logConsole(html, append) {
+    const el = $('consoleOut');
+    const ts = new Date().toLocaleTimeString('en-US');
+    const line = '<span class="c-dim">[' + ts + ']</span> ' + html;
+    el.innerHTML = (append === false || el.innerHTML === 'Ready.') ? line : el.innerHTML + '\n' + line;
+    el.scrollTop = el.scrollHeight;
+}
+function switchPanel(id) {
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === id));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === id));
+    if (id === 'askPanel') renderAsk();
+    if (id === 'briefPanel') renderBriefingPanel();
+}
+function updatePills() {
+    $('infoRows').textContent = rows.length.toLocaleString('en-US');
+    $('infoCols').textContent = cols.length;
+    $('infoDocket').textContent = (rows[0] && rows[0].docketId) || '—';
+    updateFilteredCount();
+}
+const BUILD_ID = (CONFIG.APP_VERSION || 'v1') + '-' + Date.now().toString(36);
+
+window.addEventListener('DOMContentLoaded', async function () {
+    document.title = CONFIG.APP_NAME + ' v' + CONFIG.APP_VERSION;
+    $('appTitle').textContent = CONFIG.APP_NAME;
+    $('appSubtitle').textContent = CONFIG.APP_SUBTITLE + '   •   no database — reads data/ only   •   version ' + CONFIG.APP_VERSION;
+    $('buildStamp').textContent = BUILD_ID;
+
+    $('sourcePicker').innerHTML = CONFIG.SOURCES.map(s =>
+        '<option value="' + esc(s.key) + '"' + (s.key === CONFIG.DEFAULT_SOURCE ? ' selected' : '') + '>' +
+        esc(s.label) + '</option>').join('');
+
+    Pipeline.reset();
+    renderHome();
+    renderBriefingPanel();
+    Meta.load();
+
+    document.querySelectorAll('.tab-btn').forEach(b =>
+        b.addEventListener('click', () => switchPanel(b.dataset.panel)));
+    document.querySelectorAll('[data-close]').forEach(b =>
+        b.addEventListener('click', () => closeModal(b.dataset.close)));
+    document.querySelectorAll('.modal-overlay').forEach(o =>
+        o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') document.querySelectorAll('.modal-overlay').forEach(o => o.classList.remove('active'));
+    });
+
+    $('nav-about').addEventListener('click', e => { e.preventDefault(); openModal('aboutModal'); });
+    $('nav-help').addEventListener('click',  e => { e.preventDefault(); openModal('helpModal'); });
+    $('runBtn').addEventListener('click', () => Pipeline.run());
+    $('exportBtn').addEventListener('click', exportCSV);
+    $('cacheBtn').addEventListener('click', () => location.reload(true));
+    $('clearFiltersBtn').addEventListener('click', () => { if (gridApi) gridApi.setFilterModel(null); });
+    $('autoSizeBtn').addEventListener('click', () => { if (gridApi) gridApi.sizeColumnsToFit(); });
+    $('quickFilter').addEventListener('input', e => {
+        if (gridApi) gridApi.setGridOption('quickFilterText', e.target.value);
+    });
+
+    /* The stylesheet shows the menu on .active, not .show, and the button's
+       bars morph into an X on .active too. Both classes move together. */
+    const menu = $('hamburgerMenu');
+    const closeHamburger = () => {
+        menu.classList.remove('active');
+        $('hamburgerBtn').classList.remove('active');
+    };
+    $('hamburgerBtn').addEventListener('click', () => {
+        menu.classList.toggle('active');
+        $('hamburgerBtn').classList.toggle('active');
+    });
+    document.addEventListener('click', e => {
+        if (!menu.contains(e.target) && e.target !== $('hamburgerBtn') && !$('hamburgerBtn').contains(e.target))
+            closeHamburger();
+    });
+    $('menuRun').addEventListener('click', e => { e.preventDefault(); closeHamburger(); Pipeline.run(); });
+    $('menuUnstructuredGrid').addEventListener('click', e => { e.preventDefault(); closeHamburger(); openUnstructuredGrid(); });
+    $('menuUnstructuredCsv').addEventListener('click', e => { e.preventDefault(); closeHamburger(); exportUnstructuredCSV(); });
+    $('menuExport').addEventListener('click', e => { e.preventDefault(); closeHamburger(); exportCSV(); });
+    $('menuBrief').addEventListener('click', e => { e.preventDefault(); closeHamburger(); switchPanel('briefPanel'); });
+
+    logConsole('<span class="c-ok">READY:</span> ' + esc(CONFIG.APP_NAME) + '\n' +
+        'Build   : ' + BUILD_ID + '\n' +
+        'Sources : ' + CONFIG.SOURCES.map(s => s.file).join(', ') + '\n' +
+        'Database: none — this page reads static files only.\n\n' +
+        'Press "Run Pipeline" to start. Each stage card lights up as it runs; click a finished card to see its output.', false);
+});
+</script>
+</body>
+</html>

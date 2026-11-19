@@ -1,0 +1,2708 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+  DMW - Data Mart Workbench  (v1.0Beta)
+  Refactor of v1.6 to support API-based data retrieval in addition to
+  file-based JSON mapping.
+--------------------------------------------------------------------------------
+  CHANGES IN THIS VERSION
+  -----------------------
+  1. STEP 2 (DATA_CONFIG) is now the single source of truth for both
+     `baseFileURL` (static JSON files in v3/data) and `baseAPIURL`
+     (SAS Stored Process endpoint). The `Mapping` block links each
+     dataset key from STEP 1 (the dropdown) to either:
+        - a *.json filename (when STEP 3 dmsrc_type === 'file'), or
+        - the SAS stored-process program name (when dmsrc_type === 'db').
+
+  2. STEP 3 (datasets) drives routing via `dmsrc_type`:
+        - 'file' -> fetch JSON from  baseFileURL + Mapping[dataset]
+        - 'db'   -> call             baseAPIURL + Mapping[dataset]
+                                     + '&dmq_query=' + encodeURIComponent(SQL)
+       Example for TOP5_DCN_API:
+         https://cgssaswebu.a70admed.com/SASStoredProcess/do
+            ?_program=/User%20Folders/731o/My%20Folder/dmq_explicit_chatgpt_v5
+            &dmq_query=SELECT%20TOP%205%20DCN%2C%20ProvId%20FROM%20tblClaims
+
+  3. Both "Export to CSV" and "View Grid" now route through the same
+     fetchData() pathway, so either source ('file' or 'db') produces the
+     same downstream JSON -> CSV / AG Grid behavior.
+
+  4. Backward compatible: existing 'file' datasets
+     (DME_PALS_ANALYSIS, PA_KY_tblClaims) continue to work unchanged.
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DMW - Data Mart Workbench v1.0Beta</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f0f0;
+            min-height: 100vh;
+            padding: 10px;
+            font-size: 11px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            text-align: left;
+            border-bottom: 2px solid #3a6b97;
+            position: relative;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            margin-bottom: 0;
+            font-weight: 600;
+        }
+
+        .header p {
+            font-size: 11px;
+            opacity: 0.95;
+            margin-top: 3px;
+        }
+
+        .top-nav {
+            position: absolute;
+            top: 15px;
+            right: 70px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .top-nav a {
+            color: white;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 5px 10px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .top-nav a:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        #nav-welcome {
+            color: #d4f5d4;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 5px 10px;
+            display: none;
+        }
+
+        .sas-footer {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            padding: 0.5rem 1.5rem;
+            border-top: 1px solid #ddd;
+            background: #f8f8f8;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
+            z-index: 50;
+        }
+        .sas-footer .session-indicator {
+            display: flex; align-items: center; gap: 0.4rem;
+        }
+        .sas-footer .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #bbb; flex-shrink: 0;
+        }
+        .sas-footer .dot.active {
+            background: #22c55e;
+            animation: sasPulse 2s ease-in-out infinite;
+        }
+        @keyframes sasPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        #footer-signout {
+            color: #cc0000;
+            text-decoration: none;
+            display: none;
+        }
+        #footer-signout:hover { text-decoration: underline; }
+        body { padding-bottom: 36px; }
+
+        .hamburger-container {
+            position: absolute;
+            top: 15px;
+            right: 20px;
+        }
+
+        .hamburger {
+            width: 30px;
+            height: 30px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 4px;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .hamburger:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .hamburger span {
+            display: block;
+            width: 20px;
+            height: 2px;
+            background: white;
+            transition: all 0.3s;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(5px, -5px);
+        }
+
+        .dropdown-menu {
+            position: absolute;
+            top: 50px;
+            right: 20px;
+            background: white;
+            border: 1px solid #c0c0c0;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            min-width: 200px;
+            display: none;
+            z-index: 1000;
+        }
+
+        .dropdown-menu.active {
+            display: block;
+        }
+
+        .dropdown-menu a {
+            display: block;
+            padding: 12px 20px;
+            color: #333;
+            text-decoration: none;
+            font-size: 11px;
+            font-weight: 600;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s;
+        }
+
+        .dropdown-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .dropdown-menu a:hover {
+            background: #f8f8f8;
+        }
+
+        .dropdown-menu a.grid-item {
+            color: #5cb85c;
+        }
+
+        .dropdown-menu a.dashboard-item {
+            color: #4a7ba7;
+        }
+
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+            width: 30px;
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .modal-close:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .modal-body {
+            padding: 20px;
+            font-size: 12px;
+            line-height: 1.6;
+            color: #333;
+        }
+
+        .modal-body p {
+            margin-bottom: 12px;
+        }
+
+        .modal-body a {
+            color: #4a7ba7;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .modal-body a:hover {
+            text-decoration: underline;
+        }
+
+        .main-content {
+            padding: 15px;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            background: white;
+            border-radius: 0;
+            padding: 15px;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .section-title {
+            font-size: 13px;
+            color: #333;
+            margin-bottom: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+
+        .section-title::before {
+            content: '';
+            width: 3px;
+            height: 18px;
+            background: #4a7ba7;
+            margin-right: 10px;
+            border-radius: 0;
+        }
+
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-weight: 600;
+            font-size: 11px;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #c0c0c0;
+            border-radius: 2px;
+            font-size: 11px;
+            transition: all 0.2s ease;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        select:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #4a7ba7;
+            box-shadow: 0 0 0 1px #4a7ba7;
+        }
+
+        .dual-listbox-container {
+            display: flex;
+            gap: 20px;
+            align-items: stretch;
+            margin-top: 15px;
+        }
+
+        .listbox-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .listbox-header {
+            background: #e8f0f8;
+            border: 1px solid #c0c0c0;
+            border-bottom: 1px solid #c0c0c0;
+            border-radius: 0;
+            padding: 6px 10px;
+            font-weight: 600;
+            color: #333;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .listbox {
+            border: 1px solid #c0c0c0;
+            border-top: none;
+            border-radius: 0;
+            height: 180px;
+            overflow-y: auto;
+            background: white;
+        }
+
+        .listbox select {
+            width: 100%;
+            height: 100%;
+            border: none;
+            padding: 4px;
+            font-size: 11px;
+            background: transparent;
+        }
+
+        .listbox select:focus {
+            outline: none;
+        }
+
+        .listbox option {
+            padding: 4px 8px;
+            border-bottom: 1px solid #f5f5f5;
+            cursor: pointer;
+        }
+
+        .listbox option:hover {
+            background: #e8f0f8;
+        }
+
+        .control-buttons {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 10px;
+            padding: 0 10px;
+        }
+
+        .control-btn {
+            background: #5a8ab8;
+            color: white;
+            border: 1px solid #4a7ba7;
+            border-radius: 2px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+            min-width: 50px;
+        }
+
+        .control-btn:hover {
+            background: #4a7ba7;
+        }
+
+        .control-btn:active {
+            background: #3a6b97;
+        }
+
+        .control-btn.secondary {
+            background: #888;
+            border-color: #777;
+        }
+
+        .control-btn.secondary:hover {
+            background: #777;
+        }
+
+        .column-info {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 10px;
+            margin-top: 12px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .column-info h4 {
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+
+        .column-types {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .column-type-badge {
+            background: #e8f0f8;
+            color: #333;
+            padding: 3px 6px;
+            border-radius: 2px;
+            font-size: 10px;
+            font-weight: 500;
+            border: 1px solid #c0c0c0;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .column-type-badge.numeric {
+            background: #dae8fc;
+            color: #2a5298;
+            border-color: #b0c8e8;
+        }
+
+        .column-type-badge.character {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-color: #c8e6c9;
+        }
+
+        .column-type-badge.date {
+            background: #fff3e0;
+            color: #e65100;
+            border-color: #ffe0b2;
+        }
+
+        /* Metadata Icon Styles */
+        .metadata-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            font-size: 9px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-left: 3px;
+            flex-shrink: 0;
+        }
+
+        .metadata-icon.has-metadata {
+            background: #2196F3;
+            color: white;
+        }
+
+        .metadata-icon.has-metadata:hover {
+            background: #1976D2;
+            transform: scale(1.1);
+        }
+
+        .metadata-icon.no-metadata {
+            background: #9e9e9e;
+            color: white;
+        }
+
+        .metadata-icon.no-metadata:hover {
+            background: #757575;
+            transform: scale(1.1);
+        }
+
+        /* Metadata Popup Modal */
+        .metadata-popup-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .metadata-popup-overlay.active {
+            display: flex;
+        }
+
+        .metadata-popup {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            max-width: 450px;
+            width: 90%;
+            overflow: hidden;
+            animation: popupSlideIn 0.2s ease-out;
+        }
+
+        @keyframes popupSlideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .metadata-popup-header {
+            background: #4a7ba7;
+            color: white;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .metadata-popup-header h3 {
+            font-size: 13px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .metadata-popup-header .column-name {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-left: 8px;
+        }
+
+        .metadata-popup-close {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 20px;
+            cursor: pointer;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 3px;
+            transition: background 0.2s;
+        }
+
+        .metadata-popup-close:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .metadata-popup-body {
+            padding: 16px;
+        }
+
+        .metadata-field {
+            margin-bottom: 12px;
+        }
+
+        .metadata-field:last-child {
+            margin-bottom: 0;
+        }
+
+        .metadata-field-label {
+            font-size: 10px;
+            color: #666;
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .metadata-field-value {
+            font-size: 12px;
+            color: #333;
+            line-height: 1.5;
+            padding: 8px 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+            border-left: 3px solid #4a7ba7;
+        }
+
+        .metadata-field-value.no-data {
+            color: #999;
+            font-style: italic;
+            border-left-color: #ccc;
+        }
+
+        /* Long Description text area with a vertical scrollbar */
+        textarea.metadata-long-desc {
+            width: 100%;
+            min-height: 90px;
+            max-height: 160px;
+            resize: vertical;
+            overflow-y: scroll;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            box-sizing: border-box;
+        }
+
+        .distinct-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .distinct-option input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #4a7ba7;
+        }
+
+        .distinct-option label {
+            margin: 0;
+            cursor: pointer;
+            font-weight: 600;
+            color: #333;
+            font-size: 11px;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4a7ba7;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+        }
+
+        .info-icon:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 25px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: #2b2b2b;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 2px;
+            font-size: 11px;
+            font-weight: normal;
+            white-space: normal;
+            width: 300px;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            line-height: 1.4;
+            border: 1px solid #404040;
+        }
+
+        .info-icon:hover::before {
+            content: '';
+            position: absolute;
+            left: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: #2b2b2b;
+            z-index: 1001;
+        }
+
+        .filters-container {
+            background: #f8f8f8;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 10px;
+            border: 1px solid #d0d0d0;
+        }
+
+        .filter-row {
+            display: grid;
+            grid-template-columns: 200px 120px 200px 60px;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 10px;
+            padding: 10px;
+            background: white;
+            border-radius: 0;
+            box-shadow: none;
+            border: 1px solid #d0d0d0;
+        }
+
+        .btn {
+            padding: 6px 16px;
+            border: 1px solid;
+            border-radius: 2px;
+            cursor: pointer;
+            font-size: 11px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: #5a8ab8;
+            color: white;
+            border-color: #4a7ba7;
+        }
+
+        .btn-primary:hover {
+            background: #4a7ba7;
+        }
+
+        .btn-secondary {
+            background: #888;
+            color: white;
+            border-color: #777;
+        }
+
+        .btn-secondary:hover {
+            background: #777;
+        }
+
+        .btn-danger {
+            background: #d9534f;
+            color: white;
+            border-color: #d43f3a;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        .btn-danger:hover {
+            background: #c9302c;
+        }
+
+        .btn-grid {
+            background: #5cb85c;
+            color: white;
+            border-color: #4cae4c;
+        }
+
+        .btn-grid:hover {
+            background: #449d44;
+        }
+
+        .actions {
+            text-align: center;
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f8f8;
+            border-radius: 0;
+            border: 1px solid #d0d0d0;
+        }
+
+        .actions .btn {
+            margin: 0 5px;
+            min-width: 120px;
+        }
+
+        .preview-section {
+            background: #2b2b2b;
+            color: #e0e0e0;
+            border-radius: 0;
+            padding: 12px;
+            margin-top: 12px;
+            border: 1px solid #404040;
+        }
+
+        .preview-section h3 {
+            color: #f0f0f0;
+            margin-bottom: 10px;
+            font-size: 12px;
+        }
+
+        .preview-tab {
+            background: transparent;
+            color: #e0e0e0;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 8px 16px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s ease;
+        }
+
+        .preview-tab:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .preview-tab.active {
+            color: #ffffff;
+            border-bottom-color: #4a7ba7;
+        }
+
+        .code-preview {
+            background: #1e1e1e;
+            padding: 10px;
+            border-radius: 0;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            overflow-x: auto;
+            border: 1px solid #404040;
+        }
+
+        .highlight {
+            color: #569cd6;
+        }
+
+        .keyword {
+            color: #c586c0;
+        }
+
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #4a7ba7;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: white;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .top-nav {
+                right: 60px;
+                gap: 10px;
+            }
+
+            .filter-row {
+                grid-template-columns: 1fr;
+            }
+
+            .actions .btn {
+                display: block;
+                margin: 10px 0;
+                width: 100%;
+            }
+
+            .dual-listbox-container {
+                flex-direction: column;
+            }
+           
+            .control-buttons {
+                flex-direction: row;
+                justify-content: center;
+                padding: 10px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Processing your request...</div>
+    </div>
+
+    <!-- Metadata Popup Modal -->
+    <div class="metadata-popup-overlay" id="metadataPopup">
+        <div class="metadata-popup">
+            <div class="metadata-popup-header">
+                <div style="display: flex; align-items: center;">
+                    <h3>Column Metadata</h3>
+                    <span class="column-name" id="metadataColumnName"></span>
+                </div>
+                <button class="metadata-popup-close" onclick="closeMetadataPopup()">&times;</button>
+            </div>
+            <div class="metadata-popup-body">
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Logical Column Name</div>
+                    <div class="metadata-field-value" id="metadataLogicalColumn"></div>
+                </div>
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Physical / Table Column Name</div>
+                    <div class="metadata-field-value" id="metadataTableColumn"></div>
+                </div>
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Description</div>
+                    <div class="metadata-field-value" id="metadataDescription"></div>
+                </div>
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Long Description</div>
+                    <textarea class="metadata-field-value metadata-long-desc" id="metadataLongDescription" readonly></textarea>
+                </div>
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Load Frequency</div>
+                    <div class="metadata-field-value" id="metadataLoadFrequency"></div>
+                </div>
+                <div class="metadata-field">
+                    <div class="metadata-field-label">Line of Business (LOB)</div>
+                    <div class="metadata-field-value" id="metadataLOB"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="aboutModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>About DMW Data Mart Workbench</h2>
+                <button class="modal-close" onclick="closeModal('aboutModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>The DMW - Data Mart Workbench v1.0Beta is a tool that supports both file-based and API-based data sources. It allows users to visually select datasets, choose columns, apply filters, and generate production-ready queries.</p>
+                <p>The Workbench supports direct API integration for real-time data retrieval from database sources alongside traditional JSON file support.</p>
+                <p>Built with efficiency and ease of use in mind, enabling rapid data exploration and analysis across multiple data sources.</p>
+                <hr style="border:none; border-top:1px solid #e0e0e0; margin:16px 0;">
+                <p style="font-size:11px; color:#666;"><strong>Important notices</strong></p>
+                <p style="font-size:11px; color:#666;">Long descriptions in the column metadata are AI-generated and are provided for guidance only. They should be independently verified with the relevant business owners, and the complete data governance process for this content remains to be defined (TBD).</p>
+                <p style="font-size:11px; color:#666;">The DMW is modeled on the CMS Episode Workbench &mdash; the analytic tool and development platform used to construct, test, and analyze Episode-Based Cost Measures and Episode Payment Models.</p>
+                <p style="font-size:11px; color:#666;">The SynPUF data used in this Workbench is based on the CMS Medicare Claims Synthetic Public Use Files (SynPUF), available at <a href="https://www.cms.gov/data-research/statistics-trends-and-reports/medicare-claims-synthetic-public-use-files" target="_blank" rel="noopener noreferrer">cms.gov</a>.</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="helpModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Help & Support</h2>
+                <button class="modal-close" onclick="closeModal('helpModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Thank you for using the DMW - Data Mart Workbench v1.0Beta. This version supports both file-based and API-based data sources.</p>
+                <p>If you encounter any issues, have questions, or would like to suggest improvements, please reach out.</p>
+                <p><strong>Contact:</strong> <a href="mailto:manuel.figallo@cgsadmin.com">manuel.figallo@cgsadmin.com</a></p>
+                <p>I typically respond within one business day. Looking forward to hearing from you!</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="header">
+            <h1>DMW - Data Mart Workbench v1.0Beta</h1>
+            <p>Build complex queries with file and API data sources</p>
+            
+            <div class="top-nav">
+                <a id="nav-logon" href="#" onclick="handleLogon(event); return false;">Logon</a>
+                <span id="nav-welcome"></span>
+                <a href="#" onclick="openModal('aboutModal'); return false;">About</a>
+                <a href="#" onclick="openModal('helpModal'); return false;">Help</a>
+            </div>
+
+            <div class="hamburger-container">
+                <button class="hamburger" id="hamburgerBtn" onclick="toggleMenu()">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </button>
+                <div class="dropdown-menu" id="dropdownMenu">
+                    <a href="#" class="grid-item" onclick="viewGrid(); closeMenu(); return false;">View Table</a>
+                    <a href="#" class="dashboard-item" onclick="generateDashboard(); closeMenu(); return false;">Generate Dashboard</a>
+                    <div id="advancedMenuSection" style="display:none;">
+                        <div style="padding:8px 20px; font-size:10px; font-weight:700; text-transform:uppercase; color:#888; background:#f4f4f4; border-top:1px solid #e0e0e0; border-bottom:1px solid #f0f0f0; letter-spacing:0.5px;">Advanced</div>
+                        <a href="#" id="advancedExecuteQueryLink" onclick="openExecuteQueryWindow(); closeMenu(); return false;" style="color:#8e44ad;">Execute SQL</a>
+                        <div style="padding:6px 20px 4px; font-size:10px; font-weight:700; text-transform:uppercase; color:#aaa; letter-spacing:0.5px;">Reports</div>
+                        <div id="advancedReportsList">
+                            <div id="advancedReportsEmpty" style="padding:6px 20px 10px; font-size:12px; color:#999; font-style:italic;">No reports available</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="section">
+                <h2 class="section-title">Dataset Selection</h2>
+                <div class="form-group">
+                    <label for="dataset">Choose Dataset:</label>
+                    <!-- ========================================
+                         STEP 1. CONFIGURE HERE: Dataset Dropdown Options
+                         Add new datasets with descriptive labels
+                         ======================================== -->
+                    <select id="dataset" onchange="updateColumns()">
+                        <option value="">Select a dataset...</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="section" id="querySectionWrapper" style="display: none;">
+                <h2 class="section-title">Query Selection</h2>
+                <div class="form-group">
+                    <label for="querySelect">Choose a saved query or start new:</label>
+                    <select id="querySelect" onchange="onQuerySelectChange()" disabled>
+                        <option value="">— Select a dataset first —</option>
+                    </select>
+                </div>
+                <div id="saveQueryControls" style="display: none; margin-top: 12px; padding: 10px; background: #f8f8f8; border: 1px solid #d0d0d0;">
+                    <label for="queryNameInput" style="font-weight: 600; font-size: 11px;">Query Name:</label>
+                    <div style="display: flex; gap: 8px; margin-top: 5px;">
+                        <input type="text" id="queryNameInput" placeholder="Enter a name for this query..." style="flex: 1;">
+                        <button class="btn btn-primary" onclick="saveCurrentQuery()">Save Query</button>
+                        <button class="btn btn-danger" id="deleteQueryBtn" style="display:none;" onclick="deleteCurrentQuery()">Delete Query</button>
+                    </div>
+                    <div id="saveQueryFeedback" style="margin-top: 6px; font-size: 11px; color: #555;"></div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">Column Selection</h2>
+                <p style="margin-bottom: 15px; color: #666;">Select the columns you want to include in your output:</p>
+               
+                <div class="dual-listbox-container">
+                    <div class="listbox-column">
+                        <div class="listbox-header">Available Columns</div>
+                        <div class="listbox">
+                            <select id="availableColumns" multiple size="10">
+                                <option disabled style="text-align: center; color: #999;">Please select a dataset first</option>
+                            </select>
+                        </div>
+                    </div>
+                   
+                    <div class="control-buttons">
+                        <button class="control-btn" onclick="moveToSelected()">&gt;</button>
+                        <button class="control-btn" onclick="moveAllToSelected()">&gt;&gt;</button>
+                        <button class="control-btn secondary" onclick="moveToAvailable()">&lt;</button>
+                        <button class="control-btn secondary" onclick="moveAllToAvailable()">&lt;&lt;</button>
+                    </div>
+                   
+                    <div class="listbox-column">
+                        <div class="listbox-header">Selected Columns</div>
+                        <div class="listbox">
+                            <select id="selectedColumns" multiple size="10">
+                                <option disabled style="text-align: center; color: #999;">No columns selected</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+               
+                <div id="columnInfo" class="column-info" style="display: none;">
+                    <h4>Selected Column Information</h4>
+                    <div id="columnTypes" class="column-types"></div>
+                </div>
+
+                <div class="distinct-option">
+                    <input type="checkbox" id="distinctCheckbox" onchange="updatePreview()">
+                    <label for="distinctCheckbox">Use DISTINCT</label>
+                    <span class="info-icon" data-tooltip="The DISTINCT keyword eliminates duplicate rows from the result set.">i</span>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">Filters (WHERE Conditions)</h2>
+                <p style="margin-bottom: 15px; color: #666;">Add conditions to filter your data:</p>
+                <div class="filters-container">
+                    <div id="filtersContainer">
+                        <p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>
+                    </div>
+                    <button class="btn btn-secondary" onclick="addFilter()" style="margin-top: 15px;">Add Filter</button>
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="preview-section">
+                    <div style="display: flex; gap: 15px; margin-bottom: 15px; border-bottom: 2px solid #404040; padding-bottom: 5px;">
+                        <button class="preview-tab active" id="sqlTab" onclick="switchPreviewTab('sql')">
+                            Generated SQL Preview
+                        </button>
+                        <button class="preview-tab" id="pythonTab" onclick="switchPreviewTab('python')">
+                            Generated Python Preview
+                        </button>
+                        <button class="preview-tab" id="sasTab" onclick="switchPreviewTab('sas')">
+                            Generated SAS Code Preview
+                        </button>
+                    </div>
+                    <div class="code-preview" id="sqlPreview">
+                        Select a dataset and columns to see the generated SQL query...
+                    </div>
+                    <div class="code-preview" id="pythonPreview" style="display: none;">
+                        Select a dataset and columns to see the generated Python code...
+                    </div>
+                    <div class="code-preview" id="sasPreview" style="display: none;">
+                        Select a dataset and columns to see the generated SAS code...
+                    </div>
+                </div>
+
+                <!-- API URL Preview: visible only for db datasets so the user
+                     can verify the exact endpoint that Export/View Grid will hit. -->
+                <div id="apiUrlPreviewWrap" style="display:none; margin-top:15px;">
+                    <div style="font-weight:600; margin-bottom:6px; font-size:13px; color:#374151;">
+                        API URL to be called (db source)
+                    </div>
+                    <div id="apiUrlPreview"
+                         style="font-family:monospace; font-size:12px; word-break:break-all;
+                                background:#f3f4f6; border:1px solid #e5e7eb; border-radius:6px;
+                                padding:10px; color:#111827;">
+                        Select a db dataset and columns to see the API URL...
+                    </div>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-grid" onclick="viewGrid()">View Table</button>
+                <button class="btn btn-primary" onclick="generateDashboard()">Generate Dashboard</button>
+                <button class="btn btn-primary" onclick="visualizeData()">Visualize Data</button>
+                <button class="btn btn-secondary" onclick="exportCSV()">Export to CSV</button>
+                <button class="btn btn-secondary" onclick="resetForm()">Reset Form</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+    <script>
+        // ==========================================
+        // METADATA CONFIGURATION - Loaded from External CSV
+        // ==========================================
+        let columnMetadata = [];
+        let metadataMap = {};
+        let metadataLoaded = false;
+
+        // CSV file path (relative to HTML file location)
+        const METADATA_CSV_PATH = 'column_metadata.csv';
+
+        // RFC 4180-style CSV parser: handles quoted fields that contain
+        // commas, embedded newlines, and escaped double-quotes ("").
+        function parseCSV(csvText) {
+            const text = csvText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+            const records = [];
+            let field = '';
+            let record = [];
+            let inQuotes = false;
+
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                if (inQuotes) {
+                    if (ch === '"') {
+                        if (text[i + 1] === '"') { field += '"'; i++; }
+                        else { inQuotes = false; }
+                    } else {
+                        field += ch;
+                    }
+                } else if (ch === '"') {
+                    inQuotes = true;
+                } else if (ch === ',') {
+                    record.push(field); field = '';
+                } else if (ch === '\n') {
+                    record.push(field); field = '';
+                    records.push(record); record = [];
+                } else {
+                    field += ch;
+                }
+            }
+            // flush the trailing field/record (file may not end in newline)
+            if (field.length > 0 || record.length > 0) {
+                record.push(field);
+                records.push(record);
+            }
+
+            if (records.length < 2) return [];
+            const headers = records[0].map(h => h.trim());
+            const data = [];
+            for (let r = 1; r < records.length; r++) {
+                const values = records[r];
+                // skip fully blank trailing rows
+                if (values.length === 1 && values[0].trim() === '') continue;
+                const row = {};
+                headers.forEach((header, index) => {
+                    row[header] = (values[index] !== undefined ? values[index] : '').trim();
+                });
+                data.push(row);
+            }
+            return data;
+        }
+
+        // Function to load metadata from external CSV file
+        async function loadMetadataFromCSV() {
+            try {
+                const response = await fetch(METADATA_CSV_PATH);
+                if (!response.ok) {
+                    throw new Error('Failed to load metadata CSV: ' + response.status);
+                }
+                const csvText = await response.text();
+                columnMetadata = parseCSV(csvText);
+                
+                // Build the lookup map
+                metadataMap = {};
+                columnMetadata.forEach(meta => {
+                    metadataMap[meta.PHYSICAL_COLUMN_NAME.toUpperCase()] = meta;
+                });
+                
+                metadataLoaded = true;
+                console.log('Metadata loaded successfully:', columnMetadata.length, 'entries');
+                
+                // Refresh column info display if columns are already selected
+                updateColumnInfo();
+                
+            } catch (error) {
+                console.error('Error loading metadata CSV:', error);
+                // Fallback: metadata will remain empty, columns will show "No metadata available"
+                metadataLoaded = true;
+            }
+        }
+
+        // ==========================================
+        // External configuration loader
+        // ==========================================
+        function getProfileBasePath() {
+            try {
+                const stored = localStorage.getItem('sas_session');
+                const sess = stored ? JSON.parse(stored) : null;
+                if (sess && sess.authenticated && sess.userid) {
+                    return 'meta/profiles/' + encodeURIComponent(sess.userid) + '/';
+                }
+            } catch (e) { /* fall through to default */ }
+            return 'meta/profiles/default/';
+        }
+
+        function showConfigError(msg) {
+            let banner = document.getElementById('config-error-banner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'config-error-banner';
+                banner.style.cssText = 'background:#c0392b;color:#fff;padding:10px 16px;font-weight:bold;text-align:center;position:sticky;top:0;z-index:9999;';
+                document.body.insertBefore(banner, document.body.firstChild);
+            }
+            banner.textContent = msg;
+        }
+
+        async function loadConfig() {
+            const base = getProfileBasePath();
+            const tryFetch = async (path) => {
+                let r = await fetch(base + path);
+                if (!r.ok && base !== 'meta/profiles/default/') {
+                    // fallback to default if userid profile missing
+                    r = await fetch('meta/profiles/default/' + path);
+                }
+                if (!r.ok) throw new Error('Failed to load ' + path + ' (' + r.status + ')');
+                return r.json();
+            };
+            const [dataCfg, datasetsCfg, sasCfg] = await Promise.all([
+                tryFetch('data_config.json'),
+                tryFetch('datasets.json'),
+                tryFetch('sas_config.json')
+            ]);
+            window.DATA_CONFIG = dataCfg;
+            window.datasets = datasetsCfg;
+            window.SAS_CONFIG = Object.assign({}, sasCfg, {
+                portalUrl: window.location.origin + window.location.pathname
+            });
+        }
+
+        function initDatasetDropdown() {
+            const sel = document.getElementById('dataset');
+            if (!sel || !window.datasets) return;
+            // Preserve the placeholder, clear any others
+            sel.innerHTML = '<option value="">Select a dataset...</option>';
+            Object.keys(window.datasets).forEach(key => {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = key;
+                sel.appendChild(opt);
+            });
+        }
+
+        // Load configs + metadata when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                await loadConfig();
+                initDatasetDropdown();
+            } catch (err) {
+                console.error('Config load error:', err);
+                showConfigError('Configuration failed to load. Check console for details.');
+            }
+            await loadMetadataFromCSV();
+        });
+
+        // Function to get metadata for a column
+        function getColumnMetadata(columnName) {
+            return metadataMap[columnName.toUpperCase()] || null;
+        }
+
+        // Function to check if column has metadata
+        function hasMetadata(columnName) {
+            return metadataMap[columnName.toUpperCase()] !== undefined;
+        }
+
+        // Function to show metadata popup
+        function showMetadataPopup(columnName) {
+            const metadata = getColumnMetadata(columnName);
+            const popup = document.getElementById('metadataPopup');
+            const columnNameEl = document.getElementById('metadataColumnName');
+            const logicalColumnEl = document.getElementById('metadataLogicalColumn');
+            const tableColumnEl = document.getElementById('metadataTableColumn');
+            const descriptionEl = document.getElementById('metadataDescription');
+            const longDescEl = document.getElementById('metadataLongDescription');
+            const loadFreqEl = document.getElementById('metadataLoadFrequency');
+            const lobEl = document.getElementById('metadataLOB');
+
+            columnNameEl.textContent = columnName;
+
+            if (metadata) {
+                logicalColumnEl.textContent = metadata.LOGICAL_COLUMN_NAME || '—';
+                logicalColumnEl.classList.remove('no-data');
+
+                tableColumnEl.textContent = metadata.TABLE_COLUMN_NAME;
+                tableColumnEl.classList.remove('no-data');
+
+                descriptionEl.textContent = metadata.DESCRIPTION;
+                descriptionEl.classList.remove('no-data');
+
+                longDescEl.value = metadata.LONG_DESCRIPTION || 'No long description available';
+                longDescEl.classList.remove('no-data');
+
+                loadFreqEl.textContent = metadata.LOAD_FREQUENCY || '—';
+                loadFreqEl.classList.remove('no-data');
+
+                lobEl.textContent = metadata.LOB;
+                lobEl.classList.remove('no-data');
+            } else {
+                logicalColumnEl.textContent = 'No metadata available';
+                logicalColumnEl.classList.add('no-data');
+
+                tableColumnEl.textContent = 'No metadata available';
+                tableColumnEl.classList.add('no-data');
+
+                descriptionEl.textContent = 'No metadata available';
+                descriptionEl.classList.add('no-data');
+
+                longDescEl.value = 'No metadata available';
+                longDescEl.classList.add('no-data');
+
+                loadFreqEl.textContent = 'No metadata available';
+                loadFreqEl.classList.add('no-data');
+
+                lobEl.textContent = 'No metadata available';
+                lobEl.classList.add('no-data');
+            }
+
+            popup.classList.add('active');
+        }
+
+        // Function to close metadata popup
+        function closeMetadataPopup() {
+            document.getElementById('metadataPopup').classList.remove('active');
+        }
+
+        // Close popup when clicking outside
+        document.addEventListener('click', function(event) {
+            const popup = document.getElementById('metadataPopup');
+            const popupContent = popup.querySelector('.metadata-popup');
+            
+            if (popup.classList.contains('active') &&
+                !popupContent.contains(event.target) &&
+                !event.target.classList.contains('metadata-icon')) {
+                closeMetadataPopup();
+            }
+        });
+
+        // Close popup on Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeMetadataPopup();
+            }
+        });
+
+        /* ========================================
+           STEP 2 & 3. Data Source Configuration + Dataset Metadata
+           Now loaded dynamically from:
+             meta/profiles/<userid>/data_config.json
+             meta/profiles/<userid>/datasets.json
+           Falls back to meta/profiles/default/ when not logged in.
+           Accessed via window.DATA_CONFIG and window.datasets.
+           ======================================== */
+        // No local declarations — bare references (DATA_CONFIG, datasets, SAS_CONFIG)
+        // resolve to the matching window.* properties set by loadConfig().
+
+        let filterCount = 0;
+
+        function toggleMenu() {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            menu.classList.toggle('active');
+            btn.classList.toggle('active');
+        }
+
+        function closeMenu() {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            menu.classList.remove('active');
+            btn.classList.remove('active');
+        }
+
+        function openModal(modalId) {
+            document.getElementById(modalId).classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        document.addEventListener('click', function(event) {
+            const menu = document.getElementById('dropdownMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (!menu.contains(event.target) && !btn.contains(event.target)) {
+                closeMenu();
+            }
+        });
+
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function(event) {
+                if (event.target === this) {
+                    this.classList.remove('active');
+                }
+            });
+        });
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeMenu();
+                document.querySelectorAll('.modal-overlay').forEach(overlay => {
+                    overlay.classList.remove('active');
+                });
+            }
+        });
+
+        function updateColumns() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+            const availableColumns = document.getElementById('availableColumns');
+            const selectedColumns = document.getElementById('selectedColumns');
+            const columnInfo = document.getElementById('columnInfo');
+           
+            availableColumns.innerHTML = '';
+            selectedColumns.innerHTML = '<option disabled style="text-align: center; color: #999;">No columns selected</option>';
+           
+            if (!selectedDataset) {
+                availableColumns.innerHTML = '<option disabled style="text-align: center; color: #999;">Please select a dataset first</option>';
+                columnInfo.style.display = 'none';
+                return;
+            }
+
+            const dataset = datasets[selectedDataset];
+           
+            dataset.columns.forEach(column => {
+                const option = document.createElement('option');
+                option.value = column;
+                option.textContent = column + ' (' + dataset.types[column] + ')';
+                option.dataset.type = dataset.types[column];
+                availableColumns.appendChild(option);
+            });
+           
+            columnInfo.style.display = 'block';
+            updateColumnInfo();
+           
+            document.getElementById('filtersContainer').innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>';
+            filterCount = 0;
+           
+            updatePreview();
+
+            // Trigger Query Selection refresh when a dataset is picked
+            if (window.session && window.session.authenticated) {
+                onDatasetSelectedForQueries(selectedDataset);
+            } else {
+                resetQuerySection();
+            }
+        }
+
+        function moveToSelected() {
+            const availableColumns = document.getElementById('availableColumns');
+            const selectedColumns = document.getElementById('selectedColumns');
+           
+            const placeholder = selectedColumns.querySelector('option[disabled]');
+            if (placeholder) placeholder.remove();
+           
+            const selectedOptions = Array.from(availableColumns.selectedOptions);
+            selectedOptions.forEach(option => {
+                selectedColumns.appendChild(option);
+            });
+           
+            updateColumnInfo();
+            updatePreview();
+        }
+
+        function moveAllToSelected() {
+            const availableColumns = document.getElementById('availableColumns');
+            const selectedColumns = document.getElementById('selectedColumns');
+           
+            const placeholder = selectedColumns.querySelector('option[disabled]');
+            if (placeholder) placeholder.remove();
+           
+            Array.from(availableColumns.options).forEach(option => {
+                if (!option.disabled) {
+                    selectedColumns.appendChild(option);
+                }
+            });
+           
+            updateColumnInfo();
+            updatePreview();
+        }
+
+        function moveToAvailable() {
+            const availableColumns = document.getElementById('availableColumns');
+            const selectedColumns = document.getElementById('selectedColumns');
+           
+            const selectedOptions = Array.from(selectedColumns.selectedOptions);
+            selectedOptions.forEach(option => {
+                if (!option.disabled) {
+                    availableColumns.appendChild(option);
+                }
+            });
+           
+            if (selectedColumns.options.length === 0) {
+                selectedColumns.innerHTML = '<option disabled style="text-align: center; color: #999;">No columns selected</option>';
+            }
+           
+            updateColumnInfo();
+            updatePreview();
+        }
+
+        function moveAllToAvailable() {
+            const availableColumns = document.getElementById('availableColumns');
+            const selectedColumns = document.getElementById('selectedColumns');
+           
+            Array.from(selectedColumns.options).forEach(option => {
+                if (!option.disabled) {
+                    availableColumns.appendChild(option);
+                }
+            });
+           
+            selectedColumns.innerHTML = '<option disabled style="text-align: center; color: #999;">No columns selected</option>';
+           
+            updateColumnInfo();
+            updatePreview();
+        }
+
+        function getSelectedColumnsList() {
+            const selectedColumns = document.getElementById('selectedColumns');
+            return Array.from(selectedColumns.options)
+                .filter(option => !option.disabled)
+                .map(option => option.value);
+        }
+
+        // Updated function to include metadata icons
+        function updateColumnInfo() {
+            const selectedDataset = document.getElementById('dataset').value;
+            const columnTypes = document.getElementById('columnTypes');
+           
+            if (!selectedDataset) {
+                columnTypes.innerHTML = '';
+                return;
+            }
+
+            const dataset = datasets[selectedDataset];
+            const selectedColumnsList = getSelectedColumnsList();
+           
+            if (selectedColumnsList.length === 0) {
+                columnTypes.innerHTML = '<p style="color: #666; font-size: 11px; margin: 0;">No columns selected</p>';
+                return;
+            }
+
+            let html = '<p style="color: #666; font-size: 11px; margin: 0 0 8px 0;">Selected column types:</p>';
+            selectedColumnsList.forEach(column => {
+                const type = dataset.types[column];
+                const typeClass = type === 'numeric' ? 'numeric' : type === 'date' ? 'date' : 'character';
+                const hasMeta = hasMetadata(column);
+                const metaIconClass = hasMeta ? 'has-metadata' : 'no-metadata';
+                const metaTitle = hasMeta ? 'Click to view metadata' : 'No metadata available';
+                
+                html += '<span class="column-type-badge ' + typeClass + '">' +
+                        column + ' (' + type + ')' +
+                        '<span class="metadata-icon ' + metaIconClass + '" ' +
+                        'title="' + metaTitle + '" ' +
+                        'onclick="showMetadataPopup(\'' + column + '\')">i</span>' +
+                        '</span>';
+            });
+           
+            columnTypes.innerHTML = html;
+        }
+
+        function addFilter() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+           
+            if (!selectedDataset) {
+                alert('Please select a dataset first');
+                return;
+            }
+
+            const dataset = datasets[selectedDataset];
+            const filtersContainer = document.getElementById('filtersContainer');
+           
+            if (filterCount === 0) {
+                filtersContainer.innerHTML = '';
+            }
+           
+            filterCount++;
+           
+            let columnOptions = '<option value="">Select column...</option>';
+            dataset.columns.forEach(column => {
+                columnOptions += '<option value="' + column + '">' + column + '</option>';
+            });
+           
+            const filterHtml = '<div class="filter-row" id="filter_' + filterCount + '">' +
+                '<div class="form-group" style="margin: 0;">' +
+                '<label>Column</label>' +
+                '<select name="filter_column" onchange="updatePreview()">' + columnOptions + '</select>' +
+                '</div>' +
+                '<div class="form-group" style="margin: 0;">' +
+                '<label>Operator</label>' +
+                '<select name="filter_operator" onchange="updatePreview()">' +
+                '<option value="">Select operator...</option>' +
+                '<option value="=">=</option>' +
+                '<option value="<>">&ne;</option>' +
+                '<option value=">">&gt;</option>' +
+                '<option value="<">&lt;</option>' +
+                '<option value=">=">&ge;</option>' +
+                '<option value="<=">&le;</option>' +
+                '<option value="LIKE">LIKE</option>' +
+                '<option value="IN">IN</option>' +
+                '<option value="NOT IN">NOT IN</option>' +
+                '</select>' +
+                '</div>' +
+                '<div class="form-group" style="margin: 0;">' +
+                '<label>Value</label>' +
+                '<input type="text" name="filter_value" placeholder="Enter value..." onchange="updatePreview()">' +
+                '</div>' +
+                '<div>' +
+                '<button class="btn btn-danger" onclick="removeFilter(' + filterCount + ')" title="Remove Filter">&times;</button>' +
+                '</div>' +
+                '</div>';
+           
+            filtersContainer.insertAdjacentHTML('beforeend', filterHtml);
+            updatePreview();
+        }
+
+        function removeFilter(id) {
+            const filterElement = document.getElementById('filter_' + id);
+            if (filterElement) {
+                filterElement.remove();
+               
+                const filtersContainer = document.getElementById('filtersContainer');
+                if (filtersContainer.children.length === 0) {
+                    filtersContainer.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>';
+                }
+               
+                updatePreview();
+            }
+        }
+
+        function buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct) {
+            const dataset = datasets[selectedDataset];
+            let sqlQuery = 'SELECT';
+           
+            if (useDistinct) {
+                sqlQuery += ' DISTINCT';
+            }
+           
+            sqlQuery += ' TOP 5 ' + selectedColumns.join(', ');
+            // Use dataset.data_src_name (e.g. 'tblClaims') for FROM clause, so the SQL
+            // sent to the API matches the actual DB table name (STEP 3 'data_src_name').
+            sqlQuery += ' FROM ' + (dataset.data_src_name || selectedDataset);
+           
+            if (filters.length > 0) {
+                sqlQuery += ' WHERE ';
+                filters.forEach((filter, index) => {
+                    if (index > 0) sqlQuery += ' AND ';
+                   
+                    if (filter.operator === 'LIKE') {
+                        sqlQuery += filter.column + ' ' + filter.operator + " '%" + filter.value + "%'";
+                    } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                        sqlQuery += filter.column + ' ' + filter.operator + ' (' + filter.value + ')';
+                    } else {
+                        const isNumeric = dataset.types[filter.column] === 'numeric';
+                        const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                        sqlQuery += filter.column + ' ' + filter.operator + ' ' + value;
+                    }
+                });
+            }
+           
+            return sqlQuery;
+        }
+
+        function updatePreview() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+            const sqlPreview = document.getElementById('sqlPreview');
+            const sasPreview = document.getElementById('sasPreview');
+            const pythonPreview = document.getElementById('pythonPreview');
+            const useDistinct = document.getElementById('distinctCheckbox').checked;
+           
+            if (!selectedDataset) {
+                sqlPreview.textContent = 'Select a dataset and columns to see the generated SQL query...';
+                sasPreview.textContent = 'Select a dataset and columns to see the generated SAS code...';
+                pythonPreview.textContent = 'Select a dataset and columns to see the generated Python code...';
+                return;
+            }
+           
+            const selectedColumns = getSelectedColumnsList();
+               
+            if (selectedColumns.length === 0) {
+                sqlPreview.innerHTML = '<span style="color: #f59e0b;">Please select at least one column</span>';
+                sasPreview.innerHTML = '<span style="color: #f59e0b;">Please select at least one column</span>';
+                pythonPreview.innerHTML = '<span style="color: #f59e0b;">Please select at least one column</span>';
+                return;
+            }
+           
+            const filters = getFilters();
+            const dataset = datasets[selectedDataset];
+            
+            // Generate SQL Preview
+            let displayQuery = '<span class="keyword">SELECT</span>';
+            if (useDistinct) {
+                displayQuery += ' <span class="keyword">DISTINCT</span>';
+            }
+            displayQuery += ' <span class="keyword">TOP</span> <span class="highlight">5</span> ' + selectedColumns.join(', ');
+            displayQuery += '\n<span class="keyword">FROM</span> <span class="highlight">' + (dataset.data_src_name || selectedDataset) + '</span>';
+           
+            if (filters.length > 0) {
+                displayQuery += '\n<span class="keyword">WHERE</span> ';
+                filters.forEach((filter, index) => {
+                    if (index > 0) displayQuery += '\n   <span class="keyword">AND</span> ';
+                   
+                    if (filter.operator === 'LIKE') {
+                        displayQuery += filter.column + ' <span class="keyword">' + filter.operator + '</span> <span class="highlight">\'%' + filter.value + '%\'</span>';
+                    } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                        displayQuery += filter.column + ' <span class="keyword">' + filter.operator + '</span> <span class="highlight">(' + filter.value + ')</span>';
+                    } else {
+                        const isNumeric = dataset.types[filter.column] === 'numeric';
+                        const value = isNumeric ? filter.value : '\'' + filter.value + '\'';
+                        displayQuery += filter.column + ' ' + filter.operator + ' <span class="highlight">' + value + '</span>';
+                    }
+                });
+            }
+           
+            sqlPreview.innerHTML = displayQuery;
+            
+            // Generate SAS Code Preview
+            let sasCode = '<span class="keyword">PROC SQL</span>;\n';
+            sasCode += '   <span class="keyword">CREATE TABLE</span> <span class="highlight">query_result</span> <span class="keyword">AS</span>\n';
+            sasCode += '   <span class="keyword">SELECT</span>';
+           
+            if (useDistinct) {
+                sasCode += ' <span class="keyword">DISTINCT</span>';
+            }
+           
+            sasCode += '\n      ' + selectedColumns.join(',\n      ') + '\n';
+            sasCode += '   <span class="keyword">FROM</span> <span class="highlight">' + selectedDataset + '</span>\n';
+           
+            if (filters.length > 0) {
+                sasCode += '   <span class="keyword">WHERE</span>\n';
+                filters.forEach((filter, index) => {
+                    if (index > 0) sasCode += '      <span class="keyword">AND</span> ';
+                    else sasCode += '      ';
+                   
+                    if (filter.operator === 'LIKE') {
+                        sasCode += filter.column + ' <span class="keyword">' + filter.operator + '</span> <span class="highlight">\'%' + filter.value + '%\'</span>\n';
+                    } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                        sasCode += filter.column + ' <span class="keyword">' + filter.operator + '</span> <span class="highlight">(' + filter.value + ')</span>\n';
+                    } else {
+                        const isNumeric = dataset.types[filter.column] === 'numeric';
+                        const value = isNumeric ? filter.value : '\'' + filter.value + '\'';
+                        sasCode += filter.column + ' ' + filter.operator + ' <span class="highlight">' + value + '</span>\n';
+                    }
+                });
+            }
+           
+            sasCode += '<span class="keyword">QUIT</span>;\n\n';
+            sasCode += '<span class="keyword">/* Export to CSV */</span>\n';
+            sasCode += '<span class="keyword">PROC EXPORT</span> <span class="keyword">DATA</span>=<span class="highlight">query_result</span>\n';
+            sasCode += '   <span class="keyword">OUTFILE</span>=<span class="highlight">"/path/to/output/query_result.csv"</span>\n';
+            sasCode += '   <span class="keyword">DBMS</span>=<span class="highlight">CSV</span> <span class="keyword">REPLACE</span>;\n';
+            sasCode += '<span class="keyword">RUN</span>;';
+           
+            sasPreview.innerHTML = sasCode;
+
+            // Generate Python Code Preview
+            let pyCode = '<span class="keyword">import</span> pandas <span class="keyword">as</span> pd\n';
+            pyCode += '<span class="keyword">from</span> sqlalchemy <span class="keyword">import</span> create_engine\n\n';
+            pyCode += '<span class="keyword"># Create database connection</span>\n';
+            pyCode += 'engine = create_engine(<span class="highlight">"mssql+pyodbc://USER:PASSWORD@SERVER/DATABASE?driver=ODBC+Driver+17+for+SQL+Server"</span>)\n\n';
+            pyCode += '<span class="keyword"># Build query</span>\n';
+            pyCode += 'query = <span class="highlight">"""</span>\n';
+            pyCode += '<span class="highlight">SELECT</span>';
+            if (useDistinct) {
+                pyCode += ' <span class="highlight">DISTINCT</span>';
+            }
+            pyCode += '\n    <span class="highlight">' + selectedColumns.join(',\n    ') + '</span>\n';
+            pyCode += '<span class="highlight">FROM ' + selectedDataset + '</span>\n';
+            if (filters.length > 0) {
+                pyCode += '<span class="highlight">WHERE</span>\n';
+                filters.forEach((filter, index) => {
+                    let line = '    ';
+                    if (index > 0) line = '    <span class="highlight">AND</span> ';
+                    if (filter.operator === 'LIKE') {
+                        line += '<span class="highlight">' + filter.column + " " + filter.operator + " '%" + filter.value + "%'</span>";
+                    } else if (filter.operator === 'IN' || filter.operator === 'NOT IN') {
+                        line += '<span class="highlight">' + filter.column + ' ' + filter.operator + ' (' + filter.value + ')</span>';
+                    } else {
+                        const isNumeric = dataset.types[filter.column] === 'numeric';
+                        const value = isNumeric ? filter.value : "'" + filter.value + "'";
+                        line += '<span class="highlight">' + filter.column + ' ' + filter.operator + ' ' + value + '</span>';
+                    }
+                    pyCode += line + '\n';
+                });
+            }
+            pyCode += '<span class="highlight">"""</span>\n\n';
+            pyCode += '<span class="keyword"># Execute query and load into DataFrame</span>\n';
+            pyCode += 'df = pd.read_sql(query, engine)\n\n';
+            pyCode += '<span class="keyword"># Preview results</span>\n';
+            pyCode += '<span class="keyword">print</span>(df.head())\n\n';
+            pyCode += '<span class="keyword"># Export to CSV</span>\n';
+            pyCode += 'df.to_csv(<span class="highlight">"query_result.csv"</span>, index=<span class="keyword">False</span>)';
+
+            pythonPreview.innerHTML = pyCode;
+
+            // ----- API URL preview (db datasets only) -----
+            const apiWrap = document.getElementById('apiUrlPreviewWrap');
+            const apiBox  = document.getElementById('apiUrlPreview');
+            if (apiWrap && apiBox) {
+                if (dataset.dmsrc_type === 'db' || dataset.dmsrc_type === 'sas') {
+                    try {
+                        const sqlForApi = buildSQLQuery(selectedDataset, selectedColumns, filters, useDistinct);
+                        const apiURL = buildAPIURL(selectedDataset, sqlForApi);
+                        apiBox.textContent = apiURL;
+                        apiWrap.style.display = 'block';
+                    } catch (e) {
+                        apiBox.textContent = 'Error building API URL: ' + e.message;
+                        apiWrap.style.display = 'block';
+                    }
+                } else {
+                    apiWrap.style.display = 'none';
+                }
+            }
+        }
+
+        function switchPreviewTab(tabName) {
+            const tabs = {
+                sql: { tab: document.getElementById('sqlTab'), preview: document.getElementById('sqlPreview') },
+                python: { tab: document.getElementById('pythonTab'), preview: document.getElementById('pythonPreview') },
+                sas: { tab: document.getElementById('sasTab'), preview: document.getElementById('sasPreview') }
+            };
+
+            Object.keys(tabs).forEach(key => {
+                if (key === tabName) {
+                    tabs[key].tab.classList.add('active');
+                    tabs[key].preview.style.display = 'block';
+                } else {
+                    tabs[key].tab.classList.remove('active');
+                    tabs[key].preview.style.display = 'none';
+                }
+            });
+        }
+
+        function getFilters() {
+            const filters = [];
+            const filterRows = document.querySelectorAll('.filter-row');
+           
+            filterRows.forEach(row => {
+                const column = row.querySelector('select[name="filter_column"]')?.value;
+                const operator = row.querySelector('select[name="filter_operator"]')?.value;
+                const value = row.querySelector('input[name="filter_value"]')?.value;
+               
+                if (column && operator && value) {
+                    filters.push({ column, operator, value });
+                }
+            });
+           
+            return filters;
+        }
+
+        function getDataSourceURL(dataset) {
+            const datasetConfig = datasets[dataset];
+            const mapping = DATA_CONFIG.Mapping[dataset];
+            
+            if (!mapping) {
+                throw new Error('No mapping found for dataset: ' + dataset);
+            }
+
+            if (datasetConfig.dmsrc_type === 'file') {
+                return DATA_CONFIG.baseFileURL + mapping;
+            } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                return null;
+            }
+            
+            throw new Error('Unknown dmsrc_type: ' + datasetConfig.dmsrc_type);
+        }
+
+        // Build the SAS Stored Process URL by combining:
+        //   STEP 2 baseAPIURL  +  STEP 2 Mapping[dataset]  +  &dmq_query=<encoded SQL>
+        // Example output:
+        //   https://cgssaswebu.a70admed.com/SASStoredProcess/do
+        //     ?_program=/User%20Folders/731o/My%20Folder/dmq_explicit_chatgpt_v5
+        //     &dmq_query=SELECT%20TOP%205%20DCN%2C%20ProvId%20FROM%20tblClaims
+        function buildAPIURL(dataset, sqlQuery) {
+            const apiEndpoint = DATA_CONFIG.Mapping[dataset];
+            if (!apiEndpoint) {
+                throw new Error('No API endpoint mapping found for dataset: ' + dataset);
+            }
+            return DATA_CONFIG.baseAPIURL + apiEndpoint +
+                   '&dmq_query=' + encodeURIComponent(sqlQuery);
+        }
+
+        async function fetchData(dataset, columns, filters, useDistinct) {
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            const datasetConfig = datasets[dataset];
+           
+            try {
+                loadingOverlay.style.display = 'flex';
+               
+                if (datasetConfig.dmsrc_type === 'file') {
+                    const url = getDataSourceURL(dataset);
+                    console.log('Fetching data from file: ' + url);
+                   
+                    const response = await fetch(url, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                   
+                    if (!response.ok) {
+                        throw new Error('HTTP error! status: ' + response.status);
+                    }
+                   
+                    const jsonData = await response.json();
+                   
+                    if (!Array.isArray(jsonData) || jsonData.length === 0) {
+                        throw new Error('Invalid or empty data');
+                    }
+                   
+                    console.log('Successfully loaded ' + jsonData.length + ' records from file');
+                   
+                    let filteredData = applyFilters(jsonData, filters);
+                   
+                    if (useDistinct) {
+                        filteredData = applyDistinct(filteredData, columns);
+                    }
+                   
+                    return filteredData;
+                   
+                } else if (datasetConfig.dmsrc_type === 'db' || datasetConfig.dmsrc_type === 'sas') {
+                    const sqlQuery = buildSQLQuery(dataset, columns, filters, useDistinct);
+                    const apiURL = buildAPIURL(dataset, sqlQuery);
+                    
+                    console.log('Fetching data from API: ' + apiURL);
+                   
+                    const response = await fetch(apiURL, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' }
+                    });
+                   
+                    if (!response.ok) {
+                        throw new Error('API error! status: ' + response.status);
+                    }
+                   
+                    const jsonData = await response.json();
+                   
+                    if (!Array.isArray(jsonData) || jsonData.length === 0) {
+                        console.warn('API returned empty data');
+                        return [];
+                    }
+                   
+                    console.log('Successfully loaded ' + jsonData.length + ' records from API');
+                    return jsonData;
+                }
+               
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error loading data: ' + error.message);
+                return null;
+            } finally {
+                loadingOverlay.style.display = 'none';
+            }
+        }
+
+        function applyFilters(data, filters) {
+            if (filters.length === 0) return data;
+           
+            return data.filter(row => {
+                return filters.every(filter => {
+                    const columnValue = row[filter.column];
+                    const filterValue = filter.value;
+                   
+                    if (columnValue === null || columnValue === undefined) return false;
+                   
+                    switch(filter.operator) {
+                        case '=':
+                            return String(columnValue).toLowerCase() === filterValue.toLowerCase() ||
+                                   Number(columnValue) === Number(filterValue);
+                        case '<>':
+                            return String(columnValue).toLowerCase() !== filterValue.toLowerCase();
+                        case '>':
+                            return Number(columnValue) > Number(filterValue);
+                        case '<':
+                            return Number(columnValue) < Number(filterValue);
+                        case '>=':
+                            return Number(columnValue) >= Number(filterValue);
+                        case '<=':
+                            return Number(columnValue) <= Number(filterValue);
+                        case 'LIKE':
+                            return String(columnValue).toLowerCase().includes(filterValue.toLowerCase());
+                        case 'IN':
+                            const inValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                            return inValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                        case 'NOT IN':
+                            const notInValues = filterValue.split(',').map(v => v.trim().replace(/['"]/g, ''));
+                            return !notInValues.some(v => String(columnValue).toLowerCase() === v.toLowerCase());
+                        default:
+                            return true;
+                    }
+                });
+            });
+        }
+
+        function applyDistinct(data, columns) {
+            const uniqueRows = new Map();
+           
+            data.forEach(row => {
+                const key = columns.map(col => row[col]).join('|');
+                if (!uniqueRows.has(key)) {
+                    uniqueRows.set(key, row);
+                }
+            });
+           
+            return Array.from(uniqueRows.values());
+        }
+
+        function convertJSONToCSV(jsonData, columns) {
+            if (!jsonData || !Array.isArray(jsonData) || jsonData.length === 0) return null;
+           
+            let csvContent = columns.join(',') + '\n';
+           
+            jsonData.forEach(row => {
+                const values = columns.map(col => {
+                    const value = row[col];
+                    if (value === null || value === undefined) return '';
+                    if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+                        return '"' + value.replace(/"/g, '""') + '"';
+                    }
+                    return value;
+                });
+                csvContent += values.join(',') + '\n';
+            });
+           
+            return csvContent;
+        }
+
+        async function viewGrid() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+
+            if (!selectedDataset) {
+                alert('A query needs to be built before "View Table" is used.\n\nPlease make a Dataset Selection first.');
+                return;
+            }
+
+            const selectedColumns = getSelectedColumnsList();
+
+            if (selectedColumns.length === 0) {
+                alert('A query needs to be built before "View Table" is used.\n\nPlease select at least one column in Column Selection.');
+                return;
+            }
+
+            const filters = getFilters();
+            const useDistinct = document.getElementById('distinctCheckbox').checked;
+
+            let gridData = await fetchData(selectedDataset, selectedColumns, filters, useDistinct);
+
+            if (!gridData || gridData.length === 0) {
+                alert('No data available to display');
+                return;
+            }
+
+            const queryConfig = {
+                dataset: selectedDataset,
+                columns: selectedColumns,
+                filters: filters,
+                useDistinct: useDistinct,
+                data: gridData,
+                generatedAt: new Date().toISOString()
+            };
+
+            sessionStorage.setItem('gridData', JSON.stringify(queryConfig));
+            window.open('table_viewer.html', '_blank');
+        }
+
+        async function visualizeData() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+
+            if (!selectedDataset) {
+                alert('A query needs to be built before "Visualize Data" is used.\n\nPlease make a Dataset Selection first.');
+                return;
+            }
+
+            const selectedColumns = getSelectedColumnsList();
+
+            if (selectedColumns.length === 0) {
+                alert('A query needs to be built before "Visualize Data" is used.\n\nPlease select at least one column in Column Selection.');
+                return;
+            }
+
+            const filters = getFilters();
+            const useDistinct = document.getElementById('distinctCheckbox').checked;
+
+            let gridData = await fetchData(selectedDataset, selectedColumns, filters, useDistinct);
+
+            if (!gridData || gridData.length === 0) {
+                alert('No data available to visualize');
+                return;
+            }
+
+            const queryConfig = {
+                dataset: selectedDataset,
+                columns: selectedColumns,
+                filters: filters,
+                useDistinct: useDistinct,
+                data: gridData,
+                generatedAt: new Date().toISOString()
+            };
+
+            sessionStorage.setItem('gridData', JSON.stringify(queryConfig));
+            window.open('visuals_viewer.html', '_blank');
+        }
+
+        function generateDashboard() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+           
+            if (!selectedDataset) {
+                alert('Please select a dataset first');
+                return;
+            }
+           
+            const selectedColumns = getSelectedColumnsList();
+               
+            if (selectedColumns.length === 0) {
+                alert('Please select at least one column');
+                return;
+            }
+           
+            const message = 'Your query has been configured!\n\n' +
+                          'Next Steps:\n' +
+                          '1. Click "Export to CSV" to download your filtered data\n' +
+                          '2. You\'ll be redirected to Power BI dashboard\n' +
+                          '3. In Power BI: Home > Get Data > Text/CSV\n' +
+                          '4. Select your downloaded CSV file\n' +
+                          '5. Click "Load" to import the data\n\n' +
+                          'Click OK to open Power BI dashboard';
+           
+            if (confirm(message)) {
+                window.open('https://app.powerbi.com/groups/me/reports/37f4a95e-d85e-46d2-984a-c0661d53d430/842bc16e1259e5a4b7d4?experience=power-bi', '_blank');
+            }
+        }
+
+        async function exportCSV() {
+            const datasetSelect = document.getElementById('dataset');
+            const selectedDataset = datasetSelect.value;
+           
+            if (!selectedDataset) {
+                alert('Please select a dataset');
+                return;
+            }
+           
+            const selectedColumns = getSelectedColumnsList();
+               
+            if (selectedColumns.length === 0) {
+                alert('Please select at least one column');
+                return;
+            }
+           
+            const filters = getFilters();
+            const useDistinct = document.getElementById('distinctCheckbox').checked;
+           
+            let data = await fetchData(selectedDataset, selectedColumns, filters, useDistinct);
+           
+            if (!data || data.length === 0) {
+                alert('No data available to export');
+                return;
+            }
+           
+            const csvContent = convertJSONToCSV(data, selectedColumns);
+           
+            if (!csvContent) {
+                alert('Error converting data to CSV');
+                return;
+            }
+           
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            const url = URL.createObjectURL(blob);
+           
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'query_result_' + timestamp + '.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+           
+            alert('CSV file downloaded successfully!');
+        }
+
+        function resetForm() {
+            document.getElementById('dataset').value = '';
+            document.getElementById('availableColumns').innerHTML = '<option disabled style="text-align: center; color: #999;">Please select a dataset first</option>';
+            document.getElementById('selectedColumns').innerHTML = '<option disabled style="text-align: center; color: #999;">No columns selected</option>';
+            document.getElementById('columnInfo').style.display = 'none';
+            document.getElementById('filtersContainer').innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>';
+            document.getElementById('sqlPreview').textContent = 'Select a dataset and columns to see the generated SQL query...';
+            document.getElementById('sasPreview').textContent = 'Select a dataset and columns to see the generated SAS code...';
+            document.getElementById('pythonPreview').textContent = 'Select a dataset and columns to see the generated Python code...';
+            document.getElementById('distinctCheckbox').checked = false;
+            filterCount = 0;
+            switchPreviewTab('sql');
+            resetQuerySection();
+        }
+
+        /* === QUERY PROFILE SYSTEM (localStorage-backed) === */
+        function getProfileStorageKey() {
+            return 'dmq.queries.' + (window.session && window.session.userid ? window.session.userid : 'anonymous');
+        }
+
+        async function loadProfile() {
+            try {
+                const raw = localStorage.getItem(getProfileStorageKey());
+                if (!raw) return {};
+                const parsed = JSON.parse(raw);
+                return (parsed && typeof parsed === 'object') ? parsed : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        async function saveProfile(profile) {
+            try {
+                localStorage.setItem(getProfileStorageKey(), JSON.stringify(profile));
+            } catch (e) {
+                throw new Error('Failed to save profile to localStorage: ' + (e && e.message ? e.message : e));
+            }
+        }
+
+        function initQuerySelectionSection() {
+            document.getElementById('querySectionWrapper').style.display = 'block';
+            resetQuerySection();
+        }
+
+        function teardownQuerySelectionSection() {
+            document.getElementById('querySectionWrapper').style.display = 'none';
+            resetQuerySection();
+        }
+
+        function resetQuerySection() {
+            const sel = document.getElementById('querySelect');
+            if (!sel) return;
+            sel.innerHTML = '<option value="">— Select a dataset first —</option>';
+            sel.disabled = true;
+            document.getElementById('saveQueryControls').style.display = 'none';
+            document.getElementById('queryNameInput').value = '';
+            document.getElementById('saveQueryFeedback').textContent = '';
+            document.getElementById('deleteQueryBtn').style.display = 'none';
+        }
+
+        async function onDatasetSelectedForQueries(datasetKey) {
+            if (!window.session || !window.session.authenticated) return;
+            const sel = document.getElementById('querySelect');
+            sel.disabled = false;
+            sel.innerHTML = '<option value="__NEW__">+ New Query</option>';
+            const profile = await loadProfile();
+            const saved = (profile[datasetKey] || []);
+            saved.forEach((q, i) => {
+                const opt = document.createElement('option');
+                opt.value = String(i);
+                opt.textContent = q.name + '  (' + new Date(q.savedAt).toLocaleDateString() + ')';
+                sel.appendChild(opt);
+            });
+            sel.value = '__NEW__';
+            onQuerySelectChange();
+        }
+
+        async function onQuerySelectChange() {
+            const sel = document.getElementById('querySelect');
+            const val = sel.value;
+            const saveControls = document.getElementById('saveQueryControls');
+            const nameInput = document.getElementById('queryNameInput');
+            const deleteBtn = document.getElementById('deleteQueryBtn');
+            const feedback = document.getElementById('saveQueryFeedback');
+            feedback.textContent = '';
+
+            if (val === '__NEW__') {
+                saveControls.style.display = 'block';
+                nameInput.value = '';
+                deleteBtn.style.display = 'none';
+                moveAllToAvailable();
+                document.getElementById('filtersContainer').innerHTML =
+                    '<p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>';
+                filterCount = 0;
+                document.getElementById('distinctCheckbox').checked = false;
+                updatePreview();
+            } else if (val !== '') {
+                const datasetKey = document.getElementById('dataset').value;
+                const profile = await loadProfile();
+                const saved = (profile[datasetKey] || []);
+                const idx = parseInt(val, 10);
+                const q = saved[idx];
+                if (!q) return;
+
+                moveAllToAvailable();
+                const availSel = document.getElementById('availableColumns');
+                const chosenSel = document.getElementById('selectedColumns');
+                const placeholder = chosenSel.querySelector('option[disabled]');
+                if (placeholder) placeholder.remove();
+                q.columns.forEach(col => {
+                    const opt = Array.from(availSel.options).find(o => o.value === col);
+                    if (opt) chosenSel.appendChild(opt);
+                });
+                if (chosenSel.options.length === 0) {
+                    chosenSel.innerHTML = '<option disabled style="text-align:center;color:#999;">No columns selected</option>';
+                }
+
+                document.getElementById('distinctCheckbox').checked = !!q.useDistinct;
+
+                document.getElementById('filtersContainer').innerHTML =
+                    '<p style="color: #999; text-align: center; padding: 20px;">No filters added yet</p>';
+                filterCount = 0;
+                q.filters.forEach(f => {
+                    addFilter();
+                    const rows = document.querySelectorAll('.filter-row');
+                    const lastRow = rows[rows.length - 1];
+                    lastRow.querySelector('select[name="filter_column"]').value = f.column;
+                    lastRow.querySelector('select[name="filter_operator"]').value = f.operator;
+                    lastRow.querySelector('input[name="filter_value"]').value = f.value;
+                });
+
+                updateColumnInfo();
+                updatePreview();
+
+                saveControls.style.display = 'block';
+                nameInput.value = q.name;
+                deleteBtn.style.display = 'inline-block';
+                deleteBtn.dataset.idx = idx;
+            }
+        }
+
+        async function saveCurrentQuery() {
+            const feedback = document.getElementById('saveQueryFeedback');
+            if (!window.session || !window.session.authenticated) {
+                feedback.textContent = '⚠ You must be logged in to save queries. Please use the "Logon" link in the header.';
+                feedback.style.color = '#cc0000';
+                return;
+            }
+            const name = document.getElementById('queryNameInput').value.trim();
+            if (!name) {
+                feedback.textContent = '⚠ Please enter a query name.';
+                feedback.style.color = '#cc0000';
+                return;
+            }
+            const datasetKey = document.getElementById('dataset').value;
+            if (!datasetKey) {
+                feedback.textContent = '⚠ No dataset selected.';
+                feedback.style.color = '#cc0000';
+                return;
+            }
+            const columns = getSelectedColumnsList();
+            if (columns.length === 0) {
+                feedback.textContent = '⚠ Please select at least one column before saving.';
+                feedback.style.color = '#cc0000';
+                return;
+            }
+            const queryObj = {
+                name: name,
+                savedAt: new Date().toISOString(),
+                columns: columns,
+                useDistinct: document.getElementById('distinctCheckbox').checked,
+                filters: getFilters()
+            };
+            try {
+                feedback.textContent = 'Saving...';
+                feedback.style.color = '#555';
+                const profile = await loadProfile();
+                if (!profile[datasetKey]) profile[datasetKey] = [];
+                const sel = document.getElementById('querySelect');
+                const val = sel.value;
+                if (val !== '__NEW__' && val !== '') {
+                    const idx = parseInt(val, 10);
+                    profile[datasetKey][idx] = queryObj;
+                } else {
+                    const dupIdx = profile[datasetKey].findIndex(q => q.name === name);
+                    if (dupIdx >= 0) {
+                        profile[datasetKey][dupIdx] = queryObj;
+                    } else {
+                        profile[datasetKey].push(queryObj);
+                    }
+                }
+                await saveProfile(profile);
+                feedback.textContent = '✓ Query "' + name + '" saved successfully.';
+                feedback.style.color = '#2e7d32';
+                await onDatasetSelectedForQueries(datasetKey);
+                const updatedProfile = await loadProfile();
+                const newIdx = (updatedProfile[datasetKey] || []).findIndex(q => q.name === name);
+                if (newIdx >= 0) {
+                    document.getElementById('querySelect').value = String(newIdx);
+                    document.getElementById('deleteQueryBtn').style.display = 'inline-block';
+                    document.getElementById('deleteQueryBtn').dataset.idx = newIdx;
+                }
+            } catch (err) {
+                feedback.textContent = '✗ Error saving query: ' + err.message;
+                feedback.style.color = '#cc0000';
+            }
+        }
+
+        async function deleteCurrentQuery() {
+            const idx = parseInt(document.getElementById('deleteQueryBtn').dataset.idx, 10);
+            const datasetKey = document.getElementById('dataset').value;
+            const feedback = document.getElementById('saveQueryFeedback');
+            if (!confirm('Delete this saved query? This cannot be undone.')) return;
+            try {
+                const profile = await loadProfile();
+                if (profile[datasetKey]) {
+                    profile[datasetKey].splice(idx, 1);
+                    await saveProfile(profile);
+                    feedback.textContent = '✓ Query deleted.';
+                    feedback.style.color = '#2e7d32';
+                    await onDatasetSelectedForQueries(datasetKey);
+                    document.getElementById('querySelect').value = '__NEW__';
+                    onQuerySelectChange();
+                }
+            } catch (err) {
+                feedback.textContent = '✗ Error deleting query: ' + err.message;
+                feedback.style.color = '#cc0000';
+            }
+        }
+    </script>
+
+    <!-- ── SAS Session footer ── -->
+    <footer class="sas-footer">
+        <div class="session-indicator">
+            <span class="dot" id="status-dot"></span>
+            <span id="status-label">No active session</span>
+        </div>
+        <a href="#" id="footer-signout" onclick="handleSignOut(event); return false;">Sign out</a>
+    </footer>
+
+    <script>
+        /* ==========================================================
+           SAS LOGON / SESSION
+           ========================================================== */
+        // SAS_CONFIG is loaded from meta/profiles/<userid>/sas_config.json by loadConfig()
+        // and assigned to window.SAS_CONFIG. Bare references below resolve to window.SAS_CONFIG.
+
+        window.session = { authenticated: false, userid: null, loginTime: null };
+
+        function sasGetParam(name) {
+            return new URLSearchParams(window.location.search).get(name);
+        }
+        function sasCleanUrl() {
+            history.replaceState({}, document.title, window.location.pathname);
+        }
+        // ===== Advanced menu (Execute SQL) feature flag =====
+        // Set to false to hide the "Advanced" section in the hamburger menu.
+        window.ENABLE_ADVANCED_MENU = (typeof window.ENABLE_ADVANCED_MENU === 'boolean') ? window.ENABLE_ADVANCED_MENU : true;
+
+        function showAdvancedMenuSection() {
+            const sec = document.getElementById('advancedMenuSection');
+            if (!sec) return;
+            sec.style.display = window.ENABLE_ADVANCED_MENU ? 'block' : 'none';
+            if (window.ENABLE_ADVANCED_MENU) loadAdvancedReports();
+        }
+        function hideAdvancedMenuSection() {
+            const sec = document.getElementById('advancedMenuSection');
+            if (sec) sec.style.display = 'none';
+        }
+        function openExecuteQueryWindow() {
+            if (!window.ENABLE_ADVANCED_MENU) return;
+            if (!window.session || !window.session.authenticated) {
+                alert('Please log on to use Execute SQL.');
+                return;
+            }
+            window.open('execute_query.html', 'dmqExecuteQuery',
+                'width=1200,height=800,scrollbars=yes,resizable=yes');
+        }
+
+        // ===== Advanced Reports list (loaded from reports.json) =====
+        async function fetchReportsConfig() {
+            const base = getProfileBasePath();
+            try {
+                let r = await fetch(base + 'reports.json');
+                if (!r.ok && base !== 'meta/profiles/default/') {
+                    r = await fetch('meta/profiles/default/reports.json');
+                }
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return await r.json();
+            } catch (e) {
+                console.warn('Failed to load reports.json:', e);
+                return { reports: [] };
+            }
+        }
+        function openReportWindow(url) {
+            if (!url) return;
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+        async function loadAdvancedReports() {
+            const listEl = document.getElementById('advancedReportsList');
+            if (!listEl) return;
+            const cfg = await fetchReportsConfig();
+            const reports = (cfg && Array.isArray(cfg.reports)) ? cfg.reports : [];
+            if (!reports.length) {
+                listEl.innerHTML = '<div id="advancedReportsEmpty" style="padding:6px 20px 10px; font-size:12px; color:#999; font-style:italic;">No reports available</div>';
+                return;
+            }
+            listEl.innerHTML = '';
+            reports.forEach(rep => {
+                if (!rep || !rep.url || !rep.name) return;
+                const a = document.createElement('a');
+                a.href = '#';
+                a.textContent = rep.name;
+                a.style.color = '#8e44ad';
+                a.title = rep.url;
+                a.onclick = function() {
+                    openReportWindow(rep.url);
+                    closeMenu();
+                    return false;
+                };
+                listEl.appendChild(a);
+            });
+        }
+
+        function sasRenderLoggedIn() {
+            const logon = document.getElementById('nav-logon');
+            const welcome = document.getElementById('nav-welcome');
+            if (logon) logon.style.display = 'none';
+            if (welcome) {
+                welcome.style.display = 'inline';
+                welcome.textContent = 'Welcome, ' + window.session.userid + '!';
+            }
+            document.getElementById('status-dot').classList.add('active');
+            document.getElementById('status-label').textContent = 'Session active — ' + window.session.userid;
+            document.getElementById('footer-signout').style.display = 'inline';
+            initQuerySelectionSection();
+            showAdvancedMenuSection();
+        }
+        function sasRenderLoggedOut() {
+            const logon = document.getElementById('nav-logon');
+            const welcome = document.getElementById('nav-welcome');
+            if (logon) logon.style.display = 'inline';
+            if (welcome) welcome.style.display = 'none';
+            document.getElementById('status-dot').classList.remove('active');
+            document.getElementById('status-label').textContent = 'No active session';
+            document.getElementById('footer-signout').style.display = 'none';
+            teardownQuerySelectionSection();
+            hideAdvancedMenuSection();
+        }
+        function handleLogon(e) {
+            if (e) e.preventDefault();
+            const returnUrl = encodeURIComponent(SAS_CONFIG.portalUrl);
+            const target = SAS_CONFIG.storedProcessUrl
+                         + encodeURIComponent(SAS_CONFIG.storedProcessPath)
+                         + '&returnUrl=' + returnUrl;
+            window.location.href = target;
+        }
+        function handleSignOut(e) {
+            if (e) e.preventDefault();
+            window.session = { authenticated: false, userid: null, loginTime: null };
+            localStorage.removeItem('sas_session');
+            teardownQuerySelectionSection();
+            window.location.href = SAS_CONFIG.logoutUrl
+                                 + '?returnUrl=' + encodeURIComponent(SAS_CONFIG.portalUrl);
+        }
+
+
+        (function sasInit() {
+            const userid = sasGetParam('userid');
+            const sasAuth = sasGetParam('sasAuth');
+            if (userid && sasAuth === '1') {
+                window.session = {
+                    authenticated: true,
+                    userid: decodeURIComponent(userid),
+                    loginTime: new Date().toLocaleTimeString()
+                };
+                localStorage.setItem('sas_session', JSON.stringify(window.session));
+                sasCleanUrl();
+                sasRenderLoggedIn();
+            } else {
+                try {
+                    let rawSession = localStorage.getItem('sas_session');
+                    if (!rawSession) {
+                        rawSession = sessionStorage.getItem('sas_session');
+                        if (rawSession) {
+                            localStorage.setItem('sas_session', rawSession);
+                        }
+                    }
+                    const stored = rawSession ? JSON.parse(rawSession) : null;
+                    if (stored && stored.authenticated && stored.userid) {
+                        window.session = stored;
+                        sasRenderLoggedIn();
+                        return;
+                    }
+                } catch (_) {}
+                sasRenderLoggedOut();
+            }
+        })();
+    </script>
+</body>
+</html>
